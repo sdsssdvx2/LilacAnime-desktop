@@ -1,0 +1,58 @@
+name: Native mpv prototype
+
+on:
+  push:
+    branches: [mpv-native-engine]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native-mpv:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Prepare pinned libmpv SDK/runtime
+        shell: powershell
+        run: ./scripts/setup-libmpv.ps1
+
+      - name: Configure prototype dependencies
+        run: node scripts/configure-native-mpv-package.cjs
+
+      - name: Install dependencies and build native addon
+        run: npm install --no-audit --no-fund
+
+      - name: Apply update-safe native mpv source transform
+        run: node scripts/apply-native-mpv-patch.cjs
+
+      - name: Build Windows installer
+        run: npm run dist -- --publish never
+
+      - name: Candidate checksum
+        shell: powershell
+        run: |
+          Get-FileHash dist/LilacAnime-Setup.exe -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-native-mpv-prototype
+          path: |
+            dist/LilacAnime-Setup.exe
+            electron/main.cjs
+            electron/mpv-native-main.cjs
+            electron/mpv-relay.cjs
+            src/mpv-native-entry.js
+          if-no-files-found: error
+          retention-days: 14
