@@ -28,7 +28,7 @@ jobs:
         shell: powershell
         run: ./scripts/setup-libmpv.ps1
 
-      - name: Configure prototype dependencies
+      - name: Configure prototype dependencies and side-by-side identity
         run: node scripts/configure-native-mpv-package.cjs
 
       - name: Install dependencies and build native addon
@@ -43,13 +43,13 @@ jobs:
       - name: Candidate checksum
         shell: powershell
         run: |
-          Get-FileHash dist/LilacAnime-Setup.exe -Algorithm SHA256 | Format-List
+          Get-FileHash dist/LilacAnime-Native-Prototype-Setup.exe -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
           name: LilacAnime-native-mpv-prototype
           path: |
-            dist/LilacAnime-Setup.exe
+            dist/LilacAnime-Native-Prototype-Setup.exe
             electron/main.cjs
             electron/mpv-native-main.cjs
             electron/mpv-relay.cjs

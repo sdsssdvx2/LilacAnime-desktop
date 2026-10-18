@@ -22,6 +22,7 @@ function replaceOnce(source, needle, replacement, label) {
 
 let main = read('electron/main.cjs');
 let preload = read('electron/preload.cjs');
+let updater = read('electron/updater.cjs');
 let index = read('src/index.html');
 let app = read('src/app.js');
 let anime4k = read('src/anime4k.js');
@@ -49,10 +50,20 @@ main = replaceOnce(
   'main preload path'
 );
 
+// Keep this prototype's Windows identity separate from the installed stock/V9 build.
 main = replaceOnce(
   main,
-  "app.whenReady().then(async () => {\n  if (!singleInstanceLock) return;",
-  "app.whenReady().then(async () => {\n  if (!singleInstanceLock) return;\n  await nativeMpv.ensure();",
+  "app.setAppUserModelId('com.lilac.anime.desktop');",
+  "app.setAppUserModelId('com.lilac.anime.desktop.nativeprototype');",
+  'prototype AppUserModelId'
+);
+
+// The source file uses CRLF on Windows checkouts, so anchor on the single line
+// instead of matching a multi-line LF-only string.
+main = replaceOnce(
+  main,
+  '  if (!singleInstanceLock) return;',
+  '  if (!singleInstanceLock) return;\n  await nativeMpv.ensure();',
   'main ready native init'
 );
 
@@ -71,6 +82,15 @@ preload = replaceOnce(
   "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),",
   "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),\n  nativeMpvPrepare: (url, headers = {}, hls = false) => ipcRenderer.invoke('native-mpv:prepare', url, headers, Boolean(hls)),",
   'preload native prepare API'
+);
+
+// Prototype builds only consult the fork's release channel. Until a verified
+// candidate is published there, updater checks cannot download/install stock Lilac.
+updater = replaceOnce(
+  updater,
+  "const RELEASES = 'https://api.github.com/repos/whispelyn-byte/LilacAnime-desktop/releases';",
+  "const RELEASES = 'https://api.github.com/repos/sdsssdvx2/LilacAnime-desktop/releases';",
+  'prototype updater release channel'
 );
 
 index = replaceOnce(
@@ -131,6 +151,7 @@ anime4k = replaceOnce(
 
 write('electron/main.cjs', main);
 write('electron/preload.cjs', preload);
+write('electron/updater.cjs', updater);
 write('src/index.html', index);
 write('src/app.js', app);
 write('src/anime4k.js', anime4k);
@@ -159,14 +180,17 @@ buildSync({
   logLevel: 'info'
 });
 
-for (const relative of ['electron/main.cjs','electron/preload-native.generated.cjs','src/app.js','src/anime4k.js']) {
+for (const relative of ['electron/main.cjs','electron/preload-native.generated.cjs','electron/updater.cjs','src/app.js','src/anime4k.js']) {
   execFileSync(process.execPath, ['--check', file(relative)], { stdio: 'inherit' });
 }
 
 const required = [
   ['electron/main.cjs', 'LILAC_NATIVE_MPV_SOURCE_PATCH'],
+  ['electron/main.cjs', 'await nativeMpv.ensure()'],
   ['electron/main.cjs', 'await nativeMpv.attachWindow(win)'],
+  ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
   ['electron/preload.cjs', 'nativeMpvPrepare'],
+  ['electron/updater.cjs', 'sdsssdvx2/LilacAnime-desktop/releases'],
   ['src/index.html', '<lilac-mpv-video id="video"'],
   ['src/app.js', 'video.openLilacSource'],
   ['src/app.js', 'positionSeconds'],
