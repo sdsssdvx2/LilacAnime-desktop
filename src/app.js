@@ -1171,13 +1171,14 @@ function renderCatalogIndex(value){
   $('#reanimeIndexState').textContent=lines.length?`${lines.join(' · ')}${needsTmdb?' — TMDB 키를 넣으면 나머지도 찾아요.':''}`:'';
 }
 window.lilac.onCatalogIndexState(renderCatalogIndex);window.lilac.catalogIndexState().then(renderCatalogIndex).catch(()=>{});
-// 번역 API (Gemini, OpenAI, DeepL or Qwen, as in the Android app): each one's key, checked when saved, and its model
-// (Gemini, OpenAI and Qwen list the models the key can use). Only the picked API's settings are shown.
+// 번역 API (Gemini, OpenAI, DeepL or Qwen, as in the Android app, or Claude): each one's key, checked when saved, and
+// its model (Gemini, OpenAI, Qwen and Claude list the models the key can use). Only the picked API's settings are shown.
 const CLOUD_FIELDS={
   gemini:{name:'Gemini',key:'key',model:'model',models:'models',id:'gemini',empty:'aistudio.google.com에서 발급한 API 키를 넣어 주세요.'},
   openai:{name:'OpenAI',key:'openaiKey',model:'openaiModel',models:'openaiModels',id:'openai',empty:'platform.openai.com에서 발급한 API 키를 넣어 주세요.'},
   deepl:{name:'DeepL',key:'deeplKey',id:'deepl',empty:'deepl.com에서 발급한 API 키를 넣어 주세요. 무료 키(끝이 :fx)도 됩니다.'},
-  qwen:{name:'Qwen',key:'qwenKey',model:'qwenModel',models:'qwenModels',id:'qwen',empty:'Alibaba Cloud Model Studio에서 발급한 API 키를 넣어 주세요.'}
+  qwen:{name:'Qwen',key:'qwenKey',model:'qwenModel',models:'qwenModels',id:'qwen',empty:'Alibaba Cloud Model Studio에서 발급한 API 키를 넣어 주세요.'},
+  claude:{name:'Claude',key:'claudeKey',model:'claudeModel',models:'claudeModels',id:'claude',empty:'console.anthropic.com에서 발급한 Anthropic API 키를 넣어 주세요. Claude 구독과 별개로 API 크레딧 충전이 필요합니다.'}
 };
 function renderTranslationSettings(value,message,messageFor){
   translationSettings=value||translationSettings;renderLocalAi(value);if(!value)return;

@@ -9,6 +9,15 @@ const { createRequire } = require('node:module');
 const filename = path.resolve(__dirname, '../electron/subtitle-translator.cjs');
 const source = fs.readFileSync(filename, 'utf8');
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+// A streamed Messages API answer (the SDK streams Claude's requests): one text block, then the stop reason.
+const claudeStream = (text, stopReason = 'end_turn', stopDetails = null) => new Response([
+  ['message_start', { type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } }],
+  ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
+  ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }],
+  ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+  ['message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null, stop_details: stopDetails }, usage: { output_tokens: 1 } }],
+  ['message_stop', { type: 'message_stop' }]
+].map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
 function setup(t, fetch, settings = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-ai-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -18,7 +27,7 @@ function setup(t, fetch, settings = {}) {
     Buffer, console, require: name => name === './local-ai.cjs' ? { createLocalAi: () => ({ models: () => [] }), promptVersion: () => '' } : requireReal(name) };
   // Exercise the real request/retry functions without adding a production test API.
   vm.runInNewContext(source.replace('return { settings, saveSettings, translate, cancel, jump, ready, local, clouds: CLOUDS, defaultRules: () => TRANSLATION_RULES };',
-    'return { settings, saveSettings, translate, cancel, generate, askOpenai, askQwen, askDeepl, system, defaultRules: () => TRANSLATION_RULES };'), sandbox, { filename });
+    'return { settings, saveSettings, translate, cancel, generate, askOpenai, askQwen, askDeepl, askClaude, system, defaultRules: () => TRANSLATION_RULES };'), sandbox, { filename });
   return { ai: module.exports.createTranslator(dir), dir };
 }
 
@@ -132,7 +141,7 @@ test('Gemini daily quota hands unfinished subtitles to the next configured API',
   assert.deepEqual(hosts, ['generativelanguage.googleapis.com', 'api.openai.com']);
 });
 
-for (const api of ['gemini', 'openai', 'qwen', 'deepl']) {
+for (const api of ['gemini', 'openai', 'qwen', 'deepl', 'claude']) {
   test(`${api} cancellation interrupts rate-limit wait and sends no further requests`, async t => {
     let calls = 0;
     const { ai } = setup(t, async () => { calls++; return response({ error: { message: 'Rate limit exceeded', details: [{ retryDelay: '60s' }] } }, 429); });
@@ -140,6 +149,7 @@ for (const api of ['gemini', 'openai', 'qwen', 'deepl']) {
     const promise = api === 'gemini' ? ai.generate('fake-key', 'gemini-2.5-flash', 'JSON', '[]', abort.signal)
       : api === 'openai' ? ai.askOpenai({ openaiKey: 'fake-key' }, 'gpt-5-mini', 'JSON', '{}', abort.signal)
       : api === 'qwen' ? ai.askQwen({ qwenKey: 'fake-key', qwenRegion: 'international' }, 'qwen-plus', 'JSON', '{}', abort.signal)
+      : api === 'claude' ? ai.askClaude({ claudeKey: 'fake-key' }, 'claude-opus-5-5', 'JSON', '{}', abort.signal)
       : ai.askDeepl({ deeplKey: 'fake-key' }, ['hello'], {}, abort.signal);
     // Let fetch parsing complete and enter the retry delay before cancelling.
     await new Promise(resolve => setImmediate(resolve));
@@ -149,16 +159,17 @@ for (const api of ['gemini', 'openai', 'qwen', 'deepl']) {
   });
 }
 
-for (const api of ['gemini', 'openai', 'qwen', 'deepl']) {
+for (const api of ['gemini', 'openai', 'qwen', 'deepl', 'claude']) {
   test(`${api} complete subtitle translation preserves timing and caches result`, async t => {
     let calls = 0;
-    const keys = { gemini: { key: 'fake-key', model: 'gemini-2.5-flash' }, openai: { openaiKey: 'fake-key', openaiModel: 'gpt-5-mini' }, qwen: { qwenKey: 'fake-key', qwenModel: 'qwen-plus' }, deepl: { deeplKey: 'fake:fx' } };
+    const keys = { gemini: { key: 'fake-key', model: 'gemini-2.5-flash' }, openai: { openaiKey: 'fake-key', openaiModel: 'gpt-5-mini' }, qwen: { qwenKey: 'fake-key', qwenModel: 'qwen-plus' }, deepl: { deeplKey: 'fake:fx' }, claude: { claudeKey: 'fake-key', claudeModel: 'claude-opus-5-5', claudeModels: ['claude-opus-5-5'] } };
     const { ai, dir } = setup(t, async (url, init) => {
       calls++;
       const body = JSON.parse(init.body), answer = '[{"i":0,"t":"안녕"}]';
       if (api === 'gemini') return response({ candidates: [{ content: { parts: [{ text: answer }] } }] });
       if (api === 'openai') return response({ output: [{ content: [{ type: 'output_text', text: `{"lines":${answer}}` }] }] });
       if (api === 'qwen') return response({ choices: [{ message: { content: `{"lines":${answer}}` } }] });
+      if (api === 'claude') return claudeStream(`{"lines":${answer}}`);
       assert.equal(body.text.length, 1);
       return response({ translations: [{ text: '안녕' }] });
     }, { cloud: api, ...keys[api] });
@@ -218,4 +229,86 @@ test('번역 프롬프트 is saved trimmed, refused past 4000 characters, and a 
   await ai.saveSettings({ promptExtra: '- 존댓말' });
   assert.equal((await ai.translate({ file, provider: 'cloud' })).cached, false);
   assert.equal(calls, 2);
+});
+
+test('Claude: a key is checked by listing every model it can use, and the latest Opus is picked', async t => {
+  const { ai } = setup(t, async (url, init) => {
+    assert.equal(new URL(url).origin + new URL(url).pathname, 'https://api.anthropic.com/v1/models');
+    assert.equal(new Headers(init.headers).get('x-api-key'), 'fake-key');
+    return response({ data: ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5'].map(id => ({ type: 'model', id, display_name: id, created_at: '2026-01-01T00:00:00Z' })), has_more: false, first_id: 'claude-haiku-5-5', last_id: 'claude-sonnet-5-5' });
+  });
+  const saved = await ai.saveSettings({ claudeKey: ' fake-key ' });
+  assert.equal(saved.claudeKey, 'fake-key');
+  assert.equal(saved.claudeModel, 'claude-opus-5-5');
+  assert.deepEqual(Array.from(saved.claudeModels), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5']);
+  assert.equal((await ai.saveSettings({ claudeModel: 'claude-haiku-5-5' })).claudeModel, 'claude-haiku-5-5');
+  assert.equal((await ai.saveSettings({ claudeModel: 'not-listed' })).claudeModel, 'claude-haiku-5-5');
+});
+
+test('Claude: a wrong key or one with no models never replaces the saved one', async t => {
+  for (const failure of [() => response({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }, 401), () => response({ data: [], has_more: false, first_id: null, last_id: null })]) {
+    const original = { claudeKey: 'old-fake', claudeModel: 'claude-opus-5-5', claudeModels: ['claude-opus-5-5'] };
+    const { ai, dir } = setup(t, failure, original);
+    await assert.rejects(ai.saveSettings({ claudeKey: 'new-fake' }));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'translation.json'), 'utf8')), original);
+  }
+});
+
+test('Claude: structured JSON at low effort with a cached system prompt and the server-side fallback', async t => {
+  const { ai } = setup(t, async (url, init) => {
+    assert.match(url, /^https:\/\/api\.anthropic\.com\/v1\/messages/);
+    const headers = new Headers(init.headers), body = JSON.parse(init.body);
+    assert.equal(headers.get('x-api-key'), 'fake-key');
+    assert.match(headers.get('anthropic-beta'), /server-side-fallback-2026-07-01/);
+    assert.equal(body.model, 'claude-opus-5-5');
+    assert.equal(body.stream, true);
+    assert.equal(body.fallbacks, 'default');
+    assert.equal(body.output_config.effort, 'low');
+    assert.equal(body.output_config.format.type, 'json_schema');
+    assert.equal(body.output_config.format.schema.additionalProperties, false);
+    assert.deepEqual(body.system, [{ type: 'text', text: 'JSON', cache_control: { type: 'ephemeral' } }]);
+    assert.deepEqual(body.messages, [{ role: 'user', content: '{"lines":[]}' }]);
+    return claudeStream('{"lines":[]}');
+  });
+  assert.equal(await ai.askClaude({ claudeKey: 'fake-key' }, 'claude-opus-5-5', 'JSON', '{"lines":[]}'), '{"lines":[]}');
+});
+
+test('Claude: a model without effort drops it and the working request is remembered; no fallback beta on older models', async t => {
+  const shapes = [];
+  const { ai } = setup(t, async (url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(new Headers(init.headers).get('anthropic-beta'), null);
+    assert.equal(body.fallbacks, undefined);
+    shapes.push(body.output_config?.effort ? 'effort' : body.output_config?.format ? 'schema' : 'plain');
+    return body.output_config?.effort ? response({ type: 'error', error: { type: 'invalid_request_error', message: 'effort is not supported' } }, 400) : claudeStream('{"lines":[]}');
+  });
+  for (let i = 0; i < 2; i++) await ai.askClaude({ claudeKey: 'fake-key' }, 'claude-haiku-4-5', 'JSON', '{}');
+  assert.deepEqual(shapes, ['effort', 'schema', 'schema']);
+});
+
+test('Claude: a key out of credit is not asked again in other shapes', async t => {
+  let calls = 0;
+  const { ai } = setup(t, async () => { calls++; return response({ type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } }, 400); });
+  await assert.rejects(ai.askClaude({ claudeKey: 'fake-key' }, 'claude-opus-5-5', 'JSON', '{}'), error => error.status === 400 && error.billing);
+  assert.equal(calls, 1);
+});
+
+test('Claude: a declined batch is an error, not an empty translation', async t => {
+  const { ai } = setup(t, async () => claudeStream('', 'refusal', { type: 'refusal', category: 'cyber', explanation: null }));
+  await assert.rejects(ai.askClaude({ claudeKey: 'fake-key' }, 'claude-opus-5-5', 'JSON', '{}'), error => error.refused && /거절/.test(error.message));
+});
+
+test('Claude: a rate-limited model hands over to another of its family only', async t => {
+  const models = [];
+  const { ai, dir } = setup(t, async (url, init) => {
+    const { model } = JSON.parse(init.body); models.push(model);
+    if (model === 'claude-opus-5-5') return new Response(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '0.01' } });
+    return claudeStream('{"lines":[{"i":0,"t":"안녕"}]}');
+  }, { cloud: 'claude', claudeKey: 'fake-key', claudeModel: 'claude-opus-5-5', claudeModels: ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-opus-5'] });
+  const file = path.join(dir, 'source.vtt');
+  fs.writeFileSync(file, 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n');
+  const result = await ai.translate({ file, provider: 'cloud' });
+  assert.equal(result.failed, 0);
+  assert.equal(models.at(-1), 'claude-opus-5');
+  assert.ok(!models.includes('claude-haiku-5-5'));
 });
