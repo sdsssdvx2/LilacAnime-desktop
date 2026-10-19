@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <iterator>
 
 struct Hole {
   int x{};
