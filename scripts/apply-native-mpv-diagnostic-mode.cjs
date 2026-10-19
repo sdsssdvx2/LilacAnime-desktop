@@ -16,22 +16,19 @@ function replaceOnce(needle, replacement, label) {
 }
 
 function replaceRegexOnce(regex, replacement, label) {
-  const match = source.match(regex);
-  if (!match) throw new Error(`${label}: expected 1 anchor, found 0`);
+  const matches = [...source.matchAll(new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g'))];
+  if (matches.length !== 1) throw new Error(`${label}: expected 1 anchor, found ${matches.length}`);
   source = source.replace(regex, replacement);
 }
 
-// Always-visible badge. This is deliberately in static HTML, above every
-// player overlay, so even a renderer/preload failure leaves a useful stage on
-// screen without asking the user for DevTools or sensitive network logs.
 const bodyMatches = index.match(/<body>\r?\n/g) || [];
 if (bodyMatches.length !== 1) throw new Error(`diagnostic badge: expected 1 body anchor, found ${bodyMatches.length}`);
 const badge = `  <div id="nativeMpvDiag" style="position:fixed;top:38px;left:16px;z-index:2147483647;max-width:calc(100vw - 32px);padding:7px 10px;border-radius:8px;background:rgba(20,20,24,.92);color:#fff;font:600 12px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.45)">V4 HTML loaded · waiting renderer script</div>\n`;
 index = index.replace(/<body>\r?\n/, match => match + badge);
 
-// V4 is deliberately diagnostic, not the final renderer choice. Use the
-// simplest software/canvas path so a black frame can no longer be attributed
-// to shared-texture/WebGPU or WebGL upload.
+// Diagnostic only: use the simplest software/canvas path. If V4 receives
+// metadata and frames here, the remaining issue is GPU presentation rather
+// than resolver/relay/libmpv open.
 replaceOnce(
   "    this._surface.setAttribute('render-mode', 'shared-texture');",
   "    this._surface.setAttribute('render-mode', 'canvas2d');",
@@ -62,14 +59,14 @@ nativeStatus('V4 renderer script loaded · api=' + Boolean(window._electronMpvVi
   'diagnostic helper'
 );
 
-replaceOnce(
-  "    super();\n    this._root = this.attachShadow({ mode: 'open' });",
+replaceRegexOnce(
+  /    super\(\);\r?\n    this\._root = this\.attachShadow\(\{ mode: 'open' \}\);/,
   "    super();\n    nativeStatus('V4 native element constructed · canvas2d');\n    this._root = this.attachShadow({ mode: 'open' });",
   'constructor stage'
 );
 
-replaceOnce(
-  "  connectedCallback() {\n    this._trackObserver.observe(this, { childList: true });",
+replaceRegexOnce(
+  /  connectedCallback\(\) \{\r?\n    this\._trackObserver\.observe\(this, \{ childList: true \}\);/,
   "  connectedCallback() {\n    nativeStatus('V4 native element connected · canvas2d');\n    this._trackObserver.observe(this, { childList: true });",
   'connected stage'
 );
@@ -98,20 +95,20 @@ replaceRegexOnce(
   'opened status'
 );
 
-replaceOnce(
-  "  async play() {\n    if (this._openPromise) await this._openPromise;",
+replaceRegexOnce(
+  /  async play\(\) \{\r?\n    if \(this\._openPromise\) await this\._openPromise;/,
   "  async play() {\n    nativeStatus('V4 play requested');\n    if (this._openPromise) await this._openPromise;",
   'play requested status'
 );
 
-replaceOnce(
-  "    await this._surface.play();\n  }",
+replaceRegexOnce(
+  /    await this\._surface\.play\(\);\r?\n  \}/,
   "    await this._surface.play();\n    nativeStatus('V4 play command returned · waiting mpv state');\n  }",
   'play returned status'
 );
 
-replaceOnce(
-  "  _onMpvState(state) {\n    const previousDuration = this._duration;",
+replaceRegexOnce(
+  /  _onMpvState\(state\) \{\r?\n    const previousDuration = this\._duration;/,
   "  _onMpvState(state) {\n    const diagStatus = String(state?.status || 'state');\n    const diagDuration = Number(state?.duration);\n    const diagWidth = Number(state?.width);\n    const diagHeight = Number(state?.height);\n    nativeStatus('V4 mpv state · ' + diagStatus + ' · dur=' + (Number.isFinite(diagDuration) ? diagDuration.toFixed(1) : '-') + ' · size=' + (Number.isFinite(diagWidth) ? diagWidth : 0) + 'x' + (Number.isFinite(diagHeight) ? diagHeight : 0));\n    const previousDuration = this._duration;",
   'mpv state status'
 );
