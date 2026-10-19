@@ -24,29 +24,18 @@ jobs:
         with:
           arch: x64
 
-      - name: Prepare pinned libmpv SDK/runtime
+      - name: Prepare pinned libmpv SDK/runtime for dependency install
         shell: powershell
         run: ./scripts/setup-libmpv.ps1
 
       - name: Configure prototype dependencies and side-by-side identity
         run: node scripts/configure-native-mpv-package.cjs
 
-      - name: Install dependencies and build native addon
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Patch Windows BGRA shared texture synchronization
-        run: |
-          node scripts/patch-electron-mpv-video-v6.cjs
-          npm --prefix node_modules/electron-mpv-video run build:native
-
-      - name: Select safe embedded renderer and diagnostic stages
-        run: node scripts/apply-native-mpv-diagnostic-mode.cjs
-
-      - name: Apply update-safe native mpv source transform
+      - name: Apply V7 hosted mpv source transform
         run: node scripts/apply-native-mpv-patch.cjs
-
-      - name: Keep native player controls fail-safe
-        run: node scripts/apply-native-mpv-v6-controls.cjs
 
       - name: Build Windows installer
         run: npm run dist -- --publish never
