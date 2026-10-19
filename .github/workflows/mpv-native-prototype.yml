@@ -5,6 +5,10 @@ on:
     branches: [mpv-native-engine]
   workflow_dispatch:
 
+concurrency:
+  group: lilac-native-mpv-prototype
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
