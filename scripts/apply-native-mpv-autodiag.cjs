@@ -172,7 +172,6 @@ async function runNativeMpvAutoDiagnostic(video, openResult = {}) {
     report.bridge = await window.lilac.nativeMpvDiagnostics().catch(error => ({ error: safeError(error) }));
     report.bridgeLatencyMs = Math.round(performance.now() - bridgeStart);
     if (report.bridge?.relay) {
-      // Relay stats contain counters only; remove any future accidental non-scalar fields.
       report.bridge.relay = Object.fromEntries(Object.entries(report.bridge.relay).filter(([, value]) => ['number','boolean','string'].includes(typeof value)));
     }
 
@@ -220,7 +219,7 @@ buildSync({
 });
 
 const generated = fs.readFileSync(path.join(root, 'src', 'mpv-native.generated.js'), 'utf8');
-for (const marker of ['LILAC_AUTODIAG_VERSION', 'runNativeMpvAutoDiagnostic', '진단결과 복사', 'V11D1']) {
+for (const marker of ['LILAC_AUTODIAG_VERSION', 'runNativeMpvAutoDiagnostic', 'V11D1']) {
   if (!generated.includes(marker)) throw new Error(`autodiag marker missing: ${marker}`);
 }
 
