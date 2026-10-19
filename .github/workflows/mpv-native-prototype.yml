@@ -46,6 +46,9 @@ jobs:
       - name: Add automatic diagnostic self-test
         run: node scripts/apply-native-mpv-autodiag.cjs
 
+      - name: Add transparent Lilac control and subtitle overlay
+        run: node scripts/apply-native-mpv-overlay.cjs
+
       - name: Build Windows installer
         run: npm run dist -- --publish never
 
@@ -63,6 +66,9 @@ jobs:
             electron/main.cjs
             electron/mpv-native-main.cjs
             electron/mpv-relay.cjs
+            electron/mpv-overlay.html
+            electron/mpv-overlay.js
+            electron/mpv-overlay-preload.cjs
             electron/win32-mpv-host.exe
             native/win32-mpv-host.cpp
             src/mpv-native-entry.js
