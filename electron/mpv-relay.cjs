@@ -21,11 +21,17 @@ function createMpvRelay() {
     return /\.m3u8(?:$|\?)/i.test(url.pathname + url.search) ? 'playlist' : fallback;
   }
 
+  function headerFingerprint(headers = {}) {
+    const pairs = Object.entries(headers)
+      .map(([key, value]) => [String(key).toLowerCase(), String(value)])
+      .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+    return crypto.createHash('sha256').update(JSON.stringify(pairs)).digest('hex');
+  }
+
   function register(value, kind, base, headers) {
     const url = validate(value, base);
     const actualKind = kindFor(url, kind);
-    const headerKey = Object.keys(headers || {}).sort().join(',');
-    const key = `${actualKind}:${url.href}:${headerKey}`;
+    const key = `${actualKind}:${url.href}:${headerFingerprint(headers || {})}`;
     const known = tokens.get(key);
     if (known) return known;
     if (resources.size > 20000) {
@@ -68,6 +74,18 @@ function createMpvRelay() {
     }).join('\n');
   }
 
+  function isPlaylistType(contentType = '') {
+    return /(?:mpegurl|vnd\.apple\.mpegurl|x-mpegurl)/i.test(contentType);
+  }
+
+  function writeRaw(response, status, headers, body, method) {
+    const nextHeaders = { ...headers };
+    if (body && method !== 'HEAD') nextHeaders['content-length'] = String(body.length);
+    response.writeHead(status, nextHeaders);
+    if (method === 'HEAD') response.end();
+    else response.end(body);
+  }
+
   async function proxy(request, response) {
     try {
       if (!['GET','HEAD'].includes(request.method || '')) {
@@ -96,11 +114,15 @@ function createMpvRelay() {
         headers: upstreamHeaders,
         redirect: 'follow'
       });
-      if (new URL(upstream.url).protocol !== 'https:') throw new Error('relay redirect left HTTPS');
+      const finalUrl = new URL(upstream.url || item.url.href);
+      if (finalUrl.protocol !== 'https:') throw new Error('relay redirect left HTTPS');
 
-      if (item.kind === 'playlist') {
+      const upstreamType = upstream.headers.get('content-type') || '';
+      const playlistResponse = item.kind === 'playlist' || isPlaylistType(upstreamType) || /\.m3u8(?:$|\?)/i.test(finalUrl.pathname + finalUrl.search);
+
+      if (playlistResponse) {
         const source = await upstream.text();
-        const body = rewritePlaylist(source, upstream.url || item.url.href, item.headers);
+        const body = rewritePlaylist(source, finalUrl.href, item.headers);
         response.writeHead(upstream.status, {
           'Content-Type': 'application/vnd.apple.mpegurl',
           'Cache-Control': 'no-store'
@@ -110,10 +132,30 @@ function createMpvRelay() {
         return;
       }
 
+      // Some providers hide HLS behind extensionless/text endpoints. For small textual
+      // responses, sniff #EXTM3U before falling back to an ordinary resource response.
+      if (item.kind === 'resource' && request.method === 'GET' && /^text\//i.test(upstreamType)) {
+        const raw = Buffer.from(await upstream.arrayBuffer());
+        const text = raw.toString('utf8');
+        if (/^\s*#EXTM3U(?:\r?\n|$)/i.test(text)) {
+          const body = rewritePlaylist(text, finalUrl.href, item.headers);
+          response.writeHead(upstream.status, {
+            'Content-Type': 'application/vnd.apple.mpegurl',
+            'Cache-Control': 'no-store'
+          });
+          response.end(body);
+          return;
+        }
+        writeRaw(response, upstream.status, {
+          'Content-Type': upstreamType || 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store'
+        }, raw, request.method);
+        return;
+      }
+
       if (item.kind === 'segment') {
         const raw = Buffer.from(await upstream.arrayBuffer());
         const normalized = stripPngTsWrapper(raw);
-        const upstreamType = upstream.headers.get('content-type') || '';
         const type = normalized.stripped || /^image\//i.test(upstreamType) ? 'video/mp2t' : (upstreamType || 'application/octet-stream');
         response.writeHead(upstream.status, {
           'Content-Type': type,

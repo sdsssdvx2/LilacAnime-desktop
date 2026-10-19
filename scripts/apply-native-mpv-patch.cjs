@@ -39,15 +39,18 @@ main = replaceOnce(
 main = replaceOnce(
   main,
   'let playerStreamHeaders = null;',
-  `let playerStreamHeaders = null;\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    let effective = { ...(supplied || {}) };\n    if (!Object.keys(effective).length) effective = { ...(playerStreamHeaders || {}) };\n    if (!Object.keys(effective).length && parsed?.host) effective = { ...(resolvedStreamHeaders.get(parsed.host) || {}) };\n    return effective;\n  }\n});`,
+  `let playerStreamHeaders = null;\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    const resolved = parsed?.host ? (resolvedStreamHeaders.get(parsed.host) || {}) : {};\n    return { ...resolved, ...(playerStreamHeaders || {}), ...(supplied || {}) };\n  }\n});`,
   'main bridge initialization'
 );
 
+// electron-mpv-video's preload integration requires the main renderer preload
+// to run outside Electron's renderer sandbox. Only the primary Lilac window is
+// changed; provider resolver windows keep their original sandbox settings.
 main = replaceOnce(
   main,
   "      preload: path.join(__dirname, 'preload.cjs'),",
-  "      preload: path.join(__dirname, 'preload-native.generated.cjs'),",
-  'main preload path'
+  "      preload: path.join(__dirname, 'preload-native.generated.cjs'),\n      sandbox: false,",
+  'main preload path and native sandbox setting'
 );
 
 // Keep this prototype's Windows identity separate from the installed stock/V9 build.
@@ -110,14 +113,14 @@ index = replaceOnce(
 app = replaceOnce(
   app,
   '  if(isHls&&window.Hls?.isSupported()){',
-  `  if(window.LilacNativeMpv?.enabled){\n    video.openLilacSource(src,{headers:context.streamHeaders||{},hls:isHls}).catch(error=>{\n      const message=error?.message||String(error);\n      $('#downloadStatus').textContent=\`native mpv 오류: \${message}\`;\n      toast(\`native mpv 재생 오류: \${message}\`);\n    });\n  }else if(isHls&&window.Hls?.isSupported()){`,
+  `  if(window.LilacNativeMpv?.enabled){\n    $('#downloadStatus').textContent='native mpv 스트림을 준비하는 중...';\n    video.openLilacSource(src,{headers:context.streamHeaders||{},hls:isHls}).then(()=>{\n      if(video.currentSrc===src||video.src===src)$('#downloadStatus').textContent='native mpv 영상 데이터를 여는 중...';\n    }).catch(error=>{\n      const raw=error?.message||String(error);\n      const message=String(raw).replace(/https?:\\/\\/[^\\s]+/gi,'[media-url]').replace(/127\\.0\\.0\\.1:\\d+\\/r\\/[a-f0-9]+/gi,'[local-relay]');\n      $('#downloadStatus').textContent=\`native mpv 오류: \${message}\`;\n      toast(\`native mpv 재생 오류: \${message}\`);\n    });\n  }else if(isHls&&window.Hls?.isSupported()){`,
   'native playback branch'
 );
 
 app = replaceOnce(
   app,
   'video.playbackRate=Number($(\'#speed\').value);if(!isHls)video.play().catch(()=>{});loadJimakuList();',
-  'video.playbackRate=Number($(\'#speed\').value);if(window.LilacNativeMpv?.enabled||!isHls)video.play().catch(()=>{});loadJimakuList();',
+  'video.playbackRate=Number($(\'#speed\').value);if(window.LilacNativeMpv?.enabled||!isHls)video.play().catch(error=>{if(window.LilacNativeMpv?.enabled){const message=String(error?.message||error).replace(/https?:\\/\\/[^\\s]+/gi,\'[media-url]\');$(\'#downloadStatus\').textContent=`native mpv 재생 시작 오류: ${message}`}});loadJimakuList();',
   'native play start'
 );
 
@@ -188,11 +191,13 @@ const required = [
   ['electron/main.cjs', 'LILAC_NATIVE_MPV_SOURCE_PATCH'],
   ['electron/main.cjs', 'await nativeMpv.ensure()'],
   ['electron/main.cjs', 'await nativeMpv.attachWindow(win)'],
+  ['electron/main.cjs', 'sandbox: false'],
   ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
   ['electron/preload.cjs', 'nativeMpvPrepare'],
   ['electron/updater.cjs', 'sdsssdvx2/LilacAnime-desktop/releases'],
   ['src/index.html', '<lilac-mpv-video id="video"'],
   ['src/app.js', 'video.openLilacSource'],
+  ['src/app.js', 'native mpv 스트림을 준비하는 중'],
   ['src/app.js', 'positionSeconds'],
   ['src/mpv-native.generated.js', 'LilacNativeMpv']
 ];
