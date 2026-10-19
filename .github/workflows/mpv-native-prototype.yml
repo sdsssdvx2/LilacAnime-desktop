@@ -34,6 +34,9 @@ jobs:
       - name: Install dependencies and build native addon
         run: npm install --no-audit --no-fund
 
+      - name: Select safe embedded renderer and diagnostic stages
+        run: node scripts/apply-native-mpv-diagnostic-mode.cjs
+
       - name: Apply update-safe native mpv source transform
         run: node scripts/apply-native-mpv-patch.cjs
 
