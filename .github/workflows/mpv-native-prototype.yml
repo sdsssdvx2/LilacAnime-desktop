@@ -27,7 +27,7 @@ jobs:
       - name: Configure prototype identity and packaging
         run: node scripts/configure-native-mpv-package.cjs
 
-      - name: Build raw Win32 mpv host helper
+      - name: Build raw Win32 HWND host helper
         shell: cmd
         run: >-
           cl /nologo /EHsc /std:c++17 /O2
@@ -37,8 +37,8 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Apply V10 raw Win32 hosted mpv source transform
-        run: node scripts/apply-native-mpv-v10.cjs
+      - name: Apply V11 helper-created raw HWND source transform
+        run: node scripts/apply-native-mpv-v11.cjs
 
       - name: Build Windows installer
         run: npm run dist -- --publish never
