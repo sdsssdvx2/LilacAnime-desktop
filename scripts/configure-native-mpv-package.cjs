@@ -14,12 +14,14 @@ pkg.build.win ||= {};
 pkg.build.nsis ||= {};
 pkg.build.asarUnpack ||= [];
 
-// electron.sharedTexture is used by electron-mpv-video on Windows/macOS.
-pkg.devDependencies.electron = '40.10.5';
-pkg.dependencies['electron-mpv-video'] = '0.1.1';
+// V10 no longer uses electron-mpv-video/libmpv frame-copy or shared-texture
+// rendering. Keep Electron aligned with upstream Lilac and host the already
+// validated mpv.exe window through a tiny Win32 helper.
+pkg.devDependencies.electron = '38.2.0';
+delete pkg.dependencies['electron-mpv-video'];
 
-// Keep the first inline-player candidate completely side-by-side with the
-// user's known-good LilacAnime installation. It must not overwrite V9.
+// Keep the prototype completely side-by-side with the user's known-good
+// LilacAnime installation. It must not overwrite the existing V9 fallback.
 pkg.name = 'lilacanime-native-prototype';
 pkg.productName = 'LilacAnime Native Prototype';
 pkg.build.appId = 'com.lilac.anime.desktop.nativeprototype';
@@ -30,8 +32,8 @@ pkg.build.nsis.shortcutName = 'LilacAnime Native Prototype';
 
 const unpack = new Set(pkg.build.asarUnpack);
 unpack.add('node_modules/ffmpeg-static/**');
-unpack.add('node_modules/electron-mpv-video/native/mpv-addon/build/Release/**');
+unpack.add('electron/win32-mpv-host.exe');
 pkg.build.asarUnpack = [...unpack];
 
 fs.writeFileSync(packageFile, `${JSON.stringify(pkg, null, 2)}\n`);
-console.log('Configured side-by-side native mpv prototype: Electron 40.10.5 + electron-mpv-video 0.1.1');
+console.log('Configured side-by-side V10 raw Win32 hosted-mpv prototype: Electron 38.2.0');
