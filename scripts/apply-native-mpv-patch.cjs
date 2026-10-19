@@ -26,8 +26,88 @@ let updater = read('electron/updater.cjs');
 let index = read('src/index.html');
 let app = read('src/app.js');
 let anime4k = read('src/anime4k.js');
+let bridge = read('electron/mpv-native-main.cjs');
+let hosted = read('src/mpv-native-entry.js');
 
 if (main.includes('LILAC_NATIVE_MPV_SOURCE_PATCH')) throw new Error('native mpv source patch is already applied');
+
+// V8: do not use a BrowserWindow as the mpv --wid target. Its Chromium surface
+// paints over mpv's Win32 child window and leaves audio-only black playback.
+// BaseWindow is a raw native window until a WebContentsView is attached, so mpv
+// can own the whole client area without a competing Chromium compositor surface.
+bridge = replaceOnce(
+  bridge,
+  "const { BrowserWindow } = require('electron');",
+  "const { BaseWindow } = require('electron');",
+  'V8 raw host import'
+);
+
+bridge = replaceOnce(
+  bridge,
+  `  function nativeHandleDecimal(win) {\n    const raw = win.getNativeWindowHandle();\n    if (raw.length >= 8 && process.arch === 'x64') return raw.readBigUInt64LE(0).toString();\n    return String(raw.readUInt32LE(0));\n  }`,
+  `  function nativeHandleDecimal(win) {\n    const raw = win.getNativeWindowHandle();\n    // mpv's win32 --wid contract expects the HWND cast to uint32_t.\n    if (process.platform === 'win32') return String(raw.readUInt32LE(0));\n    if (raw.length >= 8 && process.arch === 'x64') return raw.readBigUInt64LE(0).toString();\n    return String(raw.readUInt32LE(0));\n  }`,
+  'V8 uint32 HWND'
+);
+
+bridge = replaceOnce(
+  bridge,
+  '      hostWindow = new BrowserWindow({',
+  '      hostWindow = new BaseWindow({',
+  'V8 BaseWindow host'
+);
+
+bridge = replaceOnce(
+  bridge,
+  `        focusable: true,\n        webPreferences: {\n          sandbox: true,\n          contextIsolation: true,\n          nodeIntegration: false,\n          backgroundThrottling: false\n        }`,
+  `        focusable: false`,
+  'V8 remove Chromium host surface'
+);
+
+bridge = replaceOnce(
+  bridge,
+  `      hostWindow.setMenuBarVisibility(false);\n      void hostWindow.loadURL('data:text/html,<meta charset="utf-8"><body style="margin:0;background:#000;overflow:hidden"></body>').catch(() => {});\n`,
+  '',
+  'V8 remove BrowserWindow content'
+);
+
+bridge = replaceOnce(
+  bridge,
+  `      '--force-window=yes',\n      \`--wid=\${hwnd}\`,`,
+  `      '--force-window=yes',\n      '--no-border',\n      \`--wid=\${hwnd}\`,`,
+  'V8 borderless mpv child'
+);
+
+bridge = replaceOnce(
+  bridge,
+  `      '--osc=yes',\n      '--input-default-bindings=yes',`,
+  `      '--osc=no',\n      '--input-default-bindings=no',`,
+  'V8 Lilac-only controls'
+);
+
+bridge = replaceOnce(
+  bridge,
+  "    child = spawn(executable, args, { windowsHide: true, stdio: 'ignore' });",
+  "    child = spawn(executable, args, { windowsHide: false, stdio: 'ignore' });",
+  'V8 do not hide embedded GUI window'
+);
+
+// The native child window is always above Chromium. Keep all Lilac controls out
+// of its rectangle rather than pretending DOM overlays can sit above it.
+hosted = replaceOnce(
+  hosted,
+  `    body.player-mode .player-center {\n      top: auto !important;\n      bottom: 78px !important;\n      transform: translateX(-50%) !important;\n      z-index: 50 !important;\n    }`,
+  `    body.player-mode .player-top,\n    body.player-mode .player-center,\n    body.player-mode .player-bottom {\n      z-index: 50 !important;\n    }\n    body.player-mode .player-center {\n      top: auto !important;\n      bottom: 118px !important;\n      transform: translateX(-50%) !important;\n    }`,
+  'V8 intentional control dock'
+);
+
+hosted = hosted.replaceAll('V7 hosted-mpv', 'V8 hosted-mpv');
+
+hosted = replaceOnce(
+  hosted,
+  `  _hostBounds() {\n    const rect = this.getBoundingClientRect();\n    const topInset = Math.min(72, Math.max(0, rect.height * 0.10));\n    const bottomInset = Math.min(150, Math.max(84, rect.height * 0.17));\n    return {\n      x: rect.left,\n      y: rect.top + topInset,\n      width: Math.max(1, rect.width),\n      height: Math.max(90, rect.height - topInset - bottomInset),\n      visible: this._playerVisible() && this._hostOpen\n    };\n  }`,
+  `  _hostBounds() {\n    const rect = this.getBoundingClientRect();\n    const topBar = document.querySelector('#immersivePlayer .player-top')?.getBoundingClientRect();\n    const center = document.querySelector('#immersivePlayer .player-center')?.getBoundingClientRect();\n    const bottom = document.querySelector('#immersivePlayer .player-bottom')?.getBoundingClientRect();\n    const top = Math.max(rect.top, Number(topBar?.bottom) || rect.top) + 8;\n    const lowerEdges = [rect.bottom];\n    if (center && Number.isFinite(center.top) && center.top > top) lowerEdges.push(center.top - 10);\n    if (bottom && Number.isFinite(bottom.top) && bottom.top > top) lowerEdges.push(bottom.top - 10);\n    const bottomEdge = Math.max(top + 90, Math.min(...lowerEdges));\n    return {\n      x: Math.round(rect.left),\n      y: Math.round(top),\n      width: Math.max(1, Math.round(rect.width)),\n      height: Math.max(90, Math.round(bottomEdge - top)),\n      visible: this._playerVisible() && this._hostOpen\n    };\n  }`,
+  'V8 DOM-measured video viewport'
+);
 
 main = replaceOnce(
   main,
@@ -145,6 +225,8 @@ anime4k = replaceOnce(
   'disable Chromium Anime4K path for hosted mpv'
 );
 
+write('electron/mpv-native-main.cjs', bridge);
+write('src/mpv-native-entry.js', hosted);
 write('electron/main.cjs', main);
 write('electron/preload.cjs', preload);
 write('electron/updater.cjs', updater);
@@ -176,7 +258,7 @@ buildSync({
   logLevel: 'info'
 });
 
-for (const relative of ['electron/main.cjs','electron/preload-native.generated.cjs','electron/updater.cjs','src/app.js','src/anime4k.js']) {
+for (const relative of ['electron/main.cjs','electron/mpv-native-main.cjs','electron/preload-native.generated.cjs','electron/updater.cjs','src/app.js','src/anime4k.js']) {
   execFileSync(process.execPath, ['--check', file(relative)], { stdio: 'inherit' });
 }
 
@@ -188,6 +270,8 @@ const required = [
   ['electron/main.cjs', 'render-process-gone'],
   ['electron/main.cjs', 'sandbox: false'],
   ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
+  ['electron/mpv-native-main.cjs', "const { BaseWindow } = require('electron');"],
+  ['electron/mpv-native-main.cjs', "if (process.platform === 'win32') return String(raw.readUInt32LE(0));"],
   ['electron/preload.cjs', 'nativeMpvOpen'],
   ['electron/preload.cjs', 'nativeMpvState'],
   ['electron/preload.cjs', 'nativeMpvBounds'],
@@ -198,10 +282,11 @@ const required = [
   ['src/app.js', 'video.openLilacSource'],
   ['src/app.js', 'mpv 호스트를 준비하는 중'],
   ['src/app.js', 'positionSeconds'],
+  ['src/mpv-native-entry.js', 'V8 hosted-mpv'],
   ['src/mpv-native.generated.js', 'hosted-mpv']
 ];
 for (const [relative, marker] of required) {
   if (!read(relative).includes(marker)) throw new Error(`post-patch marker missing: ${relative} :: ${marker}`);
 }
 
-console.log('Hosted mpv source patch applied and generated bundles validated.');
+console.log('Hosted mpv V8 BaseWindow patch applied and generated bundles validated.');
