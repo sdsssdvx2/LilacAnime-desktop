@@ -1,13 +1,44 @@
-import { defineMpvVideoElement } from 'electron-mpv-video/renderer';
-
-defineMpvVideoElement();
-
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const decodeCueText = text => {
-  const div = document.createElement('div');
-  div.innerHTML = String(text || '').replace(/\n/g, '<br>');
-  return div.textContent || '';
-};
+
+function ensureHostStyle() {
+  if (document.querySelector('#lilacMpvHostStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'lilacMpvHostStyle';
+  style.textContent = `
+    body.player-mode .player-center {
+      top: auto !important;
+      bottom: 78px !important;
+      transform: translateX(-50%) !important;
+      z-index: 50 !important;
+    }
+    #nativeMpvDiag {
+      position: fixed;
+      top: 38px;
+      left: 16px;
+      z-index: 2147483647;
+      max-width: calc(100vw - 32px);
+      padding: 6px 9px;
+      border-radius: 8px;
+      background: rgba(20,20,24,.94);
+      color: #fff;
+      font: 600 11px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;
+      pointer-events: none;
+      box-shadow: 0 2px 12px rgba(0,0,0,.45);
+    }
+  `;
+  document.head.append(style);
+}
+
+function diag(text) {
+  ensureHostStyle();
+  let badge = document.querySelector('#nativeMpvDiag');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'nativeMpvDiag';
+    document.body.append(badge);
+  }
+  badge.textContent = `V7 hosted-mpv · ${String(text || '').slice(0, 420)}`;
+}
 
 function parseTime(value) {
   const parts = String(value || '').trim().split(':').map(Number);
@@ -24,7 +55,7 @@ function parseVtt(text) {
   for (const block of blocks) {
     const lines = block.split('\n').filter((line, index) => !(index === 0 && /^WEBVTT\b/i.test(line.trim())));
     if (!lines.length || /^NOTE(?:\s|$)/.test(lines[0].trim())) continue;
-    let timing = lines.findIndex(line => line.includes('-->'));
+    const timing = lines.findIndex(line => line.includes('-->'));
     if (timing < 0) continue;
     const match = lines[timing].match(/^\s*([^\s]+)\s*-->\s*([^\s]+)(?:\s+.*)?$/);
     if (!match) continue;
@@ -50,7 +81,6 @@ class LilacTextTrack {
   get mode() { return this._mode; }
   set mode(value) {
     this._mode = ['disabled', 'hidden', 'showing'].includes(value) ? value : 'hidden';
-    this.owner.refreshSubtitleOverlay();
   }
   get activeCues() {
     if (this._mode !== 'showing') return null;
@@ -60,33 +90,20 @@ class LilacTextTrack {
   addCue(cue) {
     if (!this.cues.includes(cue)) this.cues.push(cue);
     this.cues.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
-    this.owner.refreshSubtitleOverlay();
   }
   removeCue(cue) {
     const at = this.cues.indexOf(cue);
     if (at >= 0) this.cues.splice(at, 1);
-    this.owner.refreshSubtitleOverlay();
   }
 }
 
-class LilacNativeVideoElement extends HTMLElement {
+class LilacHostedMpvElement extends HTMLElement {
   static observedAttributes = ['src'];
 
   constructor() {
     super();
     this._root = this.attachShadow({ mode: 'open' });
-    this._surface = document.createElement('mpv-video');
-    this._surface.setAttribute('render-mode', 'shared-texture');
-    this._subtitleLayer = document.createElement('div');
-    this._subtitleLayer.className = 'subtitle-layer';
-    this._root.innerHTML = `<style>
-      :host{display:block;position:relative;overflow:hidden;background:#000;contain:layout paint size}
-      mpv-video{position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:0}
-      .subtitle-layer{position:absolute;inset:0;z-index:3;pointer-events:none;overflow:hidden}
-      .cue{position:absolute;left:4%;right:4%;white-space:pre-wrap;text-align:center;color:#fff;line-height:1.25;word-break:keep-all;overflow-wrap:anywhere}
-    </style>`;
-    this._root.append(this._surface, this._subtitleLayer);
-
+    this._root.innerHTML = `<style>:host{display:block;position:relative;background:#000;overflow:hidden;contain:layout paint size}.placeholder{position:absolute;inset:0;background:#000}</style><div class="placeholder"></div>`;
     this._time = 0;
     this._duration = 0;
     this._width = 0;
@@ -100,20 +117,18 @@ class LilacNativeVideoElement extends HTMLElement {
     this._rawSource = '';
     this._openPromise = null;
     this._openToken = 0;
+    this._metadataSent = false;
+    this._hostOpen = false;
+    this._lastState = null;
+    this._polling = false;
     this._tracks = [];
     this._trackByElement = new Map();
     this._vfc = new Map();
     this._vfcId = 0;
-    this._frameLoop = null;
-    this._metadataSent = false;
-
-    this._surface.addEventListener('mpv-state', event => this._onMpvState(event.detail || {}));
-    this._surface.addEventListener('mpv-error', event => {
-      const detail = event.detail || 'native mpv error';
-      console.warn('Lilac native mpv:', detail);
-      this.dispatchEvent(new Event('error'));
-    });
-
+    this._presentedFrames = 0;
+    this._visibilityTimer = null;
+    this._pollTimer = null;
+    this._resizeObserver = new ResizeObserver(() => this._syncBounds());
     this._trackObserver = new MutationObserver(records => {
       for (const record of records) {
         for (const node of record.addedNodes) if (node instanceof HTMLTrackElement) void this._loadTrack(node);
@@ -123,14 +138,28 @@ class LilacNativeVideoElement extends HTMLElement {
   }
 
   connectedCallback() {
+    ensureHostStyle();
+    diag('renderer ready · external mpv host idle');
+    this._resizeObserver.observe(this);
     this._trackObserver.observe(this, { childList: true });
     for (const track of this.querySelectorAll('track')) void this._loadTrack(track);
+    this._pollTimer ||= setInterval(() => void this._pollState(), 350);
+    this._visibilityTimer ||= setInterval(() => void this._syncBounds(), 250);
+    window.addEventListener('resize', this._boundSync ||= (() => this._syncBounds()));
+    window.addEventListener('scroll', this._boundSync, true);
   }
 
   disconnectedCallback() {
+    this._resizeObserver.disconnect();
     this._trackObserver.disconnect();
-    this._stopFrameLoop();
-    this._surface.stop?.().catch?.(() => {});
+    if (this._pollTimer) clearInterval(this._pollTimer);
+    if (this._visibilityTimer) clearInterval(this._visibilityTimer);
+    this._pollTimer = this._visibilityTimer = null;
+    if (this._boundSync) {
+      window.removeEventListener('resize', this._boundSync);
+      window.removeEventListener('scroll', this._boundSync, true);
+    }
+    void window.lilac?.nativeMpvClose?.().catch(() => {});
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
@@ -140,9 +169,12 @@ class LilacNativeVideoElement extends HTMLElement {
       this._rawSource = '';
       this._time = 0;
       this._duration = 0;
+      this._width = 0;
+      this._height = 0;
       this._readyState = 0;
       this._metadataSent = false;
-      this._surface.stop?.().catch?.(() => {});
+      this._hostOpen = false;
+      void window.lilac?.nativeMpvClose?.().catch(() => {});
       this.dispatchEvent(new Event('emptied'));
       return;
     }
@@ -158,11 +190,11 @@ class LilacNativeVideoElement extends HTMLElement {
     this._time = next;
     this._ended = false;
     this.dispatchEvent(new Event('seeking'));
-    this._surface.seek(next).then(() => {
+    void this._command(['set_property', 'time-pos', next]).then(ok => {
+      if (!ok) return;
       this.dispatchEvent(new Event('seeked'));
       this.dispatchEvent(new Event('timeupdate'));
-      this.refreshSubtitleOverlay();
-    }).catch(() => {});
+    });
   }
   get duration() { return this._duration; }
   get videoWidth() { return this._width; }
@@ -175,17 +207,20 @@ class LilacNativeVideoElement extends HTMLElement {
   get volume() { return this._volume; }
   set volume(value) {
     this._volume = clamp(Number(value) || 0, 0, 1);
-    void this._surface.setVolume(this._muted ? 0 : this._volume * 100).catch(() => {});
+    void this._command(['set_property', 'volume', (this._muted ? 0 : this._volume) * 100]);
   }
   get muted() { return this._muted; }
   set muted(value) {
     this._muted = Boolean(value);
-    void this._surface.setVolume(this._muted ? 0 : this._volume * 100).catch(() => {});
+    void this._command(['set_property', 'mute', this._muted]);
+    if (!this._muted) void this._command(['set_property', 'volume', this._volume * 100]);
+    this.dispatchEvent(new Event('volumechange'));
   }
   get playbackRate() { return this._playbackRate; }
   set playbackRate(value) {
     const next = Number(value);
     this._playbackRate = Number.isFinite(next) && next > 0 ? next : 1;
+    void this._command(['set_property', 'speed', this._playbackRate]);
   }
   get textTracks() { return this._tracks; }
   get buffered() {
@@ -195,6 +230,43 @@ class LilacNativeVideoElement extends HTMLElement {
       start: index => { if (index !== 0 || duration <= 0) throw new DOMException('IndexSizeError'); return 0; },
       end: index => { if (index !== 0 || duration <= 0) throw new DOMException('IndexSizeError'); return duration; }
     };
+  }
+  get seeking() { return false; }
+
+  _playerVisible() {
+    const view = document.querySelector('#playerView');
+    const settings = document.querySelector('#playerSettings');
+    return Boolean(view?.classList.contains('active') && !settings?.classList.contains('open'));
+  }
+
+  _hostBounds() {
+    const rect = this.getBoundingClientRect();
+    const topInset = Math.min(72, Math.max(0, rect.height * 0.10));
+    const bottomInset = Math.min(150, Math.max(84, rect.height * 0.17));
+    return {
+      x: rect.left,
+      y: rect.top + topInset,
+      width: Math.max(1, rect.width),
+      height: Math.max(90, rect.height - topInset - bottomInset),
+      visible: this._playerVisible() && this._hostOpen
+    };
+  }
+
+  async _syncBounds() {
+    if (!window.lilac?.nativeMpvBounds) return;
+    const visible = this._playerVisible();
+    if (!visible && this._hostOpen && !document.querySelector('#playerView')?.classList.contains('active')) {
+      this._hostOpen = false;
+      await window.lilac.nativeMpvClose().catch(() => {});
+      return;
+    }
+    await window.lilac.nativeMpvBounds(this._hostBounds()).catch(() => {});
+  }
+
+  async _command(command) {
+    if (!this._hostOpen || !window.lilac?.nativeMpvCommand) return false;
+    const result = await window.lilac.nativeMpvCommand(command).catch(() => null);
+    return Boolean(result?.ok);
   }
 
   async openLilacSource(rawUrl, { headers = {}, hls = false } = {}) {
@@ -207,14 +279,17 @@ class LilacNativeVideoElement extends HTMLElement {
     this._metadataSent = false;
     this._ended = false;
     this.dispatchEvent(new Event('waiting'));
+    diag('opening hosted mpv · waiting process');
 
     this._openPromise = (async () => {
-      const prepared = await window.lilac.nativeMpvPrepare(this._rawSource, headers || {}, Boolean(hls));
+      const result = await window.lilac.nativeMpvOpen(this._rawSource, headers || {}, Boolean(hls), this._hostBounds());
       if (token !== this._openToken) return false;
-      await this._surface.open(prepared?.url || this._rawSource);
-      if (token !== this._openToken) return false;
-      await this._surface.setVolume(this._muted ? 0 : this._volume * 100);
-      return true;
+      this._hostOpen = Boolean(result?.ok);
+      await this._syncBounds();
+      await this._command(['set_property', 'volume', (this._muted ? 0 : this._volume) * 100]);
+      await this._command(['set_property', 'speed', this._playbackRate]);
+      diag(`host opened · pid=${result?.pid || '-'} · route=${result?.route || '-'} · waiting media state`);
+      return this._hostOpen;
     })();
     return this._openPromise;
   }
@@ -222,14 +297,17 @@ class LilacNativeVideoElement extends HTMLElement {
   async play() {
     if (this._openPromise) await this._openPromise;
     this._ended = false;
-    await this._surface.play();
+    await this._command(['set_property', 'pause', false]);
   }
 
-  pause() { return this._surface.pause(); }
+  async pause() {
+    await this._command(['set_property', 'pause', true]);
+  }
 
   load() {
     if (!this.src) {
-      this._surface.stop?.().catch?.(() => {});
+      this._hostOpen = false;
+      void window.lilac?.nativeMpvClose?.().catch(() => {});
       return;
     }
     if (!this._openPromise) void this.openLilacSource(this.src, { hls: /\.m3u8(?:$|\?)/i.test(this.src) });
@@ -238,46 +316,23 @@ class LilacNativeVideoElement extends HTMLElement {
   requestVideoFrameCallback(callback) {
     const id = ++this._vfcId;
     this._vfc.set(id, callback);
-    this._ensureFrameLoop();
+    requestAnimationFrame(() => {
+      const fn = this._vfc.get(id);
+      if (!fn) return;
+      this._vfc.delete(id);
+      fn(performance.now(), {
+        mediaTime: this._time,
+        presentedFrames: ++this._presentedFrames,
+        width: this._width || this.clientWidth,
+        height: this._height || this.clientHeight
+      });
+    });
     return id;
   }
 
   cancelVideoFrameCallback(id) { this._vfc.delete(id); }
-
-  requestPictureInPicture() {
-    return Promise.reject(new Error('Picture-in-Picture is not implemented by the native mpv prototype yet.'));
-  }
-
-  refreshSubtitleOverlay() {
-    const active = this._tracks.flatMap(track => track.mode === 'showing' ? (track.activeCues || []) : []);
-    this._subtitleLayer.replaceChildren(...active.map(cue => this._cueNode(cue)));
-  }
-
-  _cueNode(cue) {
-    const node = document.createElement('div');
-    node.className = 'cue';
-    node.textContent = decodeCueText(cue.text);
-    const size = clamp(Number(localStorage.getItem('subtitleSize') || 100), 40, 250) / 100;
-    const outline = clamp(Number(localStorage.getItem('vttOutline') || 2), 0, 8);
-    const bold = localStorage.getItem('vttBold') !== 'false';
-    const px = clamp(this.clientHeight * 0.045 * size, 16, 76);
-    const top = cue.lilacTop || (typeof cue.line === 'number' && cue.line <= 20);
-    const line = typeof cue.line === 'number' ? clamp(cue.line, 0, 100) : (top ? 5 : 85);
-    Object.assign(node.style, {
-      top: `${line}%`,
-      transform: top ? 'none' : 'translateY(-100%)',
-      fontSize: `${px}px`,
-      fontWeight: bold ? '700' : '400',
-      fontFamily: '"Malgun Gothic","Noto Sans CJK KR",sans-serif',
-      textShadow: outline > 0 ? [
-        `${outline}px 0 0 #000`, `-${outline}px 0 0 #000`,
-        `0 ${outline}px 0 #000`, `0 -${outline}px 0 #000`,
-        `${outline}px ${outline}px 0 #000`, `-${outline}px ${outline}px 0 #000`,
-        `${outline}px -${outline}px 0 #000`, `-${outline}px -${outline}px 0 #000`
-      ].join(',') : 'none'
-    });
-    return node;
-  }
+  requestPictureInPicture() { return Promise.reject(new Error('PIP is not implemented by hosted mpv yet.')); }
+  refreshSubtitleOverlay() {}
 
   async _loadTrack(element) {
     if (this._trackByElement.has(element)) return;
@@ -291,7 +346,9 @@ class LilacNativeVideoElement extends HTMLElement {
       if (!this._trackByElement.has(element)) return;
       for (const cue of cues) track.addCue(cue);
       element.dispatchEvent(new Event('load'));
-      this.refreshSubtitleOverlay();
+      if (this._hostOpen && element.src && !element.src.startsWith('blob:')) {
+        void this._command(['sub-add', element.src, 'select']);
+      }
     } catch {
       if (this._trackByElement.has(element)) element.dispatchEvent(new Event('error'));
     }
@@ -303,89 +360,59 @@ class LilacNativeVideoElement extends HTMLElement {
     this._trackByElement.delete(element);
     const at = this._tracks.indexOf(track);
     if (at >= 0) this._tracks.splice(at, 1);
-    this.refreshSubtitleOverlay();
   }
 
-  _onMpvState(state) {
-    const previousDuration = this._duration;
-    const previousWidth = this._width;
-    const previousHeight = this._height;
-    const previousPaused = this._paused;
-    const previousTime = this._time;
+  async _pollState() {
+    if (this._polling || !this._hostOpen || !window.lilac?.nativeMpvState) return;
+    this._polling = true;
+    try {
+      const state = await window.lilac.nativeMpvState().catch(() => null);
+      if (!state?.active) return;
+      const previousTime = this._time;
+      const previousDuration = this._duration;
+      const previousWidth = this._width;
+      const previousHeight = this._height;
+      const previousPaused = this._paused;
 
-    if (Number.isFinite(Number(state.time))) this._time = Math.max(0, Number(state.time));
-    if (Number.isFinite(Number(state.duration))) this._duration = Math.max(0, Number(state.duration));
-    if (Number.isFinite(Number(state.width))) this._width = Math.max(0, Number(state.width));
-    if (Number.isFinite(Number(state.height))) this._height = Math.max(0, Number(state.height));
+      if (Number.isFinite(Number(state.time))) this._time = Math.max(0, Number(state.time));
+      if (Number.isFinite(Number(state.duration))) this._duration = Math.max(0, Number(state.duration));
+      if (Number.isFinite(Number(state.width))) this._width = Math.max(0, Number(state.width));
+      if (Number.isFinite(Number(state.height))) this._height = Math.max(0, Number(state.height));
+      if (typeof state.paused === 'boolean') this._paused = state.paused;
+      if (Number.isFinite(Number(state.volume))) this._volume = clamp(Number(state.volume) / 100, 0, 1);
+      this._ended = this._duration > 0 && this._time >= this._duration - 0.15 && this._paused;
+      this._lastState = state;
 
-    const status = String(state.status || '');
-    if (status === 'Playing') this._paused = false;
-    else if (status === 'Paused' || status === 'Ended') this._paused = true;
-    this._ended = status === 'Ended';
-
-    if (this._duration > 0 && !this._metadataSent) {
-      this._metadataSent = true;
-      this._readyState = 4;
-      this.dispatchEvent(new Event('loadedmetadata'));
-      this.dispatchEvent(new Event('durationchange'));
-      this.dispatchEvent(new Event('loadeddata'));
-      this.dispatchEvent(new Event('canplay'));
-    } else if (this._duration !== previousDuration) {
-      this.dispatchEvent(new Event('durationchange'));
-    }
-    if (this._width !== previousWidth || this._height !== previousHeight) this.dispatchEvent(new Event('resize'));
-    if (Math.abs(this._time - previousTime) > 0.001) {
-      this.dispatchEvent(new Event('timeupdate'));
-      this.refreshSubtitleOverlay();
-    }
-    if (!this._paused && previousPaused) {
-      this.dispatchEvent(new Event('play'));
-      this.dispatchEvent(new Event('playing'));
-      this._ensureFrameLoop();
-    } else if (this._paused && !previousPaused && !this._ended) {
-      this.dispatchEvent(new Event('pause'));
-    }
-    if (this._ended) {
-      this.dispatchEvent(new Event('timeupdate'));
-      this.dispatchEvent(new Event('ended'));
-      this._stopFrameLoop();
-    }
-  }
-
-  _ensureFrameLoop() {
-    if (this._frameLoop || this._paused) return;
-    const tick = now => {
-      this._frameLoop = null;
-      if (this._paused || !this.isConnected) return;
-      const callbacks = [...this._vfc.entries()];
-      this._vfc.clear();
-      const metadata = {
-        mediaTime: this._time,
-        presentedFrames: 0,
-        expectedDisplayTime: now,
-        width: this._width,
-        height: this._height
-      };
-      for (const [, callback] of callbacks) {
-        try { callback(now, metadata); } catch {}
+      if (this._duration > 0 && !this._metadataSent) {
+        this._metadataSent = true;
+        this._readyState = 4;
+        this.dispatchEvent(new Event('loadedmetadata'));
+        this.dispatchEvent(new Event('durationchange'));
+        this.dispatchEvent(new Event('loadeddata'));
+        this.dispatchEvent(new Event('canplay'));
+      } else if (this._duration !== previousDuration) {
+        this.dispatchEvent(new Event('durationchange'));
       }
-      this._frameLoop = requestAnimationFrame(tick);
-    };
-    this._frameLoop = requestAnimationFrame(tick);
-  }
+      if (this._width !== previousWidth || this._height !== previousHeight) this.dispatchEvent(new Event('resize'));
+      if (Math.abs(this._time - previousTime) > 0.001) this.dispatchEvent(new Event('timeupdate'));
+      if (!this._paused && previousPaused) {
+        this.dispatchEvent(new Event('play'));
+        this.dispatchEvent(new Event('playing'));
+      } else if (this._paused && !previousPaused && !this._ended) {
+        this.dispatchEvent(new Event('pause'));
+      }
+      if (this._ended) this.dispatchEvent(new Event('ended'));
 
-  _stopFrameLoop() {
-    if (this._frameLoop) cancelAnimationFrame(this._frameLoop);
-    this._frameLoop = null;
+      const t = Number.isFinite(this._time) ? this._time.toFixed(1) : '-';
+      const d = Number.isFinite(this._duration) ? this._duration.toFixed(1) : '-';
+      diag(`active=${state.active} pid=${state.pid || '-'} route=${state.route || '-'} t=${t}/${d} size=${this._width || 0}x${this._height || 0} codec=${state.codec || '-'} fps=${Number(state.fps || 0).toFixed(2)} vid=${state.vid ?? '-'} aid=${state.aid ?? '-'} paused=${String(state.paused)}`);
+    } finally {
+      this._polling = false;
+    }
   }
 }
 
-customElements.define('lilac-mpv-video', LilacNativeVideoElement);
-window.LilacNativeMpv = { enabled: true, elementClass: LilacNativeVideoElement };
+customElements.define('lilac-mpv-video', LilacHostedMpvElement);
+window.LilacNativeMpv = { enabled: true, kind: 'hosted-mpv' };
 
-const refresh = event => {
-  if (!['subtitleSize','subtitlePosition','vttOutline','vttBold','subtitleSync','psSubtitleSize','psSubtitlePosition','psVttOutline','psVttBold','psSubtitleSync'].includes(event.target?.id)) return;
-  document.querySelector('lilac-mpv-video')?.refreshSubtitleOverlay();
-};
-document.addEventListener('input', refresh, true);
-document.addEventListener('change', refresh, true);
+diag('renderer loaded · hosted mpv bridge ready');
