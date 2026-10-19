@@ -39,7 +39,7 @@ main = replaceOnce(
 main = replaceOnce(
   main,
   'let playerStreamHeaders = null;',
-  `let playerStreamHeaders = null;\n// Match the already verified Windows mpv path without copying full RGBA frames through JS.\nprocess.env.MPV_HWDEC = process.env.MPV_HWDEC || 'd3d11va-copy';\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    const resolved = parsed?.host ? (resolvedStreamHeaders.get(parsed.host) || {}) : {};\n    return { ...resolved, ...(playerStreamHeaders || {}), ...(supplied || {}) };\n  }\n});`,
+  `let playerStreamHeaders = null;\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    const resolved = parsed?.host ? (resolvedStreamHeaders.get(parsed.host) || {}) : {};\n    return { ...resolved, ...(playerStreamHeaders || {}), ...(supplied || {}) };\n  }\n});`,
   'main bridge initialization'
 );
 
@@ -73,15 +73,12 @@ main = replaceOnce(
 
 main = replaceOnce(main, 'function createWindow() {', 'async function createWindow() {', 'async createWindow');
 
-// Prototype lifecycle: a renderer crash must not leave libmpv/relay processes and
-// native allocations resident. Normal tray-hide does not close the BrowserWindow,
-// so this only runs when the window is actually gone or the app is quitting.
 main += `\n\n// LILAC_NATIVE_MPV_CLEANUP\napp.on('before-quit', () => { void nativeMpv.dispose(); });\napp.on('window-all-closed', () => {\n  const trayEnabled = Boolean(desktopState?.settings?.().trayEnabled);\n  if (process.platform !== 'darwin' && !trayEnabled) {\n    void nativeMpv.dispose().finally(() => app.quit());\n  }\n});\n`;
 
 preload = replaceOnce(
   preload,
   "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),",
-  "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),\n  nativeMpvPrepare: (url, headers = {}, hls = false) => ipcRenderer.invoke('native-mpv:prepare', url, headers, Boolean(hls)),\n  nativeMpvDiagnostics: () => ipcRenderer.invoke('native-mpv:diagnostics'),",
+  "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),\n  nativeMpvPrepare: (url, headers = {}, hls = false) => ipcRenderer.invoke('native-mpv:prepare', url, headers, Boolean(hls)),\n  nativeMpvOpen: (url, headers = {}, hls = false, bounds = {}) => ipcRenderer.invoke('native-mpv:open', url, headers, Boolean(hls), bounds),\n  nativeMpvState: () => ipcRenderer.invoke('native-mpv:state'),\n  nativeMpvBounds: bounds => ipcRenderer.invoke('native-mpv:bounds', bounds),\n  nativeMpvCommand: command => ipcRenderer.invoke('native-mpv:command', command),\n  nativeMpvClose: () => ipcRenderer.invoke('native-mpv:close'),\n  nativeMpvDiagnostics: () => ipcRenderer.invoke('native-mpv:diagnostics'),",
   'preload native APIs'
 );
 
@@ -95,7 +92,7 @@ updater = replaceOnce(
 index = replaceOnce(
   index,
   '<div id="videoStage" class="video-stage"><video id="video" crossorigin="anonymous" playsinline preload="auto"></video></div>',
-  '<div id="videoStage" class="video-stage"><lilac-mpv-video id="video" aria-label="native mpv video"></lilac-mpv-video></div>',
+  '<div id="videoStage" class="video-stage"><lilac-mpv-video id="video" aria-label="hosted mpv video"></lilac-mpv-video></div>',
   'player video element'
 );
 
@@ -109,14 +106,14 @@ index = replaceOnce(
 app = replaceOnce(
   app,
   '  if(isHls&&window.Hls?.isSupported()){',
-  `  if(window.LilacNativeMpv?.enabled){\n    $('#downloadStatus').textContent='native mpv 스트림을 준비하는 중...';\n    video.openLilacSource(src,{headers:context.streamHeaders||{},hls:isHls}).then(()=>{\n      if(video.currentSrc===src||video.src===src)$('#downloadStatus').textContent='native mpv 영상 데이터를 여는 중...';\n    }).catch(error=>{\n      const raw=error?.message||String(error);\n      const message=String(raw).replace(/https?:\\/\\/[^\\s]+/gi,'[media-url]').replace(/127\\.0\\.0\\.1:\\d+\\/r\\/[a-f0-9]+/gi,'[local-relay]');\n      $('#downloadStatus').textContent=\`native mpv 오류: \${message}\`;\n      toast(\`native mpv 재생 오류: \${message}\`);\n    });\n  }else if(isHls&&window.Hls?.isSupported()){`,
+  `  if(window.LilacNativeMpv?.enabled){\n    $('#downloadStatus').textContent='mpv 호스트를 준비하는 중...';\n    video.openLilacSource(src,{headers:context.streamHeaders||{},hls:isHls}).then(()=>{\n      if(video.currentSrc===src||video.src===src)$('#downloadStatus').textContent='mpv 호스트에서 재생 중';\n    }).catch(error=>{\n      const raw=error?.message||String(error);\n      const message=String(raw).replace(/https?:\\/\\/[^\\s]+/gi,'[media-url]').replace(/127\\.0\\.0\\.1:\\d+\\/[^\\s]*/gi,'[local-media]');\n      $('#downloadStatus').textContent=\`mpv 호스트 오류: \${message}\`;\n      toast(\`mpv 호스트 재생 오류: \${message}\`);\n    });\n  }else if(isHls&&window.Hls?.isSupported()){`,
   'native playback branch'
 );
 
 app = replaceOnce(
   app,
   'video.playbackRate=Number($(\'#speed\').value);if(!isHls)video.play().catch(()=>{});loadJimakuList();',
-  'video.playbackRate=Number($(\'#speed\').value);if(window.LilacNativeMpv?.enabled||!isHls)video.play().catch(error=>{if(window.LilacNativeMpv?.enabled){const message=String(error?.message||error).replace(/https?:\\/\\/[^\\s]+/gi,\'[media-url]\');$(\'#downloadStatus\').textContent=`native mpv 재생 시작 오류: ${message}`}});loadJimakuList();',
+  'video.playbackRate=Number($(\'#speed\').value);if(window.LilacNativeMpv?.enabled||!isHls)video.play().catch(error=>{if(window.LilacNativeMpv?.enabled){const message=String(error?.message||error).replace(/https?:\\/\\/[^\\s]+/gi,\'[media-url]\');$(\'#downloadStatus\').textContent=`mpv 호스트 재생 시작 오류: ${message}`}});loadJimakuList();',
   'native play start'
 );
 
@@ -145,7 +142,7 @@ anime4k = replaceOnce(
   anime4k,
   "  const mode = () => Object.hasOwn(modes, localStorage.getItem('playerAnime4k')) ? localStorage.getItem('playerAnime4k') : 'off';",
   "  const mode = () => document.querySelector('lilac-mpv-video') ? 'off' : (Object.hasOwn(modes, localStorage.getItem('playerAnime4k')) ? localStorage.getItem('playerAnime4k') : 'off');",
-  'disable Chromium Anime4K path for native mpv'
+  'disable Chromium Anime4K path for hosted mpv'
 );
 
 write('electron/main.cjs', main);
@@ -156,7 +153,7 @@ write('src/app.js', app);
 write('src/anime4k.js', anime4k);
 
 const preloadEntry = file('electron/preload-native-entry.generated.cjs');
-fs.writeFileSync(preloadEntry, "require('./preload.cjs');\nrequire('electron-mpv-video/preload').exposeMpvApi();\n");
+fs.writeFileSync(preloadEntry, "require('./preload.cjs');\n");
 
 buildSync({
   entryPoints: [preloadEntry],
@@ -186,23 +183,25 @@ for (const relative of ['electron/main.cjs','electron/preload-native.generated.c
 const required = [
   ['electron/main.cjs', 'LILAC_NATIVE_MPV_SOURCE_PATCH'],
   ['electron/main.cjs', 'LILAC_NATIVE_MPV_CLEANUP'],
-  ['electron/main.cjs', "MPV_HWDEC = process.env.MPV_HWDEC || 'd3d11va-copy'"],
   ['electron/main.cjs', 'await nativeMpv.ensure()'],
   ['electron/main.cjs', 'await nativeMpv.attachWindow(win)'],
   ['electron/main.cjs', 'render-process-gone'],
   ['electron/main.cjs', 'sandbox: false'],
   ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
-  ['electron/preload.cjs', 'nativeMpvPrepare'],
-  ['electron/preload.cjs', 'nativeMpvDiagnostics'],
+  ['electron/preload.cjs', 'nativeMpvOpen'],
+  ['electron/preload.cjs', 'nativeMpvState'],
+  ['electron/preload.cjs', 'nativeMpvBounds'],
+  ['electron/preload.cjs', 'nativeMpvCommand'],
+  ['electron/preload.cjs', 'nativeMpvClose'],
   ['electron/updater.cjs', 'sdsssdvx2/LilacAnime-desktop/releases'],
   ['src/index.html', '<lilac-mpv-video id="video"'],
   ['src/app.js', 'video.openLilacSource'],
-  ['src/app.js', 'native mpv 스트림을 준비하는 중'],
+  ['src/app.js', 'mpv 호스트를 준비하는 중'],
   ['src/app.js', 'positionSeconds'],
-  ['src/mpv-native.generated.js', 'LilacNativeMpv']
+  ['src/mpv-native.generated.js', 'hosted-mpv']
 ];
 for (const [relative, marker] of required) {
   if (!read(relative).includes(marker)) throw new Error(`post-patch marker missing: ${relative} :: ${marker}`);
 }
 
-console.log('Native mpv source patch applied and generated bundles validated.');
+console.log('Hosted mpv source patch applied and generated bundles validated.');
