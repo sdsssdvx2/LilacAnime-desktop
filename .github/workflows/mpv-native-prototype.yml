@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   windows-native-mpv:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -23,21 +23,20 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Windows cross-build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64 wine64
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Configure prototype identity and packaging
         run: node scripts/configure-native-mpv-package.cjs
 
       - name: Build raw Win32 HWND host helper
+        shell: cmd
         run: >-
-          x86_64-w64-mingw32-g++
-          -std=c++17 -O2 -static-libgcc -static-libstdc++
-          native/win32-mpv-host.cpp
-          -o electron/win32-mpv-host.exe
-          -luser32 -lgdi32
+          cl /nologo /EHsc /std:c++17 /O2
+          /Fe:electron\win32-mpv-host.exe
+          native\win32-mpv-host.cpp user32.lib gdi32.lib
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -51,18 +50,17 @@ jobs:
       - name: Add automatic diagnostic self-test
         run: node scripts/apply-native-mpv-autodiag.cjs
 
-      - name: Add transparent Lilac control and subtitle overlay
+      - name: Apply docked Lilac controls and mpv subtitle integration
         run: node scripts/apply-native-mpv-overlay.cjs
 
       - name: Build Windows installer
-        env:
-          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: 'true'
         run: npm run dist -- --publish never
 
       - name: Candidate checksum
+        shell: powershell
         run: |
-          sha256sum dist/LilacAnime-Native-Prototype-Setup.exe
-          sha256sum electron/win32-mpv-host.exe
+          Get-FileHash dist/LilacAnime-Native-Prototype-Setup.exe -Algorithm SHA256 | Format-List
+          Get-FileHash electron/win32-mpv-host.exe -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
@@ -72,9 +70,6 @@ jobs:
             electron/main.cjs
             electron/mpv-native-main.cjs
             electron/mpv-relay.cjs
-            electron/mpv-overlay.html
-            electron/mpv-overlay.js
-            electron/mpv-overlay-preload.cjs
             electron/win32-mpv-host.exe
             native/win32-mpv-host.cpp
             src/mpv-native-entry.js
