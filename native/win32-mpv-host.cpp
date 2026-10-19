@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <algorithm>
 #include <cstdint>
@@ -160,7 +161,7 @@ int main(int argc, char** argv) {
   wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
   wc.lpfnWndProc = HostWndProc;
   wc.hInstance = instance;
-  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
   wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
   wc.lpszClassName = className;
 
