@@ -104,7 +104,7 @@ for (const [file, marker] of [
   ['electron/preload-native.generated.cjs', 'nativeOverlaySubtitle'],
   ['electron/mpv-native-main.cjs', 'native-overlay:state'],
   ['electron/mpv-overlay.html', 'Lilac mpv overlay'],
-  ['electron/mpv-overlay.js', 'native-overlay']
+  ['electron/mpv-overlay.js', 'window.mpvOverlay']
 ]) {
   const text = fs.readFileSync(path.join(root, file), 'utf8');
   if (!text.includes(marker)) throw new Error(`overlay marker missing: ${file} -> ${marker}`);
