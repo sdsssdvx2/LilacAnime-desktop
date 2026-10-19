@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <title>Lilac mpv overlay</title>
+  <style>
+    :root{font-family:"Segoe UI",Pretendard,sans-serif;color:#fff;color-scheme:dark}
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+    body{user-select:none}
+    #root{position:fixed;inset:0;pointer-events:none}
+    .controls{position:absolute;inset:0;opacity:0;transition:opacity .18s ease}
+    body.show-controls .controls,body.diag-open .controls{opacity:1}
+    .top,.center,.bottom{position:absolute;pointer-events:auto}
+    .top{top:0;left:0;right:0;height:88px;display:grid;grid-template-columns:52px 1fr 52px;align-items:center;gap:14px;padding:18px 24px;background:linear-gradient(#000b,transparent)}
+    .title{min-width:0}.title b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:18px}.title span{display:block;margin-top:3px;color:#ffffff9f;font-size:12px}
+    .icon,.round{display:grid;place-items:center;border:0;color:#fff;background:#0007;cursor:pointer}
+    .icon{width:44px;height:44px;border-radius:50%;font-size:24px}.icon:hover,.round:hover{background:#ffffff22}
+    .center{left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:20px}
+    .round{width:58px;height:58px;border-radius:50%;font-size:19px}.round.primary{width:76px;height:76px;background:#fff;color:#111;font-size:28px}
+    .bottom{left:24px;right:24px;bottom:20px;padding:12px 14px 10px;border-radius:14px;background:#09090bd9;box-shadow:0 8px 32px #0007}
+    .seek{width:100%;accent-color:#c8a2c8;cursor:pointer}.row{display:flex;align-items:center;gap:12px;margin-top:7px;font-variant-numeric:tabular-nums}.time{min-width:112px;font-size:12px;color:#eee}.spacer{flex:1}.volume{width:150px;accent-color:#c8a2c8}.small{border:0;border-radius:9px;padding:7px 10px;background:#ffffff14;color:#fff;cursor:pointer}.small:hover{background:#ffffff24}
+    #subtitle{position:absolute;left:8%;right:8%;bottom:10%;z-index:5;text-align:center;white-space:pre-wrap;pointer-events:none;font-weight:700;font-size:34px;line-height:1.28;color:#fff;text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000,0 2px 4px #000;filter:none}
+    #diag{position:absolute;inset:8% 10%;z-index:20;display:none;pointer-events:auto;background:#15151af2;border:1px solid #ffffff2c;border-radius:16px;padding:16px;box-shadow:0 18px 60px #000b}
+    body.diag-open #diag{display:flex;flex-direction:column;gap:10px}.diag-title{font-weight:800;font-size:17px}.diag-note{font-size:12px;color:#ffffffa8}textarea{flex:1;min-height:280px;width:100%;resize:none;border:1px solid #ffffff20;border-radius:10px;background:#09090c;color:#eee;padding:10px;font:12px/1.45 Consolas,monospace}.diag-actions{display:flex;justify-content:flex-end;gap:8px}
+    #status{position:absolute;left:16px;top:96px;z-index:10;max-width:calc(100vw - 32px);padding:5px 8px;border-radius:7px;background:#101014d9;color:#fff;font:600 11px/1.35 system-ui;pointer-events:none;opacity:.75}
+  </style>
+</head>
+<body class="show-controls">
+  <div id="root">
+    <div id="status">overlay ready</div>
+    <div id="subtitle"></div>
+    <div class="controls">
+      <div class="top">
+        <button id="back" class="icon" aria-label="뒤로">‹</button>
+        <div class="title"><b id="title">LilacAnime</b><span id="meta">mpv native video</span></div>
+        <button id="settings" class="icon" aria-label="설정">⚙</button>
+      </div>
+      <div class="center">
+        <button id="back10" class="round" aria-label="10초 뒤로">−10</button>
+        <button id="play" class="round primary" aria-label="재생/일시정지">Ⅱ</button>
+        <button id="forward10" class="round" aria-label="10초 앞으로">+10</button>
+      </div>
+      <div class="bottom">
+        <input id="seek" class="seek" type="range" min="0" max="1" step="0.05" value="0">
+        <div class="row">
+          <span id="time" class="time">00:00 / 00:00</span>
+          <button id="mute" class="small" type="button">음소거</button>
+          <div class="spacer"></div>
+          <input id="volume" class="volume" type="range" min="0" max="100" step="1" value="100" aria-label="볼륨">
+          <button id="diagButton" class="small" type="button">진단</button>
+        </div>
+      </div>
+    </div>
+    <div id="diag">
+      <div class="diag-title">Lilac mpv 자동 진단 결과</div>
+      <div class="diag-note">URL·Referer·Origin·토큰·쿠키는 포함하지 않습니다.</div>
+      <textarea id="diagText" readonly></textarea>
+      <div class="diag-actions"><button id="copyDiag" class="small">진단결과 복사</button><button id="closeDiag" class="small">닫기</button></div>
+    </div>
+  </div>
+  <script src="mpv-overlay.js"></script>
+</body>
+</html>
