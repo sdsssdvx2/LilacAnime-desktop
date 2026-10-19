@@ -12,9 +12,17 @@ function replaceOnce(needle, replacement, label) {
   source = source.replace(needle, replacement);
 }
 
-// V3 diagnostic: avoid the Windows shared-texture/WebGPU path until it is
-// proven on the user's machine. The WebGL mode still keeps video inside the
-// Lilac DOM and lets normal HTML controls render above it.
+function replaceRegexOnce(regex, replacement, label) {
+  const matches = source.match(regex);
+  const count = matches ? 1 : 0;
+  if (count !== 1) throw new Error(`${label}: expected 1 anchor, found ${count}`);
+  source = source.replace(regex, replacement);
+}
+
+// V3 diagnostic: move away from shared-texture/WebGPU for one controlled A/B.
+// WebGL keeps libmpv video embedded in the Lilac DOM, so HTML controls can
+// still render over it, but avoids the shared-texture path that can be black
+// on a machine even when media loading itself succeeds.
 replaceOnce(
   "    this._surface.setAttribute('render-mode', 'shared-texture');",
   "    this._surface.setAttribute('render-mode', 'webgl');",
@@ -27,9 +35,9 @@ replaceOnce(
   'status helper'
 );
 
-replaceOnce(
-  "      console.warn('Lilac native mpv:', detail);\n      this.dispatchEvent(new Event('error'));",
-  "      console.warn('Lilac native mpv renderer error');\n      nativeStatus('native mpv 렌더링 오류 · WebGL 경로를 확인합니다.');\n      this.dispatchEvent(new Event('error'));",
+replaceRegexOnce(
+  /\s*console\.warn\('Lilac native mpv:', detail\);\s*this\.dispatchEvent\(new Event\('error'\)\);/,
+  "\n      console.warn('Lilac native mpv renderer error');\n      nativeStatus('native mpv 렌더링 오류 · WebGL 경로를 확인합니다.');\n      this.dispatchEvent(new Event('error'));",
   'safe renderer error status'
 );
 
@@ -45,9 +53,9 @@ replaceOnce(
   'open status'
 );
 
-replaceOnce(
-  "      await this._surface.setVolume(this._muted ? 0 : this._volume * 100);\n      return true;",
-  "      await this._surface.setVolume(this._muted ? 0 : this._volume * 100);\n      nativeStatus('native mpv 영상 준비 완료 · 재생 시작 중...');\n      return true;",
+replaceRegexOnce(
+  /await this\._surface\.setVolume\(this\._muted \? 0 : this\._volume \* 100\);\s*return true;/,
+  "await this._surface.setVolume(this._muted ? 0 : this._volume * 100);\n      nativeStatus('native mpv 영상 준비 완료 · 재생 시작 중...');\n      return true;",
   'opened status'
 );
 
