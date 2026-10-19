@@ -1,11 +1,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
-#include <cstdint>
-#include <iterator>
 
 struct Hole {
   int x{};
@@ -14,38 +15,7 @@ struct Hole {
   int h{};
 };
 
-struct FindWindowData {
-  DWORD pid{};
-  HWND hwnd{};
-};
-
-static BOOL CALLBACK EnumTopLevel(HWND hwnd, LPARAM param) {
-  auto* data = reinterpret_cast<FindWindowData*>(param);
-  DWORD pid = 0;
-  GetWindowThreadProcessId(hwnd, &pid);
-  if (pid != data->pid) return TRUE;
-
-  const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-  if ((style & WS_CHILD) != 0) return TRUE;
-
-  wchar_t className[128] = {};
-  GetClassNameW(hwnd, className, static_cast<int>(std::size(className)));
-  if (wcscmp(className, L"ConsoleWindowClass") == 0) return TRUE;
-
-  data->hwnd = hwnd;
-  return FALSE;
-}
-
-static HWND FindWindowForPid(DWORD pid, DWORD timeoutMs = 8000) {
-  const ULONGLONG deadline = GetTickCount64() + timeoutMs;
-  do {
-    FindWindowData data{ pid, nullptr };
-    EnumWindows(EnumTopLevel, reinterpret_cast<LPARAM>(&data));
-    if (data.hwnd && IsWindow(data.hwnd)) return data.hwnd;
-    Sleep(50);
-  } while (GetTickCount64() < deadline);
-  return nullptr;
-}
+static constexpr UINT WM_HOST_COMMAND = WM_APP + 77;
 
 static uintptr_t ParseHandle(const char* value) {
   if (!value || !*value) return 0;
@@ -55,18 +25,18 @@ static uintptr_t ParseHandle(const char* value) {
 }
 
 static void ApplyRegion(HWND hwnd, int width, int height, const std::vector<Hole>& holes) {
-  if (!IsWindow(hwnd)) return;
-  if (width <= 0 || height <= 0) return;
+  if (!IsWindow(hwnd) || width <= 0 || height <= 0) return;
 
   HRGN region = CreateRectRgn(0, 0, width, height);
   if (!region) return;
 
   for (const auto& hole : holes) {
-    const int left = max(0, min(width, hole.x));
-    const int top = max(0, min(height, hole.y));
-    const int right = max(left, min(width, hole.x + max(0, hole.w)));
-    const int bottom = max(top, min(height, hole.y + max(0, hole.h)));
+    const int left = std::max(0, std::min(width, hole.x));
+    const int top = std::max(0, std::min(height, hole.y));
+    const int right = std::max(left, std::min(width, hole.x + std::max(0, hole.w)));
+    const int bottom = std::max(top, std::min(height, hole.y + std::max(0, hole.h)));
     if (right <= left || bottom <= top) continue;
+
     HRGN cut = CreateRectRgn(left, top, right, bottom);
     if (!cut) continue;
     CombineRgn(region, region, cut, RGN_DIFF);
@@ -78,149 +48,175 @@ static void ApplyRegion(HWND hwnd, int width, int height, const std::vector<Hole
   }
 }
 
-static void ClearRegion(HWND hwnd) {
-  if (IsWindow(hwnd)) SetWindowRgn(hwnd, nullptr, TRUE);
-}
-
-static bool PositionHostedWindow(HWND hwnd, HWND parent, bool childMode,
-                                 int x, int y, int w, int h, bool visible,
-                                 const std::vector<Hole>& holes) {
-  if (!IsWindow(hwnd) || !IsWindow(parent)) return false;
-
-  int px = x;
-  int py = y;
-  if (!childMode) {
-    POINT origin{ 0, 0 };
-    if (!ClientToScreen(parent, &origin)) return false;
-    px += origin.x;
-    py += origin.y;
-  }
+static void PositionHost(HWND hwnd, int x, int y, int w, int h, bool visible,
+                         const std::vector<Hole>& holes) {
+  if (!IsWindow(hwnd)) return;
 
   if (!visible) {
     ShowWindow(hwnd, SW_HIDE);
-    return true;
+    return;
   }
 
-  const UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW;
-  if (!SetWindowPos(hwnd, HWND_TOP, px, py, max(1, w), max(1, h), flags)) return false;
-  ApplyRegion(hwnd, max(1, w), max(1, h), holes);
+  const int width = std::max(1, w);
+  const int height = std::max(1, h);
+  SetWindowPos(
+      hwnd,
+      HWND_TOP,
+      x,
+      y,
+      width,
+      height,
+      SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+  ApplyRegion(hwnd, width, height, holes);
   ShowWindow(hwnd, SW_SHOWNA);
-  return true;
 }
 
-static bool AttachAsChild(HWND hwnd, HWND parent) {
-  if (!IsWindow(hwnd) || !IsWindow(parent)) return false;
+static void HandleCommand(HWND hwnd, const std::string& line) {
+  std::istringstream in(line);
+  std::string command;
+  in >> command;
 
-  LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-  style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-  style |= (WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
-  SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+  if (command == "Q") {
+    DestroyWindow(hwnd);
+    return;
+  }
 
-  LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-  exStyle &= ~(WS_EX_APPWINDOW | WS_EX_TOPMOST);
-  exStyle |= (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-  SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
+  if (command == "H") {
+    ShowWindow(hwnd, SW_HIDE);
+    return;
+  }
 
-  SetLastError(0);
-  HWND previous = SetParent(hwnd, parent);
-  const DWORD error = GetLastError();
-  if (!previous && error != 0) return false;
+  if (command != "B") return;
 
-  SetWindowPos(hwnd, HWND_TOP, 0, 0, 1, 1,
-               SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-  return true;
+  int x = 0;
+  int y = 0;
+  int w = 1;
+  int h = 1;
+  int visibleInt = 1;
+  int holeCount = 0;
+  in >> x >> y >> w >> h >> visibleInt >> holeCount;
+  holeCount = std::max(0, std::min(holeCount, 16));
+
+  std::vector<Hole> holes;
+  holes.reserve(static_cast<size_t>(holeCount));
+  for (int i = 0; i < holeCount; ++i) {
+    Hole hole{};
+    if (!(in >> hole.x >> hole.y >> hole.w >> hole.h)) break;
+    holes.push_back(hole);
+  }
+
+  PositionHost(hwnd, x, y, w, h, visibleInt != 0, holes);
 }
 
-static bool AttachAsOwnedOverlay(HWND hwnd, HWND parent) {
-  if (!IsWindow(hwnd) || !IsWindow(parent)) return false;
-
-  SetParent(hwnd, nullptr);
-
-  LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-  style &= ~(WS_CHILD | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-  style |= (WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
-  SetWindowLongPtrW(hwnd, GWL_STYLE, style);
-
-  LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-  exStyle &= ~(WS_EX_APPWINDOW | WS_EX_TOPMOST);
-  exStyle |= (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-  SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
-
-  SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(parent));
-  SetWindowPos(hwnd, HWND_TOP, 0, 0, 1, 1,
-               SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-  return true;
+static LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  switch (message) {
+    case WM_HOST_COMMAND: {
+      auto* line = reinterpret_cast<std::string*>(lParam);
+      if (line) {
+        HandleCommand(hwnd, *line);
+        delete line;
+      }
+      return 0;
+    }
+    case WM_NCHITTEST:
+      return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE:
+      return MA_NOACTIVATEANDEAT;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_PAINT: {
+      PAINTSTRUCT ps{};
+      HDC dc = BeginPaint(hwnd, &ps);
+      FillRect(dc, &ps.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_DESTROY:
+      PostQuitMessage(0);
+      return 0;
+    default:
+      return DefWindowProcW(hwnd, message, wParam, lParam);
+  }
 }
 
 int main(int argc, char** argv) {
-  if (argc < 3) {
+  if (argc < 2) {
     std::cout << "ERR args" << std::endl;
     return 2;
   }
 
-  const DWORD mpvPid = static_cast<DWORD>(strtoul(argv[1], nullptr, 10));
-  const uintptr_t parentValue = ParseHandle(argv[2]);
+  const uintptr_t parentValue = ParseHandle(argv[1]);
   HWND parent = reinterpret_cast<HWND>(parentValue);
-  if (!mpvPid || !parent || !IsWindow(parent)) {
+  if (!parent || !IsWindow(parent)) {
     std::cout << "ERR parent" << std::endl;
     return 3;
   }
 
-  HWND mpv = FindWindowForPid(mpvPid);
-  if (!mpv) {
-    std::cout << "ERR mpv-window" << std::endl;
+  const HINSTANCE instance = GetModuleHandleW(nullptr);
+  const wchar_t* className = L"LilacAnimeRawMpvHostV11";
+
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(wc);
+  wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+  wc.lpfnWndProc = HostWndProc;
+  wc.hInstance = instance;
+  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+  wc.lpszClassName = className;
+
+  if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    std::cout << "ERR register" << std::endl;
     return 4;
   }
 
-  bool childMode = AttachAsChild(mpv, parent);
-  if (!childMode) {
-    if (!AttachAsOwnedOverlay(mpv, parent)) {
-      std::cout << "ERR attach" << std::endl;
-      return 5;
-    }
+  HWND host = CreateWindowExW(
+      WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+      className,
+      L"",
+      WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+      0,
+      0,
+      1,
+      1,
+      parent,
+      nullptr,
+      instance,
+      nullptr);
+
+  if (!host) {
+    std::cout << "ERR create" << std::endl;
+    return 5;
   }
 
-  ClearRegion(mpv);
-  ShowWindow(mpv, SW_HIDE);
-  std::cout << "READY " << (childMode ? "child" : "overlay") << " "
-            << static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(mpv))
+  SetWindowPos(host, HWND_TOP, 0, 0, 1, 1, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+  ShowWindow(host, SW_HIDE);
+
+  std::cout << "READY host "
+            << static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(host))
             << std::endl;
+  std::cout.flush();
 
-  std::string line;
-  while (std::getline(std::cin, line)) {
-    if (!IsWindow(parent) || !IsWindow(mpv)) break;
-    std::istringstream in(line);
-    std::string command;
-    in >> command;
-
-    if (command == "Q") break;
-
-    if (command == "B") {
-      int x = 0, y = 0, w = 1, h = 1, visibleInt = 1, holeCount = 0;
-      in >> x >> y >> w >> h >> visibleInt >> holeCount;
-      holeCount = max(0, min(holeCount, 16));
-      std::vector<Hole> holes;
-      holes.reserve(static_cast<size_t>(holeCount));
-      for (int i = 0; i < holeCount; ++i) {
-        Hole hole{};
-        if (!(in >> hole.x >> hole.y >> hole.w >> hole.h)) break;
-        holes.push_back(hole);
+  std::thread inputThread([host]() {
+    std::string line;
+    while (std::getline(std::cin, line)) {
+      if (!IsWindow(host)) break;
+      auto* copy = new std::string(line);
+      if (!PostMessageW(host, WM_HOST_COMMAND, 0, reinterpret_cast<LPARAM>(copy))) {
+        delete copy;
+        break;
       }
-      if (!PositionHostedWindow(mpv, parent, childMode, x, y, w, h, visibleInt != 0, holes)) {
-        std::cout << "WARN bounds" << std::endl;
-      }
-      continue;
+      if (line == "Q") break;
     }
+    if (IsWindow(host)) PostMessageW(host, WM_CLOSE, 0, 0);
+  });
+  inputThread.detach();
 
-    if (command == "H") {
-      ShowWindow(mpv, SW_HIDE);
-      continue;
-    }
+  MSG msg{};
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
   }
 
-  if (IsWindow(mpv)) {
-    ClearRegion(mpv);
-    ShowWindow(mpv, SW_HIDE);
-  }
+  if (IsWindow(host)) DestroyWindow(host);
   return 0;
 }
