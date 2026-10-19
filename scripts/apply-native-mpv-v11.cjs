@@ -5,6 +5,8 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const bridgeFile = path.join(root, 'electron', 'mpv-native-main.cjs');
+const hostedFile = path.join(root, 'src', 'mpv-native-entry.js');
+
 let bridge = fs.readFileSync(bridgeFile, 'utf8');
 
 // The V10 transform validates this legacy marker. V11 intentionally does not
@@ -15,6 +17,24 @@ if (!bridge.includes('--force-window=immediate')) {
   bridge += '\n// V11 legacy-validation marker only: --force-window=immediate\n';
   fs.writeFileSync(bridgeFile, bridge);
 }
+
+// Do not leave diagnostic UI or a background mpv process alive after the user
+// leaves the player view. The prototype element stays mounted even when its
+// view is hidden, so make visibility a hard lifecycle boundary.
+let hosted = fs.readFileSync(hostedFile, 'utf8');
+hosted = hosted.replace(
+  "    diag('renderer ready · external mpv host idle');",
+  "    if (this._playerVisible()) diag('renderer ready · external mpv host idle');"
+);
+hosted = hosted.replace(
+  "      this._hostOpen = false;\n      await window.lilac.nativeMpvClose().catch(() => {});\n      return;",
+  "      this._hostOpen = false;\n      document.querySelector('#nativeMpvDiag')?.remove();\n      await window.lilac.nativeMpvClose().catch(() => {});\n      return;"
+);
+hosted = hosted.replace(
+  "    try {\n      const state = await window.lilac.nativeMpvState().catch(() => null);",
+  "    try {\n      if (!this._playerVisible()) {\n        this._hostOpen = false;\n        document.querySelector('#nativeMpvDiag')?.remove();\n        await window.lilac?.nativeMpvClose?.().catch(() => {});\n        return;\n      }\n      const state = await window.lilac.nativeMpvState().catch(() => null);"
+);
+fs.writeFileSync(hostedFile, hosted);
 
 require('./apply-native-mpv-v10.cjs');
 
