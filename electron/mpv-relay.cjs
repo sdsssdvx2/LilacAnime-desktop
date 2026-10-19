@@ -9,6 +9,44 @@ function createMpvRelay() {
   let port = 0;
   const resources = new Map();
   const tokens = new Map();
+  const counters = {
+    prepared: 0,
+    requests: 0,
+    playlists: 0,
+    segments: 0,
+    resources: 0,
+    strippedSegments: 0,
+    upstreamErrors: 0,
+    upstreamBytes: 0,
+    lastStatus: 0
+  };
+
+  function resetPlaybackCounters() {
+    counters.requests = 0;
+    counters.playlists = 0;
+    counters.segments = 0;
+    counters.resources = 0;
+    counters.strippedSegments = 0;
+    counters.upstreamErrors = 0;
+    counters.upstreamBytes = 0;
+    counters.lastStatus = 0;
+  }
+
+  function snapshot() {
+    return {
+      prepared: counters.prepared,
+      requests: counters.requests,
+      playlists: counters.playlists,
+      segments: counters.segments,
+      resources: counters.resources,
+      strippedSegments: counters.strippedSegments,
+      upstreamErrors: counters.upstreamErrors,
+      upstreamMiB: Math.round((counters.upstreamBytes / 1048576) * 10) / 10,
+      lastStatus: counters.lastStatus,
+      registeredResources: resources.size,
+      listening: Boolean(server && port)
+    };
+  }
 
   function validate(value, base = null) {
     const url = base ? new URL(value, base) : new URL(value);
@@ -87,6 +125,7 @@ function createMpvRelay() {
   }
 
   async function proxy(request, response) {
+    counters.requests++;
     try {
       if (!['GET','HEAD'].includes(request.method || '')) {
         response.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -107,13 +146,20 @@ function createMpvRelay() {
         return;
       }
 
+      if (item.kind === 'playlist') counters.playlists++;
+      else if (item.kind === 'segment') counters.segments++;
+      else counters.resources++;
+
       const upstreamHeaders = { ...item.headers };
-      if (request.headers.range && item.kind !== 'segment') upstreamHeaders.Range = request.headers.range;
+      // Preserve mpv byte ranges for all resource kinds. HLS BYTERANGE streams
+      // otherwise appear to load metadata but never produce decodable video frames.
+      if (request.headers.range) upstreamHeaders.Range = request.headers.range;
       const upstream = await fetch(item.url.href, {
         method: request.method,
         headers: upstreamHeaders,
         redirect: 'follow'
       });
+      counters.lastStatus = Number(upstream.status) || 0;
       const finalUrl = new URL(upstream.url || item.url.href);
       if (finalUrl.protocol !== 'https:') throw new Error('relay redirect left HTTPS');
 
@@ -122,6 +168,7 @@ function createMpvRelay() {
 
       if (playlistResponse) {
         const source = await upstream.text();
+        counters.upstreamBytes += Buffer.byteLength(source);
         const body = rewritePlaylist(source, finalUrl.href, item.headers);
         response.writeHead(upstream.status, {
           'Content-Type': 'application/vnd.apple.mpegurl',
@@ -132,12 +179,12 @@ function createMpvRelay() {
         return;
       }
 
-      // Some providers hide HLS behind extensionless/text endpoints. For small textual
-      // responses, sniff #EXTM3U before falling back to an ordinary resource response.
       if (item.kind === 'resource' && request.method === 'GET' && /^text\//i.test(upstreamType)) {
         const raw = Buffer.from(await upstream.arrayBuffer());
+        counters.upstreamBytes += raw.length;
         const text = raw.toString('utf8');
         if (/^\s*#EXTM3U(?:\r?\n|$)/i.test(text)) {
+          counters.playlists++;
           const body = rewritePlaylist(text, finalUrl.href, item.headers);
           response.writeHead(upstream.status, {
             'Content-Type': 'application/vnd.apple.mpegurl',
@@ -155,12 +202,15 @@ function createMpvRelay() {
 
       if (item.kind === 'segment') {
         const raw = Buffer.from(await upstream.arrayBuffer());
+        counters.upstreamBytes += raw.length;
         const normalized = stripPngTsWrapper(raw);
+        if (normalized.stripped) counters.strippedSegments++;
         const type = normalized.stripped || /^image\//i.test(upstreamType) ? 'video/mp2t' : (upstreamType || 'application/octet-stream');
         response.writeHead(upstream.status, {
           'Content-Type': type,
           'Content-Length': normalized.buffer.length,
-          'Cache-Control': 'no-store'
+          'Cache-Control': 'no-store',
+          'Accept-Ranges': upstream.headers.get('accept-ranges') || 'bytes'
         });
         if (request.method === 'HEAD') response.end();
         else response.end(normalized.buffer);
@@ -179,6 +229,7 @@ function createMpvRelay() {
       }
       Readable.fromWeb(upstream.body).on('error', () => response.destroy()).pipe(response);
     } catch {
+      counters.upstreamErrors++;
       if (!response.headersSent) response.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('upstream relay error');
     }
@@ -202,6 +253,8 @@ function createMpvRelay() {
   async function prepare(mediaUrl, headers = {}, options = {}) {
     const parsed = validate(mediaUrl);
     await ensureServer();
+    resetPlaybackCounters();
+    counters.prepared++;
     const cleanHeaders = Object.fromEntries(Object.entries(headers || {}).filter(([key, value]) => key && value != null && String(value).length));
     if (options.userAgent && !Object.keys(cleanHeaders).some(key => key.toLowerCase() === 'user-agent')) {
       cleanHeaders['User-Agent'] = String(options.userAgent);
@@ -221,7 +274,7 @@ function createMpvRelay() {
     await new Promise(resolve => active.close(() => resolve()));
   }
 
-  return { prepare, close };
+  return { prepare, close, stats: snapshot };
 }
 
 module.exports = { createMpvRelay };
