@@ -31,82 +31,75 @@ let hosted = read('src/mpv-native-entry.js');
 
 if (main.includes('LILAC_NATIVE_MPV_SOURCE_PATCH')) throw new Error('native mpv source patch is already applied');
 
-// V8: do not use a BrowserWindow as the mpv --wid target. Its Chromium surface
-// paints over mpv's Win32 child window and leaves audio-only black playback.
-// BaseWindow is a raw native window until a WebContentsView is attached, so mpv
-// can own the whole client area without a competing Chromium compositor surface.
+// V9: keep the raw BaseWindow host from V8, but preserve the complete pointer-sized
+// HWND. Truncating an x64 HWND to the low 32 bits can leave mpv audio-only because
+// --wid no longer references the real host window.
 bridge = replaceOnce(
   bridge,
   "const { BrowserWindow } = require('electron');",
   "const { BaseWindow } = require('electron');",
-  'V8 raw host import'
-);
-
-bridge = replaceOnce(
-  bridge,
-  `  function nativeHandleDecimal(win) {\n    const raw = win.getNativeWindowHandle();\n    if (raw.length >= 8 && process.arch === 'x64') return raw.readBigUInt64LE(0).toString();\n    return String(raw.readUInt32LE(0));\n  }`,
-  `  function nativeHandleDecimal(win) {\n    const raw = win.getNativeWindowHandle();\n    // mpv's win32 --wid contract expects the HWND cast to uint32_t.\n    if (process.platform === 'win32') return String(raw.readUInt32LE(0));\n    if (raw.length >= 8 && process.arch === 'x64') return raw.readBigUInt64LE(0).toString();\n    return String(raw.readUInt32LE(0));\n  }`,
-  'V8 uint32 HWND'
+  'V9 raw host import'
 );
 
 bridge = replaceOnce(
   bridge,
   '      hostWindow = new BrowserWindow({',
   '      hostWindow = new BaseWindow({',
-  'V8 BaseWindow host'
+  'V9 BaseWindow host'
 );
 
 bridge = replaceOnce(
   bridge,
   `        focusable: true,\n        webPreferences: {\n          sandbox: true,\n          contextIsolation: true,\n          nodeIntegration: false,\n          backgroundThrottling: false\n        }`,
   `        focusable: false`,
-  'V8 remove Chromium host surface'
+  'V9 remove Chromium host surface'
 );
 
 bridge = replaceOnce(
   bridge,
   `      hostWindow.setMenuBarVisibility(false);\n      void hostWindow.loadURL('data:text/html,<meta charset="utf-8"><body style="margin:0;background:#000;overflow:hidden"></body>').catch(() => {});\n`,
   '',
-  'V8 remove BrowserWindow content'
+  'V9 remove BrowserWindow content'
 );
 
 bridge = replaceOnce(
   bridge,
   `      '--force-window=yes',\n      \`--wid=\${hwnd}\`,`,
   `      '--force-window=yes',\n      '--no-border',\n      \`--wid=\${hwnd}\`,`,
-  'V8 borderless mpv child'
+  'V9 borderless mpv child'
 );
 
 bridge = replaceOnce(
   bridge,
   `      '--osc=yes',\n      '--input-default-bindings=yes',`,
   `      '--osc=no',\n      '--input-default-bindings=no',`,
-  'V8 Lilac-only controls'
+  'V9 Lilac-only controls'
 );
 
 bridge = replaceOnce(
   bridge,
   "    child = spawn(executable, args, { windowsHide: true, stdio: 'ignore' });",
   "    child = spawn(executable, args, { windowsHide: false, stdio: 'ignore' });",
-  'V8 do not hide embedded GUI window'
+  'V9 do not hide embedded GUI window'
 );
 
-// The native child window is always above Chromium. Keep all Lilac controls out
-// of its rectangle rather than pretending DOM overlays can sit above it.
+// Native video is above Chromium, so keep transport controls outside its rectangle.
+// Do not use .player-bottom's bounding box as a viewport edge: that container can
+// span much more of the page than the visible bottom controls.
 hosted = replaceOnce(
   hosted,
   `    body.player-mode .player-center {\n      top: auto !important;\n      bottom: 78px !important;\n      transform: translateX(-50%) !important;\n      z-index: 50 !important;\n    }`,
-  `    body.player-mode .player-top,\n    body.player-mode .player-center,\n    body.player-mode .player-bottom {\n      z-index: 50 !important;\n    }\n    body.player-mode .player-center {\n      top: auto !important;\n      bottom: 118px !important;\n      transform: translateX(-50%) !important;\n    }`,
-  'V8 intentional control dock'
+  `    body.player-mode .player-top,\n    body.player-mode .player-center,\n    body.player-mode .player-bottom {\n      z-index: 50 !important;\n    }\n    body.player-mode .player-center {\n      top: auto !important;\n      bottom: 96px !important;\n      transform: translateX(-50%) !important;\n    }`,
+  'V9 control dock'
 );
 
-hosted = hosted.replaceAll('V7 hosted-mpv', 'V8 hosted-mpv');
+hosted = hosted.replaceAll('V7 hosted-mpv', 'V9 hosted-mpv');
 
 hosted = replaceOnce(
   hosted,
   `  _hostBounds() {\n    const rect = this.getBoundingClientRect();\n    const topInset = Math.min(72, Math.max(0, rect.height * 0.10));\n    const bottomInset = Math.min(150, Math.max(84, rect.height * 0.17));\n    return {\n      x: rect.left,\n      y: rect.top + topInset,\n      width: Math.max(1, rect.width),\n      height: Math.max(90, rect.height - topInset - bottomInset),\n      visible: this._playerVisible() && this._hostOpen\n    };\n  }`,
-  `  _hostBounds() {\n    const rect = this.getBoundingClientRect();\n    const topBar = document.querySelector('#immersivePlayer .player-top')?.getBoundingClientRect();\n    const center = document.querySelector('#immersivePlayer .player-center')?.getBoundingClientRect();\n    const bottom = document.querySelector('#immersivePlayer .player-bottom')?.getBoundingClientRect();\n    const top = Math.max(rect.top, Number(topBar?.bottom) || rect.top) + 8;\n    const lowerEdges = [rect.bottom];\n    if (center && Number.isFinite(center.top) && center.top > top) lowerEdges.push(center.top - 10);\n    if (bottom && Number.isFinite(bottom.top) && bottom.top > top) lowerEdges.push(bottom.top - 10);\n    const bottomEdge = Math.max(top + 90, Math.min(...lowerEdges));\n    return {\n      x: Math.round(rect.left),\n      y: Math.round(top),\n      width: Math.max(1, Math.round(rect.width)),\n      height: Math.max(90, Math.round(bottomEdge - top)),\n      visible: this._playerVisible() && this._hostOpen\n    };\n  }`,
-  'V8 DOM-measured video viewport'
+  `  _hostBounds() {\n    const rect = this.getBoundingClientRect();\n    const topBar = document.querySelector('#immersivePlayer .player-top')?.getBoundingClientRect();\n    const center = document.querySelector('#immersivePlayer .player-center')?.getBoundingClientRect();\n    const top = Math.max(rect.top, Number(topBar?.bottom) || rect.top) + 8;\n    const fallbackBottom = rect.bottom - Math.min(150, Math.max(108, rect.height * 0.14));\n    const centerTop = Number(center?.top);\n    const bottomEdge = Number.isFinite(centerTop) && centerTop > top + 120\n      ? Math.min(rect.bottom, centerTop - 12)\n      : fallbackBottom;\n    return {\n      x: Math.round(rect.left),\n      y: Math.round(top),\n      width: Math.max(1, Math.round(rect.width)),\n      height: Math.max(120, Math.round(bottomEdge - top)),\n      visible: this._playerVisible() && this._hostOpen\n    };\n  }`,
+  'V9 DOM-measured video viewport'
 );
 
 main = replaceOnce(
@@ -271,7 +264,7 @@ const required = [
   ['electron/main.cjs', 'sandbox: false'],
   ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
   ['electron/mpv-native-main.cjs', "const { BaseWindow } = require('electron');"],
-  ['electron/mpv-native-main.cjs', "if (process.platform === 'win32') return String(raw.readUInt32LE(0));"],
+  ['electron/mpv-native-main.cjs', 'raw.readBigUInt64LE(0).toString()'],
   ['electron/preload.cjs', 'nativeMpvOpen'],
   ['electron/preload.cjs', 'nativeMpvState'],
   ['electron/preload.cjs', 'nativeMpvBounds'],
@@ -282,11 +275,11 @@ const required = [
   ['src/app.js', 'video.openLilacSource'],
   ['src/app.js', 'mpv 호스트를 준비하는 중'],
   ['src/app.js', 'positionSeconds'],
-  ['src/mpv-native-entry.js', 'V8 hosted-mpv'],
+  ['src/mpv-native-entry.js', 'V9 hosted-mpv'],
   ['src/mpv-native.generated.js', 'hosted-mpv']
 ];
 for (const [relative, marker] of required) {
   if (!read(relative).includes(marker)) throw new Error(`post-patch marker missing: ${relative} :: ${marker}`);
 }
 
-console.log('Hosted mpv V8 BaseWindow patch applied and generated bundles validated.');
+console.log('Hosted mpv V9 full-HWND BaseWindow patch applied and generated bundles validated.');
