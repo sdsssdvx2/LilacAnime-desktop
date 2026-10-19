@@ -39,13 +39,10 @@ main = replaceOnce(
 main = replaceOnce(
   main,
   'let playerStreamHeaders = null;',
-  `let playerStreamHeaders = null;\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    const resolved = parsed?.host ? (resolvedStreamHeaders.get(parsed.host) || {}) : {};\n    return { ...resolved, ...(playerStreamHeaders || {}), ...(supplied || {}) };\n  }\n});`,
+  `let playerStreamHeaders = null;\n// Match the already verified Windows mpv path without copying full RGBA frames through JS.\nprocess.env.MPV_HWDEC = process.env.MPV_HWDEC || 'd3d11va-copy';\nconst nativeMpv = createNativeMpvBridge({\n  app,\n  ipcMain,\n  userAgent: ANDROID_WEBVIEW_UA,\n  headersFor(parsed, supplied = {}) {\n    const resolved = parsed?.host ? (resolvedStreamHeaders.get(parsed.host) || {}) : {};\n    return { ...resolved, ...(playerStreamHeaders || {}), ...(supplied || {}) };\n  }\n});`,
   'main bridge initialization'
 );
 
-// electron-mpv-video's preload integration requires the main renderer preload
-// to run outside Electron's renderer sandbox. Only the primary Lilac window is
-// changed; provider resolver windows keep their original sandbox settings.
 main = replaceOnce(
   main,
   "      preload: path.join(__dirname, 'preload.cjs'),",
@@ -53,7 +50,6 @@ main = replaceOnce(
   'main preload path and native sandbox setting'
 );
 
-// Keep this prototype's Windows identity separate from the installed stock/V9 build.
 main = replaceOnce(
   main,
   "app.setAppUserModelId('com.lilac.anime.desktop');",
@@ -61,8 +57,6 @@ main = replaceOnce(
   'prototype AppUserModelId'
 );
 
-// The source file uses CRLF on Windows checkouts, so anchor on the single line
-// instead of matching a multi-line LF-only string.
 main = replaceOnce(
   main,
   '  if (!singleInstanceLock) return;',
@@ -73,22 +67,24 @@ main = replaceOnce(
 main = replaceOnce(
   main,
   "  win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));",
-  "  await nativeMpv.attachWindow(win);\n  win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));",
+  `  await nativeMpv.attachWindow(win);\n  win.webContents.once('render-process-gone', () => {\n    void nativeMpv.dispose().finally(() => app.quit());\n  });\n  win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));`,
   'main attach native player window'
 );
 
-// createWindow must now await the service attachment before loading the renderer.
 main = replaceOnce(main, 'function createWindow() {', 'async function createWindow() {', 'async createWindow');
+
+// Prototype lifecycle: a renderer crash must not leave libmpv/relay processes and
+// native allocations resident. Normal tray-hide does not close the BrowserWindow,
+// so this only runs when the window is actually gone or the app is quitting.
+main += `\n\n// LILAC_NATIVE_MPV_CLEANUP\napp.on('before-quit', () => { void nativeMpv.dispose(); });\napp.on('window-all-closed', () => {\n  const trayEnabled = Boolean(desktopState?.settings?.().trayEnabled);\n  if (process.platform !== 'darwin' && !trayEnabled) {\n    void nativeMpv.dispose().finally(() => app.quit());\n  }\n});\n`;
 
 preload = replaceOnce(
   preload,
   "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),",
-  "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),\n  nativeMpvPrepare: (url, headers = {}, hls = false) => ipcRenderer.invoke('native-mpv:prepare', url, headers, Boolean(hls)),",
-  'preload native prepare API'
+  "  mpvStatus: () => ipcRenderer.invoke('mpv:status'),\n  nativeMpvPrepare: (url, headers = {}, hls = false) => ipcRenderer.invoke('native-mpv:prepare', url, headers, Boolean(hls)),\n  nativeMpvDiagnostics: () => ipcRenderer.invoke('native-mpv:diagnostics'),",
+  'preload native APIs'
 );
 
-// Prototype builds only consult the fork's release channel. Until a verified
-// candidate is published there, updater checks cannot download/install stock Lilac.
 updater = replaceOnce(
   updater,
   "const RELEASES = 'https://api.github.com/repos/whispelyn-byte/LilacAnime-desktop/releases';",
@@ -189,11 +185,15 @@ for (const relative of ['electron/main.cjs','electron/preload-native.generated.c
 
 const required = [
   ['electron/main.cjs', 'LILAC_NATIVE_MPV_SOURCE_PATCH'],
+  ['electron/main.cjs', 'LILAC_NATIVE_MPV_CLEANUP'],
+  ['electron/main.cjs', "MPV_HWDEC = process.env.MPV_HWDEC || 'd3d11va-copy'"],
   ['electron/main.cjs', 'await nativeMpv.ensure()'],
   ['electron/main.cjs', 'await nativeMpv.attachWindow(win)'],
+  ['electron/main.cjs', 'render-process-gone'],
   ['electron/main.cjs', 'sandbox: false'],
   ['electron/main.cjs', 'com.lilac.anime.desktop.nativeprototype'],
   ['electron/preload.cjs', 'nativeMpvPrepare'],
+  ['electron/preload.cjs', 'nativeMpvDiagnostics'],
   ['electron/updater.cjs', 'sdsssdvx2/LilacAnime-desktop/releases'],
   ['src/index.html', '<lilac-mpv-video id="video"'],
   ['src/app.js', 'video.openLilacSource'],
