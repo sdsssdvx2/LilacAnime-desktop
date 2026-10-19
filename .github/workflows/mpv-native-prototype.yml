@@ -24,18 +24,21 @@ jobs:
         with:
           arch: x64
 
-      - name: Prepare pinned libmpv SDK/runtime for dependency install
-        shell: powershell
-        run: ./scripts/setup-libmpv.ps1
-
-      - name: Configure prototype dependencies and side-by-side identity
+      - name: Configure prototype identity and packaging
         run: node scripts/configure-native-mpv-package.cjs
+
+      - name: Build raw Win32 mpv host helper
+        shell: cmd
+        run: >-
+          cl /nologo /EHsc /std:c++17 /O2
+          /Fe:electron\win32-mpv-host.exe
+          native\win32-mpv-host.cpp user32.lib gdi32.lib
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Apply V7 hosted mpv source transform
-        run: node scripts/apply-native-mpv-patch.cjs
+      - name: Apply V10 raw Win32 hosted mpv source transform
+        run: node scripts/apply-native-mpv-v10.cjs
 
       - name: Build Windows installer
         run: npm run dist -- --publish never
@@ -44,6 +47,7 @@ jobs:
         shell: powershell
         run: |
           Get-FileHash dist/LilacAnime-Native-Prototype-Setup.exe -Algorithm SHA256 | Format-List
+          Get-FileHash electron/win32-mpv-host.exe -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
@@ -53,6 +57,8 @@ jobs:
             electron/main.cjs
             electron/mpv-native-main.cjs
             electron/mpv-relay.cjs
+            electron/win32-mpv-host.exe
+            native/win32-mpv-host.cpp
             src/mpv-native-entry.js
           if-no-files-found: error
           retention-days: 14
