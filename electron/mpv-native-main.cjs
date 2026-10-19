@@ -7,6 +7,7 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
   const relay = createMpvRelay();
   let servicePromise = null;
   let service = null;
+  let disposed = false;
 
   function packagedAddonPath() {
     return path.join(
@@ -23,6 +24,7 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
   }
 
   async function ensure() {
+    if (disposed) throw new Error('native mpv bridge is disposed');
     if (!servicePromise) {
       servicePromise = (async () => {
         const { createMpvMain } = await import('electron-mpv-video/main');
@@ -38,6 +40,11 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     if (!win.isDestroyed()) active.attachWindow(win);
   }
 
+  async function detachWindow(win) {
+    if (!service || !win || win.isDestroyed()) return;
+    await service.detachWindow(win).catch(() => {});
+  }
+
   ipcMain.handle('native-mpv:prepare', async (_event, mediaUrl, suppliedHeaders = {}, hls = false) => {
     const parsed = new URL(String(mediaUrl || ''));
     if (parsed.protocol === 'file:' || parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') {
@@ -50,14 +57,24 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     return relay.prepare(parsed.href, effective, { hls: Boolean(hls), userAgent });
   });
 
+  ipcMain.handle('native-mpv:diagnostics', async () => ({
+    relay: relay.stats(),
+    serviceReady: Boolean(service),
+    disposed
+  }));
+
   async function dispose() {
+    if (disposed) return;
+    disposed = true;
     await relay.close().catch(() => {});
     if (service) await service.dispose().catch(() => {});
     service = null;
     servicePromise = null;
+    try { ipcMain.removeHandler('native-mpv:prepare'); } catch {}
+    try { ipcMain.removeHandler('native-mpv:diagnostics'); } catch {}
   }
 
-  return { ensure, attachWindow, dispose };
+  return { ensure, attachWindow, detachWindow, dispose };
 }
 
 module.exports = { createNativeMpvBridge };
