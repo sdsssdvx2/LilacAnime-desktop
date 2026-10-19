@@ -3,8 +3,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const file = path.resolve(__dirname, '..', 'src', 'mpv-native-entry.js');
+const root = path.resolve(__dirname, '..');
+const file = path.join(root, 'src', 'mpv-native-entry.js');
+const indexFile = path.join(root, 'src', 'index.html');
 let source = fs.readFileSync(file, 'utf8');
+let index = fs.readFileSync(indexFile, 'utf8');
 
 function replaceOnce(needle, replacement, label) {
   const count = source.split(needle).length - 1;
@@ -17,6 +20,14 @@ function replaceRegexOnce(regex, replacement, label) {
   if (!match) throw new Error(`${label}: expected 1 anchor, found 0`);
   source = source.replace(regex, replacement);
 }
+
+// Always-visible badge. This is deliberately in static HTML, above every
+// player overlay, so even a renderer/preload failure leaves a useful stage on
+// screen without asking the user for DevTools or sensitive network logs.
+const bodyAnchor = '<body>\n';
+const badge = `  <div id="nativeMpvDiag" style="position:fixed;top:38px;left:16px;z-index:2147483647;max-width:calc(100vw - 32px);padding:7px 10px;border-radius:8px;background:rgba(20,20,24,.92);color:#fff;font:600 12px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.45)">V4 HTML loaded · waiting renderer script</div>\n`;
+if ((index.split(bodyAnchor).length - 1) !== 1) throw new Error('diagnostic badge: body anchor mismatch');
+index = index.replace(bodyAnchor, bodyAnchor + badge);
 
 // V4 is deliberately diagnostic, not the final renderer choice.  Use the
 // simplest software/canvas path so a black frame can no longer be attributed
@@ -107,4 +118,5 @@ replaceOnce(
 );
 
 fs.writeFileSync(file, source);
+fs.writeFileSync(indexFile, index);
 console.log('Native mpv V4 diagnostic mode applied: canvas2d + persistent stage reporting.');
