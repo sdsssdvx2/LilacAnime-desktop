@@ -40,6 +40,9 @@ jobs:
       - name: Apply V11 helper-created raw HWND source transform
         run: node scripts/apply-native-mpv-v11.cjs
 
+      - name: Add automatic diagnostic self-test
+        run: node scripts/apply-native-mpv-autodiag.cjs
+
       - name: Build Windows installer
         run: npm run dist -- --publish never
 
@@ -60,5 +63,6 @@ jobs:
             electron/win32-mpv-host.exe
             native/win32-mpv-host.cpp
             src/mpv-native-entry.js
+            src/mpv-native.generated.js
           if-no-files-found: error
           retention-days: 14
