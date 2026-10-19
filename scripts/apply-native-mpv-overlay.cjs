@@ -91,28 +91,30 @@ bridge = bridge.replace(
 );
 
 // Dock the original Lilac controls outside the HWND instead of layering a
-// transparent browser surface on top of it.
+// transparent browser surface on top of it. Keep the injected source free of
+// nested template literals so this transform itself remains valid JavaScript.
+const dockCss = [
+  'body.player-mode #immersivePlayer{display:block!important;background:#000!important}',
+  'body.player-mode .player-shade{display:none!important}',
+  'body.player-mode .player-top{top:0!important;left:0!important;right:0!important;height:68px!important;padding:10px 20px!important;background:#07070a!important;opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:60!important}',
+  'body.player-mode .player-bottom{left:0!important;right:0!important;bottom:0!important;height:132px!important;padding:8px 22px 10px!important;background:#07070a!important;opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:60!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:4px!important}',
+  'body.player-mode .player-bottom>.player-center{position:static!important;left:auto!important;top:auto!important;bottom:auto!important;transform:none!important;margin:0 auto!important;opacity:1!important;pointer-events:auto!important;gap:18px!important;z-index:61!important}',
+  'body.player-mode .player-bottom>.player-center .player-play{width:50px!important;height:50px!important}',
+  'body.player-mode .player-bottom>.player-center .player-play svg{width:24px!important;height:24px!important}',
+  'body.player-mode .player-bottom>.player-center .player-skip{width:42px!important;height:42px!important}',
+  'body.player-mode .player-bottom>.player-center .player-skip svg{width:30px!important;height:30px!important}',
+  'body.player-mode .player-bottom>.player-center .player-episode{width:42px!important;height:42px!important}',
+  'body.player-mode .player-bottom-row{margin-top:0!important}',
+  'body.player-mode #nativeMpvDiag{top:74px!important}',
+  'body.player-mode .player-loading{top:68px!important;bottom:132px!important}'
+].join('\\n');
 const dockRuntime = String.raw`
 function ensureNativeDockLayout() {
   ensureHostStyle();
   if (!document.querySelector('#lilacNativeDockStyle')) {
     const style = document.createElement('style');
     style.id = 'lilacNativeDockStyle';
-    style.textContent = `
-      body.player-mode #immersivePlayer{display:block!important;background:#000!important}
-      body.player-mode .player-shade{display:none!important}
-      body.player-mode .player-top{top:0!important;left:0!important;right:0!important;height:68px!important;padding:10px 20px!important;background:#07070a!important;opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:60!important}
-      body.player-mode .player-bottom{left:0!important;right:0!important;bottom:0!important;height:132px!important;padding:8px 22px 10px!important;background:#07070a!important;opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:60!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:4px!important}
-      body.player-mode .player-bottom>.player-center{position:static!important;left:auto!important;top:auto!important;bottom:auto!important;transform:none!important;margin:0 auto!important;opacity:1!important;pointer-events:auto!important;gap:18px!important;z-index:61!important}
-      body.player-mode .player-bottom>.player-center .player-play{width:50px!important;height:50px!important}
-      body.player-mode .player-bottom>.player-center .player-play svg{width:24px!important;height:24px!important}
-      body.player-mode .player-bottom>.player-center .player-skip{width:42px!important;height:42px!important}
-      body.player-mode .player-bottom>.player-center .player-skip svg{width:30px!important;height:30px!important}
-      body.player-mode .player-bottom>.player-center .player-episode{width:42px!important;height:42px!important}
-      body.player-mode .player-bottom-row{margin-top:0!important}
-      body.player-mode #nativeMpvDiag{top:74px!important}
-      body.player-mode .player-loading{top:68px!important;bottom:132px!important}
-    `;
+    style.textContent = ${JSON.stringify(dockCss)};
     document.head.append(style);
   }
   const bottom = document.querySelector('#immersivePlayer .player-bottom');
