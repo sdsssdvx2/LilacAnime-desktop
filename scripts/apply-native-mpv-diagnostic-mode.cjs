@@ -22,17 +22,17 @@ function replaceRegexOnce(regex, replacement, label) {
   source = source.replace(regex, replacement);
 }
 
-// Static, always-visible diagnostic badge. It is not part of Lilac's auto-hide
-// player controls, so a totally black player still reports how far startup got.
 const bodyMatches = index.match(/<body>\r?\n/g) || [];
 if (bodyMatches.length !== 1) throw new Error(`diagnostic badge: expected 1 body anchor, found ${bodyMatches.length}`);
-const badge = `  <div id="nativeMpvDiag" style="position:fixed;top:38px;left:16px;z-index:2147483647;max-width:calc(100vw - 32px);padding:7px 10px;border-radius:8px;background:rgba(20,20,24,.94);color:#fff;font:600 12px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.45)">V4 HTML loaded · waiting renderer script</div>\n`;
+const badge = `  <div id="nativeMpvDiag" style="position:fixed;top:38px;left:16px;z-index:2147483647;max-width:calc(100vw - 32px);padding:7px 10px;border-radius:8px;background:rgba(20,20,24,.94);color:#fff;font:600 12px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.45)">V5 HTML loaded · waiting renderer script</div>\n`;
 index = index.replace(/<body>\r?\n/, match => match + badge);
 
-// Use the least complicated embedded pipeline for one diagnostic A/B.
+// V4 proved the media opens but copying RGBA frames through JS explodes memory.
+// V5 therefore returns to the low-copy shared-texture path and keeps diagnostics
+// outside the auto-hidden player controls.
 replaceOnce(
   "    this._surface.setAttribute('render-mode', 'shared-texture');",
-  "    this._surface.setAttribute('render-mode', 'canvas2d');",
+  "    this._surface.setAttribute('render-mode', 'shared-texture');",
   'native renderer mode'
 );
 
@@ -42,50 +42,89 @@ replaceOnce(
 const nativeSafeText = value => String(value ?? '')
   .replace(/https?:\\/\\/[^\\s]+/gi, '[media-url]')
   .replace(/127\\.0\\.0\\.1:\\d+\\/r\\/[a-f0-9]+/gi, '[local-relay]')
-  .slice(0, 180);
-const nativeStatus = text => {
-  const safe = nativeSafeText(text);
+  .slice(0, 260);
+let nativeStage = 'renderer loaded';
+let nativeLastMpvState = null;
+let nativeLastRelay = null;
+const nativeRenderStatus = () => {
   const badge = document.querySelector('#nativeMpvDiag');
-  if (badge) badge.textContent = safe;
-  const status = document.querySelector('#downloadStatus');
-  if (status) status.textContent = safe;
+  if (!badge) return;
+  const s = nativeLastMpvState || {};
+  const r = nativeLastRelay || {};
+  const time = Number.isFinite(Number(s.time)) ? Number(s.time).toFixed(1) : '-';
+  const duration = Number.isFinite(Number(s.duration)) ? Number(s.duration).toFixed(1) : '-';
+  const width = Number(s.width) || 0;
+  const height = Number(s.height) || 0;
+  badge.textContent = nativeSafeText(
+    'V5 ' + nativeStage +
+    ' · mpv=' + (s.status || '-') +
+    ' · mode=' + (s.renderMode || '-') +
+    ' · t=' + time + '/' + duration +
+    ' · size=' + width + 'x' + height +
+    ' · relay req=' + (r.requests ?? '-') +
+    ' pl=' + (r.playlists ?? '-') +
+    ' seg=' + (r.segments ?? '-') +
+    ' strip=' + (r.strippedSegments ?? '-') +
+    ' err=' + (r.upstreamErrors ?? '-') +
+    ' MiB=' + (r.upstreamMiB ?? '-')
+  );
 };
-window.addEventListener('error', event => nativeStatus('V4 renderer JS error · ' + nativeSafeText(event?.message || 'unknown')));
-window.addEventListener('unhandledrejection', event => nativeStatus('V4 renderer promise error · ' + nativeSafeText(event?.reason?.message || event?.reason || 'unknown')));
-nativeStatus('V4 renderer loaded · api=' + Boolean(window._electronMpvVideo) + ' · bridge=' + Boolean(window.lilac?.nativeMpvPrepare));`,
+const nativeStatus = text => {
+  nativeStage = nativeSafeText(text);
+  nativeRenderStatus();
+  const status = document.querySelector('#downloadStatus');
+  if (status) status.textContent = nativeStage;
+};
+const nativePollDiagnostics = async () => {
+  try {
+    const value = await window.lilac?.nativeMpvDiagnostics?.();
+    nativeLastRelay = value?.relay || null;
+  } catch {}
+  nativeRenderStatus();
+};
+setInterval(nativePollDiagnostics, 1000);
+window.addEventListener('error', event => nativeStatus('renderer JS error · ' + nativeSafeText(event?.message || 'unknown')));
+window.addEventListener('unhandledrejection', event => nativeStatus('renderer promise error · ' + nativeSafeText(event?.reason?.message || event?.reason || 'unknown')));
+nativeStatus('renderer loaded · api=' + Boolean(window._electronMpvVideo) + ' · bridge=' + Boolean(window.lilac?.nativeMpvPrepare));`,
   'diagnostic helper'
 );
 
 replaceRegexOnce(
   /\s*console\.warn\('Lilac native mpv:', detail\);\s*this\.dispatchEvent\(new Event\('error'\)\);/,
-  "\n      console.warn('Lilac native mpv renderer error');\n      nativeStatus('V4 mpv error · ' + nativeSafeText(detail));\n      this.dispatchEvent(new Event('error'));",
+  "\n      console.warn('Lilac native mpv renderer error');\n      nativeStatus('mpv error · ' + nativeSafeText(detail));\n      this.dispatchEvent(new Event('error'));",
   'safe renderer error status'
 );
 
 replaceOnce(
+  "    this._surface.addEventListener('mpv-state', event => this._onMpvState(event.detail || {}));",
+  "    this._surface.addEventListener('mpv-state', event => { nativeLastMpvState = event.detail || {}; nativeRenderStatus(); this._onMpvState(event.detail || {}); });",
+  'mpv state diagnostics'
+);
+
+replaceOnce(
   "      const prepared = await window.lilac.nativeMpvPrepare(this._rawSource, headers || {}, Boolean(hls));",
-  "      nativeStatus('V4 stage 1/5 · preparing relay');\n      const prepared = await window.lilac.nativeMpvPrepare(this._rawSource, headers || {}, Boolean(hls));\n      nativeStatus('V4 stage 2/5 · relay ready · relayed=' + Boolean(prepared?.relayed));",
+  "      nativeStatus('stage 1/5 · preparing relay');\n      const prepared = await window.lilac.nativeMpvPrepare(this._rawSource, headers || {}, Boolean(hls));\n      nativeStatus('stage 2/5 · relay ready · relayed=' + Boolean(prepared?.relayed));\n      void nativePollDiagnostics();",
   'prepare status'
 );
 
 replaceOnce(
   "      await this._surface.open(prepared?.url || this._rawSource);",
-  "      nativeStatus('V4 stage 3/5 · opening libmpv');\n      await this._surface.open(prepared?.url || this._rawSource);\n      nativeStatus('V4 stage 4/5 · libmpv open returned');",
+  "      nativeStatus('stage 3/5 · opening libmpv');\n      await this._surface.open(prepared?.url || this._rawSource);\n      nativeStatus('stage 4/5 · libmpv open returned');",
   'open status'
 );
 
 replaceRegexOnce(
   /await this\._surface\.setVolume\(this\._muted \? 0 : this\._volume \* 100\);\s*return true;/,
-  "await this._surface.setVolume(this._muted ? 0 : this._volume * 100);\n      nativeStatus('V4 stage 5/5 · source ready · waiting metadata');\n      return true;",
+  "await this._surface.setVolume(this._muted ? 0 : this._volume * 100);\n      nativeStatus('stage 5/5 · source ready · waiting frames');\n      return true;",
   'opened status'
 );
 
 replaceOnce(
   "    if (this._duration > 0 && !this._metadataSent) {",
-  "    if (this._duration > 0 && !this._metadataSent) {\n      nativeStatus('V4 metadata received · duration=' + this._duration.toFixed(1) + ' · size=' + this._width + 'x' + this._height);",
+  "    if (this._duration > 0 && !this._metadataSent) {\n      nativeStatus('metadata received');",
   'metadata status'
 );
 
 fs.writeFileSync(file, source);
 fs.writeFileSync(indexFile, index);
-console.log('Native mpv V4 diagnostic mode applied: canvas2d + persistent startup stages.');
+console.log('Native mpv V5 diagnostic mode applied: shared-texture + relay telemetry + persistent status.');
