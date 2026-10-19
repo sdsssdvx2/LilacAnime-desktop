@@ -158,14 +158,14 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     throw lastError || new Error('mpv IPC did not become ready');
   }
 
-  function startHostHelper(mpvPid) {
+  function startHostHelper(bounds) {
     return new Promise((resolve, reject) => {
       const helper = helperExecutable();
       if (!helper) return reject(new Error('Win32 mpv host helper was not found'));
       if (!attachedWindow || attachedWindow.isDestroyed()) return reject(new Error('native mpv parent window is unavailable'));
 
       const parentHwnd = nativeHandleDecimal(attachedWindow);
-      const proc = spawn(helper, [String(mpvPid), parentHwnd], {
+      const proc = spawn(helper, [parentHwnd], {
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'ignore']
       });
@@ -178,7 +178,7 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
         clearTimeout(timer);
         error ? reject(error) : resolve(value);
       };
-      const timer = setTimeout(() => finish(new Error('Win32 mpv host helper timed out')), 9000);
+      const timer = setTimeout(() => finish(new Error('Win32 raw host helper timed out')), 7000);
 
       proc.stdout.setEncoding('utf8');
       proc.stdout.on('data', chunk => {
@@ -189,21 +189,22 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
           const line = buffer.slice(0, at).trim();
           buffer = buffer.slice(at + 1);
           if (!line) continue;
-          const ready = /^READY\s+(child|overlay)\s+(\d+)$/.exec(line);
+          const ready = /^READY\s+host\s+(\d+)$/.exec(line);
           if (ready) {
-            hostMode = ready[1];
-            hostHwnd = ready[2];
+            hostMode = 'raw-child';
+            hostHwnd = ready[1];
+            lastRelativeBounds = normalizeBounds(bounds || lastRelativeBounds || {});
             syncHostBounds();
             finish(null, { mode: hostMode, hwnd: hostHwnd });
             continue;
           }
-          if (line.startsWith('ERR ')) finish(new Error(`Win32 mpv host helper: ${line.slice(4)}`));
+          if (line.startsWith('ERR ')) finish(new Error(`Win32 raw host helper: ${line.slice(4)}`));
         }
       });
       proc.once('error', error => finish(error));
       proc.once('exit', code => {
         if (hostHelper === proc) hostHelper = null;
-        if (!settled) finish(new Error(`Win32 mpv host helper exited (${code ?? 'unknown'})`));
+        if (!settled) finish(new Error(`Win32 raw host helper exited (${code ?? 'unknown'})`));
       });
     });
   }
@@ -228,15 +229,6 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
   }
 
   async function closePlayer() {
-    const oldHelper = hostHelper;
-    hostHelper = null;
-    hostMode = 'idle';
-    hostHwnd = null;
-    if (oldHelper && oldHelper.exitCode == null) {
-      try { oldHelper.stdin?.write('Q\n'); } catch {}
-      try { oldHelper.kill(); } catch {}
-    }
-
     const oldChild = child;
     child = null;
     pipeName = null;
@@ -245,11 +237,22 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     if (oldChild && oldChild.exitCode == null) {
       try { oldChild.kill(); } catch {}
     }
+
+    const oldHelper = hostHelper;
+    hostHelper = null;
+    hostMode = 'idle';
+    hostHwnd = null;
+    if (oldHelper && oldHelper.exitCode == null) {
+      try { oldHelper.stdin?.write('Q\n'); } catch {}
+      setTimeout(() => {
+        try { if (oldHelper.exitCode == null) oldHelper.kill(); } catch {}
+      }, 150).unref?.();
+    }
   }
 
   async function openPlayer(mediaUrl, suppliedHeaders, hls, bounds) {
     if (disposed) throw new Error('native mpv bridge is disposed');
-    if (process.platform !== 'win32') throw new Error('raw hosted mpv prototype currently supports Windows only');
+    if (process.platform !== 'win32') throw new Error('raw HWND mpv prototype currently supports Windows only');
     const executable = mpvExecutable();
     if (!executable) throw new Error('mpv executable was not found');
     if (!helperExecutable()) throw new Error('Win32 mpv host helper was not found');
@@ -258,14 +261,17 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     await closePlayer();
     lastRelativeBounds = normalizeBounds(bounds);
 
+    const host = await startHostHelper(lastRelativeBounds);
+    if (!host?.hwnd) throw new Error('Win32 raw host HWND was not created');
+
     const myGeneration = generation;
     const safeId = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     pipeName = `\\\\.\\pipe\\LilacAnime-host-${safeId}`;
     const args = [
       '--no-config',
-      '--force-window=immediate',
-      '--window-minimized=yes',
+      '--force-window=yes',
       '--no-border',
+      `--wid=${host.hwnd}`,
       `--input-ipc-server=${pipeName}`,
       '--hwdec=auto-safe',
       '--vo=gpu-next',
@@ -278,9 +284,12 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
       '--cursor-autohide=always'
     ];
 
-    child = spawn(executable, args, { windowsHide: false, stdio: 'ignore' });
+    child = spawn(executable, args, { windowsHide: true, stdio: 'ignore' });
     lastPid = child.pid || null;
-    if (!lastPid) throw new Error('mpv process did not start');
+    if (!lastPid) {
+      await closePlayer();
+      throw new Error('mpv process did not start');
+    }
 
     child.once('exit', () => {
       if (generation !== myGeneration) return;
@@ -297,15 +306,16 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
       lastPid = null;
     });
 
-    await Promise.all([
-      waitForIpc(),
-      startHostHelper(lastPid)
-    ]);
-
-    syncHostBounds();
-    const [loadReply] = await connectAndBatch([['loadfile', prepared.url, 'replace']], 2500);
-    if (loadReply?.error !== 'success') throw new Error(`mpv loadfile failed: ${loadReply?.error || 'unknown'}`);
-    await connectAndBatch([['set_property', 'pause', false]], 900).catch(() => {});
+    try {
+      await waitForIpc();
+      syncHostBounds();
+      const [loadReply] = await connectAndBatch([['loadfile', prepared.url, 'replace']], 2500);
+      if (loadReply?.error !== 'success') throw new Error(`mpv loadfile failed: ${loadReply?.error || 'unknown'}`);
+      await connectAndBatch([['set_property', 'pause', false]], 900).catch(() => {});
+    } catch (error) {
+      await closePlayer();
+      throw error;
+    }
 
     return {
       ok: true,
@@ -364,7 +374,6 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
       win.on(event, handler);
       listeners.push(() => { try { win.off(event, handler); } catch {} });
     };
-    add('move', syncHostBounds);
     add('resize', syncHostBounds);
     add('restore', syncHostBounds);
     add('show', syncHostBounds);
@@ -390,7 +399,10 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
 
   async function ensure() {
     if (disposed) throw new Error('native mpv bridge is disposed');
-    return { available: Boolean(mpvExecutable() && helperExecutable()) };
+    return {
+      available: Boolean(mpvExecutable()),
+      helperAvailable: Boolean(helperExecutable())
+    };
   }
 
   ipcMain.handle('native-mpv:prepare', async (_event, mediaUrl, suppliedHeaders = {}, hls = false) => prepare(mediaUrl, suppliedHeaders, hls));
@@ -422,7 +434,7 @@ function createNativeMpvBridge({ app, ipcMain, headersFor, userAgent }) {
     pid: lastPid,
     active: Boolean(child && child.exitCode == null),
     hostMode,
-    hostAttached: Boolean(hostHelper && hostHelper.exitCode == null),
+    hostReady: Boolean(hostHelper && hostHelper.exitCode == null && hostHwnd),
     disposed
   }));
 
