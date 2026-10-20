@@ -53,6 +53,8 @@ jobs:
         run: node scripts/apply-native-mpv-v13d5.cjs
       - name: Apply V13D6 Windows DPI scaling and settings-region hole
         run: node scripts/apply-native-mpv-v13d6.cjs
+      - name: Preserve V13D7 Win32 input holes end-to-end
+        run: node scripts/apply-native-mpv-v13d7.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
       - name: Candidate checksum
