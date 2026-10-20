@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -16,6 +17,15 @@ struct Hole {
   int h{};
 };
 
+struct BoundsCommand {
+  int x{};
+  int y{};
+  int w{1};
+  int h{1};
+  bool visible{true};
+  std::vector<Hole> holes;
+};
+
 static constexpr UINT WM_HOST_COMMAND = WM_APP + 77;
 
 static uintptr_t ParseHandle(const char* value) {
@@ -25,11 +35,31 @@ static uintptr_t ParseHandle(const char* value) {
   return (end && *end == '\0') ? static_cast<uintptr_t>(parsed) : 0;
 }
 
-static void ApplyRegion(HWND hwnd, int width, int height, const std::vector<Hole>& holes) {
-  if (!IsWindow(hwnd) || width <= 0 || height <= 0) return;
+static bool ParseBoundsCommand(const std::string& line, BoundsCommand* output) {
+  if (!output) return false;
+  std::istringstream in(line);
+  std::string command;
+  int visibleInt = 1;
+  int holeCount = 0;
+  BoundsCommand parsed{};
+  if (!(in >> command) || command != "B") return false;
+  if (!(in >> parsed.x >> parsed.y >> parsed.w >> parsed.h >> visibleInt >> holeCount)) return false;
+  parsed.visible = visibleInt != 0;
+  holeCount = std::max(0, std::min(holeCount, 16));
+  parsed.holes.reserve(static_cast<size_t>(holeCount));
+  for (int i = 0; i < holeCount; ++i) {
+    Hole hole{};
+    if (!(in >> hole.x >> hole.y >> hole.w >> hole.h)) return false;
+    parsed.holes.push_back(hole);
+  }
+  *output = std::move(parsed);
+  return true;
+}
 
+static HRGN BuildRegion(int width, int height, const std::vector<Hole>& holes) {
+  if (width <= 0 || height <= 0) return nullptr;
   HRGN region = CreateRectRgn(0, 0, width, height);
-  if (!region) return;
+  if (!region) return nullptr;
 
   for (const auto& hole : holes) {
     const int left = std::max(0, std::min(width, hole.x));
@@ -43,10 +73,52 @@ static void ApplyRegion(HWND hwnd, int width, int height, const std::vector<Hole
     CombineRgn(region, region, cut, RGN_DIFF);
     DeleteObject(cut);
   }
+  return region;
+}
 
-  if (SetWindowRgn(hwnd, region, TRUE) == 0) {
-    DeleteObject(region);
+static void ApplyRegion(HWND hwnd, int width, int height, const std::vector<Hole>& holes) {
+  if (!IsWindow(hwnd) || width <= 0 || height <= 0) return;
+  HRGN region = BuildRegion(width, height, holes);
+  if (!region) return;
+  if (SetWindowRgn(hwnd, region, TRUE) == 0) DeleteObject(region);
+}
+
+static int RunRegionSelfTest() {
+  BoundsCommand parsed{};
+  if (!ParseBoundsCommand("B 3 4 1920 1080 1 3 20 13 42 42 815 970 290 50 1576 1024 322 42", &parsed)) {
+    std::cerr << "SELFTEST FAIL parse" << std::endl;
+    return 20;
   }
+  if (parsed.x != 3 || parsed.y != 4 || parsed.w != 1920 || parsed.h != 1080 ||
+      !parsed.visible || parsed.holes.size() != 3) {
+    std::cerr << "SELFTEST FAIL bounds" << std::endl;
+    return 21;
+  }
+
+  HRGN region = BuildRegion(parsed.w, parsed.h, parsed.holes);
+  if (!region) {
+    std::cerr << "SELFTEST FAIL region-create" << std::endl;
+    return 22;
+  }
+
+  RECT box{};
+  const int type = GetRgnBox(region, &box);
+  const bool boxOk = type == COMPLEXREGION && box.left == 0 && box.top == 0 &&
+                     box.right == 1920 && box.bottom == 1080;
+  const bool outsideKept = PtInRegion(region, 10, 10) && PtInRegion(region, 100, 100) &&
+                           PtInRegion(region, 1500, 900) && PtInRegion(region, 1910, 1070);
+  const bool holesRemoved = !PtInRegion(region, 30, 30) &&
+                            !PtInRegion(region, 900, 990) &&
+                            !PtInRegion(region, 1700, 1040);
+  DeleteObject(region);
+
+  if (!boxOk || !outsideKept || !holesRemoved) {
+    std::cerr << "SELFTEST FAIL region-membership" << std::endl;
+    return 23;
+  }
+
+  std::cout << "SELFTEST region ok bounds=1920x1080 holes=3" << std::endl;
+  return 0;
 }
 
 static void PositionHost(HWND hwnd, int x, int y, int w, int h, bool visible,
@@ -87,26 +159,9 @@ static void HandleCommand(HWND hwnd, const std::string& line) {
     return;
   }
 
-  if (command != "B") return;
-
-  int x = 0;
-  int y = 0;
-  int w = 1;
-  int h = 1;
-  int visibleInt = 1;
-  int holeCount = 0;
-  in >> x >> y >> w >> h >> visibleInt >> holeCount;
-  holeCount = std::max(0, std::min(holeCount, 16));
-
-  std::vector<Hole> holes;
-  holes.reserve(static_cast<size_t>(holeCount));
-  for (int i = 0; i < holeCount; ++i) {
-    Hole hole{};
-    if (!(in >> hole.x >> hole.y >> hole.w >> hole.h)) break;
-    holes.push_back(hole);
-  }
-
-  PositionHost(hwnd, x, y, w, h, visibleInt != 0, holes);
+  BoundsCommand bounds{};
+  if (!ParseBoundsCommand(line, &bounds)) return;
+  PositionHost(hwnd, bounds.x, bounds.y, bounds.w, bounds.h, bounds.visible, bounds.holes);
 }
 
 static LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -141,6 +196,7 @@ static LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
 }
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--self-test-region") == 0) return RunRegionSelfTest();
   if (argc < 2) {
     std::cout << "ERR args" << std::endl;
     return 2;
