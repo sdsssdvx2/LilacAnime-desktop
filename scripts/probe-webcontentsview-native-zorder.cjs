@@ -1,13 +1,12 @@
 'use strict';
 
-const { app, BrowserWindow, WebContentsView, desktopCapturer } = require('electron');
-const { spawn } = require('node:child_process');
+const { app, BrowserWindow, WebContentsView } = require('electron');
+const { spawn, execFileSync } = require('node:child_process');
 const path = require('node:path');
 
 const WIDTH = 640;
 const HEIGHT = 360;
 const TITLE = `LilacNativeLayerProbe-${process.pid}`;
-
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function nativeHandleDecimal(win) {
@@ -45,31 +44,25 @@ async function startHelper(win) {
   return proc;
 }
 
-function rgbAt(image, x, y) {
-  const size = image.getSize();
-  const bitmap = image.toBitmap();
-  const px = Math.max(0, Math.min(size.width - 1, x));
-  const py = Math.max(0, Math.min(size.height - 1, y));
-  const at = (py * size.width + px) * 4;
-  return { b: bitmap[at], g: bitmap[at + 1], r: bitmap[at + 2], a: bitmap[at + 3] };
+function sampleScreen(x, y) {
+  const sampler = path.join(__dirname, '..', 'electron', 'win32-screen-pixel.exe');
+  const output = execFileSync(sampler, [String(Math.round(x)), String(Math.round(y))], {
+    windowsHide: true,
+    encoding: 'utf8'
+  }).trim();
+  const match = /^PIXEL\s+(\d+)\s+(\d+)\s+(\d+)$/.exec(output);
+  if (!match) throw new Error(`pixel sampler returned unexpected output: ${output.slice(0, 80)}`);
+  return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
 }
 
 function isGreen(pixel) {
   return pixel.g > 150 && pixel.g > pixel.r * 1.7 && pixel.g > pixel.b * 1.7;
 }
 function isDark(pixel) {
-  return pixel.r < 40 && pixel.g < 40 && pixel.b < 40;
+  return pixel.r < 45 && pixel.g < 45 && pixel.b < 45;
 }
-
-async function captureWindow() {
-  const sources = await desktopCapturer.getSources({
-    types: ['window'],
-    thumbnailSize: { width: WIDTH, height: HEIGHT },
-    fetchWindowIcons: false
-  });
-  const source = sources.find(item => item.name === TITLE || item.name.includes(TITLE));
-  if (!source || source.thumbnail.isEmpty()) throw new Error('desktopCapturer could not capture probe window');
-  return source.thumbnail.resize({ width: WIDTH, height: HEIGHT, quality: 'best' });
+function isRed(pixel) {
+  return pixel.r > 120 && pixel.r > pixel.g * 2 && pixel.r > pixel.b * 2;
 }
 
 async function main() {
@@ -86,31 +79,52 @@ async function main() {
   });
   await win.loadURL('data:text/html,<html><body style="margin:0;background:%23b00020;width:100vw;height:100vh"></body></html>');
   win.setTitle(TITLE);
+  win.show();
+  win.focus();
+  await sleep(300);
+
+  const helper = await startHelper(win);
+  await sleep(600);
+  const bounds = win.getContentBounds();
+  const point = (x, y) => [bounds.x + x, bounds.y + y];
+
+  // Phase A proves the measurement method itself can see the native child.
+  const [cx, cy] = point(WIDTH / 2, HEIGHT / 2);
+  const nativeOnlyCenter = sampleScreen(cx, cy);
+  const [rx, ry] = point(10, 10);
+  const nativeOnlyCorner = sampleScreen(rx, ry);
+  const phaseA = {
+    centerNativeDark: isDark(nativeOnlyCenter),
+    cornerNativeDark: isDark(nativeOnlyCorner),
+    center: nativeOnlyCenter,
+    corner: nativeOnlyCorner
+  };
+  console.log(`NATIVE_LAYER_PROBE_PHASE_A ${JSON.stringify(phaseA)}`);
+  if (!phaseA.centerNativeDark || !phaseA.cornerNativeDark) {
+    throw new Error(`screen pixel method did not observe full raw native child; centerRed=${isRed(nativeOnlyCenter)}`);
+  }
 
   const overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
   overlay.setBackgroundColor('#00000000');
   overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
   await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent(`<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden"><div style="position:absolute;left:24px;top:24px;width:120px;height:70px;background:#00e060"></div><div style="position:absolute;right:24px;bottom:24px;width:90px;height:50px;background:#00e060"></div></body></html>`));
   win.contentView.addChildView(overlay);
+  await sleep(700);
 
-  const helper = await startHelper(win);
-  // The raw helper deliberately calls SetWindowPos(HWND_TOP), matching the current mpv host behavior.
-  // Re-add the WebContentsView afterwards as the strongest same-window layering attempt.
-  win.contentView.removeChildView(overlay);
-  win.contentView.addChildView(overlay);
-  await sleep(1000);
-
-  const capture = await captureWindow();
-  const topControl = rgbAt(capture, 70, 55);
-  const centerVideo = rgbAt(capture, 320, 180);
-  const bottomControl = rgbAt(capture, 570, 310);
-  const result = {
+  const [tx, ty] = point(70, 55);
+  const [bx, by] = point(570, 310);
+  const topControl = sampleScreen(tx, ty);
+  const centerVideo = sampleScreen(cx, cy);
+  const bottomControl = sampleScreen(bx, by);
+  const phaseB = {
     topControlGreen: isGreen(topControl),
     centerNativeDark: isDark(centerVideo),
     bottomControlGreen: isGreen(bottomControl),
-    topControl, centerVideo, bottomControl
+    topControl,
+    centerVideo,
+    bottomControl
   };
-  console.log(`NATIVE_LAYER_PROBE ${JSON.stringify(result)}`);
+  console.log(`NATIVE_LAYER_PROBE_PHASE_B ${JSON.stringify(phaseB)}`);
 
   try { helper.stdin.write('Q\n'); } catch {}
   await sleep(100);
@@ -118,10 +132,10 @@ async function main() {
   overlay.webContents.close();
   win.destroy();
 
-  if (!result.topControlGreen || !result.bottomControlGreen || !result.centerNativeDark) {
-    throw new Error('WebContentsView did not compose above the full raw native child HWND');
+  if (!phaseB.topControlGreen || !phaseB.bottomControlGreen || !phaseB.centerNativeDark) {
+    throw new Error('same-window WebContentsView did not preserve native video while drawing Chromium controls above it');
   }
-  console.log('NATIVE_LAYER_PROBE_OK same-window transparent WebContentsView composes above native child');
+  console.log('NATIVE_LAYER_PROBE_OK same-window native child plus transparent WebContentsView controls composed on the real desktop');
 }
 
 app.whenReady().then(main).then(() => app.quit()).catch(error => {
