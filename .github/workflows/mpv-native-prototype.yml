@@ -53,6 +53,9 @@ jobs:
       - name: Apply docked Lilac controls and mpv subtitle integration
         run: node scripts/apply-native-mpv-overlay.cjs
 
+      - name: Activate V13D2 dock layout and diagnostics
+        run: node scripts/apply-native-mpv-v13d2.cjs
+
       - name: Build Windows installer
         run: npm run dist -- --publish never
 
