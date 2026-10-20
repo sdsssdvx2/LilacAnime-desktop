@@ -17,7 +17,7 @@ fs.mkdirSync(evidenceDir, { recursive: true });
 fs.writeFileSync(logPath, '', 'utf8');
 
 const result = {
-  schema: 2,
+  schema: 3,
   probe: 'same-window-webcontentsview-native-child',
   platform: process.platform,
   status: 'running',
@@ -43,6 +43,11 @@ function nativeHandleDecimal(win) {
   let value = 0n;
   for (let i = raw.length - 1; i >= 0; i--) value = (value << 8n) | BigInt(raw[i]);
   return value.toString(10);
+}
+
+function sendBounds(proc) {
+  if (!proc || !proc.stdin || proc.stdin.destroyed) return;
+  proc.stdin.write(`B 0 0 ${WIDTH} ${HEIGHT} 1 0\n`);
 }
 
 async function startHelper(win) {
@@ -77,7 +82,7 @@ async function startHelper(win) {
       }
     });
   });
-  proc.stdin.write(`B 0 0 ${WIDTH} ${HEIGHT} 1 0\n`);
+  sendBounds(proc);
   return proc;
 }
 
@@ -143,6 +148,7 @@ async function main() {
   let win = null;
   let helper = null;
   let overlay = null;
+  let hostRefresh = null;
   try {
     win = new BrowserWindow({
       width: WIDTH,
@@ -161,11 +167,18 @@ async function main() {
     await sleep(300);
 
     helper = await startHelper(win);
-    await sleep(600);
+    // Production keeps reasserting the raw HWND geometry/z-order. Mirror that here so
+    // Phase A cannot fail merely because Chromium reclaimed sibling ordering once.
+    hostRefresh = setInterval(() => {
+      try { sendBounds(helper); } catch {}
+    }, 100);
+    await sleep(700);
     const bounds = win.getContentBounds();
     const point = (x, y) => [bounds.x + x, bounds.y + y];
 
     // Phase A proves the real-desktop pixel sampler can see the raw native child.
+    sendBounds(helper);
+    await sleep(80);
     const [cx, cy] = point(WIDTH / 2, HEIGHT / 2);
     const nativeOnlyCenter = sampleScreen(cx, cy);
     const [rx, ry] = point(10, 10);
@@ -190,6 +203,9 @@ async function main() {
     win.contentView.addChildView(overlay);
     await sleep(700);
 
+    // Reassert once immediately before Phase B, matching the production raw-HWND path.
+    sendBounds(helper);
+    await sleep(80);
     const [tx, ty] = point(70, 55);
     const [bx, by] = point(570, 310);
     const topControl = sampleScreen(tx, ty);
@@ -215,6 +231,7 @@ async function main() {
     saveResult();
     emit('NATIVE_LAYER_PROBE_OK same-window native child plus transparent WebContentsView controls composed on the real desktop');
   } finally {
+    if (hostRefresh) clearInterval(hostRefresh);
     if (helper) {
       try { helper.stdin.write('Q\n'); } catch {}
       await sleep(100);
