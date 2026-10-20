@@ -159,7 +159,7 @@ std::unique_ptr<TextureResource> CreateTexture(
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
   desc.CPUAccessFlags = 0;
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
 
   hr = resource->device->CreateTexture2D(&desc, nullptr, &resource->texture);
   if (FAILED(hr)) {
