@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lilac D3D11 SharedTexture Probe</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#b00020;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+    #stage{position:absolute;left:40px;top:40px;width:640px;height:360px;background:#101014;overflow:hidden;border-radius:10px}
+    #videoCanvas{position:absolute;inset:0;width:640px;height:360px;background:#111;display:block}
+    #clickTarget{position:absolute;left:20px;top:20px;width:160px;height:50px;border:0;border-radius:10px;background:#20d070;color:#07170f;font-weight:800;font-size:14px;z-index:4;cursor:pointer}
+    #bottomControl{position:absolute;left:460px;top:290px;width:150px;height:50px;border-radius:10px;background:#20d070;color:#07170f;font-weight:800;display:flex;align-items:center;justify-content:center;z-index:4}
+    #status{position:absolute;left:210px;top:24px;right:180px;height:42px;display:flex;align-items:center;justify-content:center;z-index:4;background:rgba(0,0,0,.72);border-radius:9px;font-size:13px}
+    #resultBox{position:absolute;left:40px;top:410px;width:640px;height:48px;margin:0;overflow:auto;white-space:pre-wrap;font:10px/1.2 Consolas,monospace;color:#fff;background:rgba(0,0,0,.5);padding:6px;box-sizing:border-box;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="videoCanvas" width="640" height="360"></canvas>
+    <button id="clickTarget" type="button">DOM CONTROL</button>
+    <div id="status">waiting for D3D11 texture…</div>
+    <div id="bottomControl">BOTTOM UI</div>
+  </div>
+  <pre id="resultBox"></pre>
+  <script src="shared-texture-probe-renderer.js"></script>
+</body>
+</html>
