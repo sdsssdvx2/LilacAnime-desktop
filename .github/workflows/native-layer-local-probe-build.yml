@@ -71,6 +71,7 @@ jobs:
             Write-Warning 'Hosted Windows runner did not deliver synthetic WebContentsView input. This is informational only; real OS click delivery is validated by the local exact-mpv probe.'
           }
           Write-Host 'LOCAL_MPV_PROBE_ENTRYPOINT_OK'
+          exit 0
       - name: Build portable exact-mpv probe EXE
         shell: powershell
         env:
