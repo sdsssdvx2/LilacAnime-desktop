@@ -88,6 +88,25 @@ function createLineProcess(executable, args) {
   return { proc, waitFor };
 }
 
+function parseClickLine(line) {
+  const sent = /^CLICK 1(?:\s|$)/.test(line);
+  const value = key => {
+    const match = new RegExp(`(?:^|\\s)${key} (-?\\d+)`).exec(line);
+    return match ? Number(match[1]) : null;
+  };
+  const cursorMatch = /(?:^|\s)CUR (-?\d+) (-?\d+)/.exec(line);
+  const targetMatch = /(?:^|\s)TARGET (-?\d+) (-?\d+)/.exec(line);
+  return {
+    rawAccepted: sent,
+    foregroundRequestAccepted: value('FGREQ'),
+    parentForeground: value('FG'),
+    cursorSet: value('CURSET'),
+    cursorRead: value('CURREAD'),
+    cursor: cursorMatch ? { x: Number(cursorMatch[1]), y: Number(cursorMatch[2]) } : null,
+    target: targetMatch ? { x: Number(targetMatch[1]), y: Number(targetMatch[2]) } : null
+  };
+}
+
 async function runProbe() {
   if (process.platform !== 'win32') throw new Error('Windows 전용 진단입니다.');
   const helperPath = probeHelperPath();
@@ -97,7 +116,7 @@ async function runProbe() {
   let overlay = null;
   let native = null;
   const result = {
-    schema: 2,
+    schema: 3,
     probe: 'Lilac local same-window D3D11 + WebContentsView + OS click',
     smokeMode: SMOKE,
     status: 'running',
@@ -200,19 +219,42 @@ async function runProbe() {
       return result;
     }
 
-    const clickLine = await command(`C ${px(130)} ${px(120)}`, value => /^CLICK [01]$/.test(value));
+    const clickLine = await command(`C ${px(130)} ${px(120)}`, value => /^CLICK [01](?:\s|$)/.test(value));
     await sleep(450);
-    const clickCount = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
+    const osClickCount = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
+    const clickNative = parseClickLine(clickLine);
+    const osClickDelivered = clickNative.rawAccepted && osClickCount > 0;
+
+    let smokeInjectedCount = null;
+    let smokeInputDelivered = null;
+    if (SMOKE && !osClickDelivered) {
+      try {
+        overlay.webContents.focus();
+        overlay.webContents.sendInputEvent({ type: 'mouseMove', x: 130, y: 120, movementX: 0, movementY: 0 });
+        overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 130, y: 120, button: 'left', clickCount: 1 });
+        overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 130, y: 120, button: 'left', clickCount: 1 });
+        await sleep(250);
+        smokeInjectedCount = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
+        smokeInputDelivered = smokeInjectedCount > osClickCount;
+      } catch {
+        smokeInjectedCount = osClickCount;
+        smokeInputDelivered = false;
+      }
+    }
+
     result.phaseC = {
-      sendInputAccepted: clickLine === 'CLICK 1',
-      chromiumClickCount: clickCount,
-      clickDelivered: clickLine === 'CLICK 1' && clickCount > 0
+      native: clickNative,
+      osChromiumClickCount: osClickCount,
+      osClickDelivered,
+      smokeInjectedCount,
+      smokeInputDelivered
     };
-    if (!result.phaseC.clickDelivered) {
+
+    if ((!SMOKE && !osClickDelivered) || (SMOKE && !osClickDelivered && !smokeInputDelivered)) {
       result.status = 'fail';
       result.verdict = SMOKE ? 'SMOKE-FAIL-C' : 'FAIL-C';
       result.error = SMOKE
-        ? 'CI smoke에서 실제 Windows 클릭이 WebContentsView에 전달되지 않았습니다.'
+        ? 'CI smoke에서 WebContentsView 클릭 핸들러까지 검증하지 못했습니다.'
         : '화면 합성은 성공했지만 실제 Windows 마우스 클릭이 WebContentsView에 전달되지 않았습니다.';
       return result;
     }
@@ -273,7 +315,7 @@ app.whenReady().then(async () => {
   });
   app.quit();
 }).catch(async error => {
-  const fallback = JSON.stringify({ schema: 2, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
+  const fallback = JSON.stringify({ schema: 3, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
   try { fs.writeFileSync(resultPath(), `${fallback}\n`, 'utf8'); } catch {}
   if (SMOKE) {
     console.error(`LILAC_LOCAL_PROBE_SMOKE_ERROR ${fallback}`);
