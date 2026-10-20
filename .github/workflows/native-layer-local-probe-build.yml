@@ -39,6 +39,23 @@ jobs:
           if (-not (Test-Path electron/win32-d3d11-layer-probe.exe)) { throw 'native helper missing' }
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Smoke-test WebContentsView rendering and OS click path
+        shell: powershell
+        env:
+          LILAC_NATIVE_LAYER_PROBE_SMOKE: '1'
+        run: |
+          $resultPath = Join-Path $env:RUNNER_TEMP 'LilacNativeLayerProbe-smoke.json'
+          $env:LILAC_NATIVE_LAYER_PROBE_RESULT = $resultPath
+          & npx.cmd electron electron/native-layer-local-probe.cjs
+          $probeExit = $LASTEXITCODE
+          if (-not (Test-Path $resultPath)) { throw 'smoke probe did not write result JSON' }
+          $result = Get-Content $resultPath -Raw | ConvertFrom-Json
+          Write-Host (Get-Content $resultPath -Raw)
+          if ($probeExit -ne 0) { throw "smoke probe process failed with exit $probeExit" }
+          if ($result.verdict -ne 'SMOKE-PASS') { throw "unexpected smoke verdict: $($result.verdict) / $($result.error)" }
+          if (-not $result.phaseB.topControlGreen -or -not $result.phaseB.bottomControlGreen) { throw 'WebContentsView green controls were not visible in smoke mode' }
+          if (-not $result.phaseC.clickDelivered -or $result.phaseC.chromiumClickCount -lt 1) { throw 'OS click did not reach WebContentsView in smoke mode' }
+          Write-Host 'LOCAL_PROBE_SMOKE_OK'
       - name: Build portable probe EXE
         shell: powershell
         env:
