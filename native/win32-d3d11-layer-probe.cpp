@@ -9,11 +9,12 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
-static constexpr int kWidth = 640;
-static constexpr int kHeight = 360;
+static int gWidth = 640;
+static int gHeight = 360;
 static std::atomic<bool> gRunning{true};
 
 static uintptr_t ParseHandle(const char* value) {
@@ -21,6 +22,14 @@ static uintptr_t ParseHandle(const char* value) {
   char* end = nullptr;
   const unsigned long long parsed = _strtoui64(value, &end, 10);
   return (end && *end == '\0') ? static_cast<uintptr_t>(parsed) : 0;
+}
+
+static int ParseDimension(const char* value, int fallback) {
+  if (!value || !*value) return fallback;
+  char* end = nullptr;
+  const long parsed = strtol(value, &end, 10);
+  if (!end || *end != '\0' || parsed < 64 || parsed > 8192) return fallback;
+  return static_cast<int>(parsed);
 }
 
 static LRESULT CALLBACK ProbeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -55,8 +64,8 @@ static HRESULT CreateRenderer(HWND hwnd,
                               IDXGISwapChain** swapChain,
                               ID3D11RenderTargetView** renderTarget) {
   DXGI_SWAP_CHAIN_DESC desc{};
-  desc.BufferDesc.Width = kWidth;
-  desc.BufferDesc.Height = kHeight;
+  desc.BufferDesc.Width = gWidth;
+  desc.BufferDesc.Height = gHeight;
   desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   desc.BufferDesc.RefreshRate.Numerator = 60;
   desc.BufferDesc.RefreshRate.Denominator = 1;
@@ -103,7 +112,43 @@ static HRESULT CreateRenderer(HWND hwnd,
   return hr;
 }
 
+static void PrintPixel(HWND host, int x, int y) {
+  POINT point{std::max(0, std::min(gWidth - 1, x)), std::max(0, std::min(gHeight - 1, y))};
+  ClientToScreen(host, &point);
+  HDC dc = GetDC(nullptr);
+  const COLORREF pixel = dc ? GetPixel(dc, point.x, point.y) : CLR_INVALID;
+  if (dc) ReleaseDC(nullptr, dc);
+  if (pixel == CLR_INVALID) {
+    std::cout << "PIXEL_ERR" << std::endl;
+  } else {
+    std::cout << "PIXEL " << static_cast<int>(GetRValue(pixel)) << ' '
+              << static_cast<int>(GetGValue(pixel)) << ' '
+              << static_cast<int>(GetBValue(pixel)) << std::endl;
+  }
+  std::cout.flush();
+}
+
+static void SendClick(HWND parent, HWND host, int x, int y) {
+  POINT point{std::max(0, std::min(gWidth - 1, x)), std::max(0, std::min(gHeight - 1, y))};
+  ClientToScreen(host, &point);
+  SetForegroundWindow(parent);
+  SetCursorPos(point.x, point.y);
+  Sleep(60);
+  INPUT inputs[2]{};
+  inputs[0].type = INPUT_MOUSE;
+  inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+  inputs[1].type = INPUT_MOUSE;
+  inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+  const UINT sent = SendInput(2, inputs, sizeof(INPUT));
+  std::cout << "CLICK " << (sent == 2 ? 1 : 0) << std::endl;
+  std::cout.flush();
+}
+
 int main(int argc, char** argv) {
+  // Make child bounds and ClientToScreen coordinates explicit physical pixels,
+  // matching the production prototype's DPR-scaled HWND geometry.
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
   if (argc < 2) {
     std::cout << "ERR args" << std::endl;
     return 2;
@@ -114,6 +159,10 @@ int main(int argc, char** argv) {
   if (!parent || !IsWindow(parent)) {
     std::cout << "ERR parent" << std::endl;
     return 3;
+  }
+  if (argc >= 4) {
+    gWidth = ParseDimension(argv[2], gWidth);
+    gHeight = ParseDimension(argv[3], gHeight);
   }
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -138,8 +187,8 @@ int main(int argc, char** argv) {
       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
       0,
       0,
-      kWidth,
-      kHeight,
+      gWidth,
+      gHeight,
       parent,
       nullptr,
       instance,
@@ -149,7 +198,7 @@ int main(int argc, char** argv) {
     return 5;
   }
 
-  SetWindowPos(host, HWND_TOP, 0, 0, kWidth, kHeight,
+  SetWindowPos(host, HWND_TOP, 0, 0, gWidth, gHeight,
                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
   ShowWindow(host, SW_SHOWNA);
 
@@ -166,15 +215,29 @@ int main(int argc, char** argv) {
 
   std::cout << "READY host "
             << static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(host))
+            << ' ' << gWidth << ' ' << gHeight
             << std::endl;
   std::cout.flush();
 
-  std::thread inputThread([host]() {
+  std::thread inputThread([parent, host]() {
     std::string line;
     while (std::getline(std::cin, line)) {
-      if (line == "Q") {
+      std::istringstream in(line);
+      std::string command;
+      in >> command;
+      if (command == "Q") {
         if (IsWindow(host)) PostMessageW(host, WM_CLOSE, 0, 0);
         break;
+      }
+      int x = 0;
+      int y = 0;
+      if (command == "P" && (in >> x >> y)) {
+        PrintPixel(host, x, y);
+        continue;
+      }
+      if (command == "C" && (in >> x >> y)) {
+        SendClick(parent, host, x, y);
+        continue;
       }
     }
   });
@@ -196,7 +259,7 @@ int main(int argc, char** argv) {
 
     const auto now = std::chrono::steady_clock::now();
     if (now >= nextTopRefresh) {
-      SetWindowPos(host, HWND_TOP, 0, 0, kWidth, kHeight,
+      SetWindowPos(host, HWND_TOP, 0, 0, gWidth, gHeight,
                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
       nextTopRefresh = now + std::chrono::milliseconds(100);
     }
