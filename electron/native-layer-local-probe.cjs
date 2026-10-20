@@ -8,6 +8,7 @@ const os = require('node:os');
 
 const WIDTH = 640;
 const HEIGHT = 360;
+const SMOKE = process.env.LILAC_NATIVE_LAYER_PROBE_SMOKE === '1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function isBlue(pixel) {
@@ -96,8 +97,9 @@ async function runProbe() {
   let overlay = null;
   let native = null;
   const result = {
-    schema: 1,
+    schema: 2,
     probe: 'Lilac local same-window D3D11 + WebContentsView + OS click',
+    smokeMode: SMOKE,
     status: 'running',
     verdict: null,
     scaleFactor: null,
@@ -158,7 +160,7 @@ async function runProbe() {
       centerNativeBlue: isBlue(centerA),
       cornerNativeBlue: isBlue(cornerA)
     };
-    if (!result.phaseA.centerNativeBlue || !result.phaseA.cornerNativeBlue) {
+    if (!SMOKE && (!result.phaseA.centerNativeBlue || !result.phaseA.cornerNativeBlue)) {
       result.status = 'fail';
       result.verdict = 'FAIL-A';
       result.error = '실제 화면에서 D3D11 native child를 확인하지 못했습니다.';
@@ -166,7 +168,7 @@ async function runProbe() {
     }
 
     overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
-    overlay.setBackgroundColor('#00000000');
+    if (typeof overlay.setBackgroundColor === 'function') overlay.setBackgroundColor('#00000000');
     overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
     const html = `<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden;font-family:Segoe UI,sans-serif">
       <button id="hit" style="position:absolute;left:60px;top:80px;width:140px;height:80px;border:0;border-radius:12px;background:#00e060;color:#001b0b;font-size:18px;font-weight:700">CLICK TEST</button>
@@ -188,10 +190,13 @@ async function runProbe() {
       centerNativeBlue: isBlue(centerB),
       bottomControlGreen: isGreen(bottomB)
     };
-    if (!result.phaseB.topControlGreen || !result.phaseB.centerNativeBlue || !result.phaseB.bottomControlGreen) {
+    const visualOk = result.phaseB.topControlGreen && result.phaseB.bottomControlGreen && (SMOKE || result.phaseB.centerNativeBlue);
+    if (!visualOk) {
       result.status = 'fail';
-      result.verdict = 'FAIL-B';
-      result.error = 'native D3D11 화면과 WebContentsView 컨트롤이 같은 창에서 동시에 합성되지 않았습니다.';
+      result.verdict = SMOKE ? 'SMOKE-FAIL-B' : 'FAIL-B';
+      result.error = SMOKE
+        ? 'CI smoke에서 WebContentsView 컨트롤 렌더링을 확인하지 못했습니다.'
+        : 'native D3D11 화면과 WebContentsView 컨트롤이 같은 창에서 동시에 합성되지 않았습니다.';
       return result;
     }
 
@@ -205,13 +210,15 @@ async function runProbe() {
     };
     if (!result.phaseC.clickDelivered) {
       result.status = 'fail';
-      result.verdict = 'FAIL-C';
-      result.error = '화면 합성은 성공했지만 실제 Windows 마우스 클릭이 WebContentsView에 전달되지 않았습니다.';
+      result.verdict = SMOKE ? 'SMOKE-FAIL-C' : 'FAIL-C';
+      result.error = SMOKE
+        ? 'CI smoke에서 실제 Windows 클릭이 WebContentsView에 전달되지 않았습니다.'
+        : '화면 합성은 성공했지만 실제 Windows 마우스 클릭이 WebContentsView에 전달되지 않았습니다.';
       return result;
     }
 
     result.status = 'pass';
-    result.verdict = 'PASS';
+    result.verdict = SMOKE ? 'SMOKE-PASS' : 'PASS';
     return result;
   } catch (error) {
     result.status = 'error';
@@ -231,14 +238,22 @@ async function runProbe() {
   }
 }
 
+function resultPath() {
+  return process.env.LILAC_NATIVE_LAYER_PROBE_RESULT || path.join(os.tmpdir(), 'LilacNativeLayerProbe-result.json');
+}
+
 app.whenReady().then(async () => {
   const result = await runProbe();
   const text = JSON.stringify(result, null, 2);
-  clipboard.writeText(text);
-  try {
-    fs.writeFileSync(path.join(os.tmpdir(), 'LilacNativeLayerProbe-result.json'), `${text}\n`, 'utf8');
-  } catch {}
+  try { fs.writeFileSync(resultPath(), `${text}\n`, 'utf8'); } catch {}
 
+  if (SMOKE) {
+    console.log(`LILAC_LOCAL_PROBE_SMOKE ${text}`);
+    app.exit(result.verdict === 'SMOKE-PASS' ? 0 : 1);
+    return;
+  }
+
+  clipboard.writeText(text);
   const messages = {
     PASS: 'PASS — native D3D11 영상층 + WebContentsView 컨트롤 + 실제 OS 클릭 전달이 모두 성립했습니다.',
     'FAIL-A': 'FAIL-A — 이 PC에서 probe의 native D3D11 child가 Electron 표면 위에 나타나지 않았습니다.',
@@ -258,7 +273,13 @@ app.whenReady().then(async () => {
   });
   app.quit();
 }).catch(async error => {
-  const fallback = JSON.stringify({ schema: 1, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
+  const fallback = JSON.stringify({ schema: 2, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
+  try { fs.writeFileSync(resultPath(), `${fallback}\n`, 'utf8'); } catch {}
+  if (SMOKE) {
+    console.error(`LILAC_LOCAL_PROBE_SMOKE_ERROR ${fallback}`);
+    app.exit(1);
+    return;
+  }
   clipboard.writeText(fallback);
   try { await dialog.showMessageBox({ type: 'error', title: 'Lilac Native Layer Probe', message: '진단 실행 오류', detail: fallback, buttons: ['확인'] }); } catch {}
   app.quit();
