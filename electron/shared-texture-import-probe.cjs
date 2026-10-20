@@ -49,9 +49,19 @@ function waitForIpc(channel, predicate = () => true, timeoutMs = 2500) {
   });
 }
 
+function textureInfo(resource) {
+  return {
+    pixelFormat: 'bgra',
+    codedSize: { width: resource.width, height: resource.height },
+    visibleRect: { x: 0, y: 0, width: resource.width, height: resource.height },
+    timestamp: Date.now() * 1000,
+    handle: { ntHandle: resource.ntHandle }
+  };
+}
+
 async function run() {
   const result = {
-    schema: 1,
+    schema: 2,
     probe: 'Lilac D3D11 shared texture -> Electron VideoFrame -> DOM',
     smokeMode,
     status: 'fail',
@@ -77,14 +87,45 @@ async function run() {
       result.verdict = 'FAIL-API-MISSING';
       throw new Error('Electron sharedTexture managed API is unavailable.');
     }
+
     const smokeTexture = addon.createSolidTexture(64, 64, 6, 64, 230, 255);
     result.phaseA.nativeTextureCreated = Boolean(smokeTexture?.id && Buffer.isBuffer(smokeTexture?.ntHandle));
     result.phaseA.ntHandleBytes = smokeTexture?.ntHandle?.length || 0;
+    result.phaseA.deviceMode = smokeTexture?.deviceMode || null;
+    result.phaseA.featureLevel = smokeTexture?.featureLevel || null;
     if (!result.phaseA.nativeTextureCreated) {
       result.verdict = 'FAIL-NATIVE-TEXTURE';
       throw new Error('D3D11 shared NT-handle texture creation failed.');
     }
-    addon.releaseTexture(smokeTexture.id);
+
+    let sourceReleased = false;
+    const releaseSource = () => {
+      if (sourceReleased) return;
+      sourceReleased = true;
+      try { addon.releaseTexture(smokeTexture.id); } catch {}
+    };
+    let smokeImported;
+    try {
+      smokeImported = sharedTexture.importSharedTexture({
+        textureInfo: textureInfo(smokeTexture),
+        allReferencesReleased: releaseSource
+      });
+      result.phaseA.importedSharedTexture = Boolean(smokeImported && typeof smokeImported.release === 'function');
+      if (!result.phaseA.importedSharedTexture) {
+        result.verdict = 'FAIL-TEXTURE-IMPORT';
+        throw new Error('Electron did not return a SharedTextureImported object.');
+      }
+      smokeImported.release();
+      smokeImported = null;
+      for (let i = 0; i < 10 && !sourceReleased; i += 1) await sleep(30);
+      result.phaseA.releaseCallbackObserved = sourceReleased;
+      releaseSource();
+    } catch (error) {
+      try { smokeImported?.release?.(); } catch {}
+      releaseSource();
+      if (result.verdict === 'UNSET') result.verdict = 'FAIL-TEXTURE-IMPORT';
+      throw error;
+    }
   } catch (error) {
     result.error = safeError(error);
     if (result.verdict === 'UNSET') result.verdict = 'FAIL-NATIVE-ADDON';
@@ -96,7 +137,7 @@ async function run() {
 
   if (smokeMode) {
     result.status = 'pass';
-    result.verdict = 'SMOKE-PASS';
+    result.verdict = 'SMOKE-IMPORT-PASS';
     result.error = null;
     const text = JSON.stringify(result, null, 2);
     console.log(text);
@@ -119,8 +160,9 @@ async function run() {
   });
 
   const htmlPath = path.join(__dirname, '..', 'src', 'shared-texture-probe.html');
+  const ready = waitForIpc('probe-ready', payload => payload?.ready === true, 5000);
   await win.loadFile(htmlPath);
-  await waitForIpc('probe-ready', () => true, 4000).catch(() => null);
+  await ready;
 
   async function sendTexture(label, color) {
     const resource = addon.createSolidTexture(640, 360, color.r, color.g, color.b, 255);
@@ -133,16 +175,10 @@ async function run() {
     let imported;
     try {
       imported = sharedTexture.importSharedTexture({
-        textureInfo: {
-          pixelFormat: 'bgra',
-          codedSize: { width: resource.width, height: resource.height },
-          visibleRect: { x: 0, y: 0, width: resource.width, height: resource.height },
-          timestamp: Date.now() * 1000,
-          handle: { ntHandle: resource.ntHandle }
-        },
+        textureInfo: textureInfo(resource),
         allReferencesReleased: releaseSource
       });
-      const drawn = waitForIpc('probe-frame-drawn', payload => payload?.label === label, 5000);
+      const drawn = waitForIpc('probe-frame-drawn', payload => payload?.label === label && payload?.ok === true, 5000);
       await sharedTexture.sendSharedTexture({
         frame: win.webContents.mainFrame,
         importedSharedTexture: imported
@@ -245,7 +281,7 @@ async function run() {
 
 app.whenReady().then(run).catch(error => {
   const result = {
-    schema: 1,
+    schema: 2,
     probe: 'Lilac D3D11 shared texture -> Electron VideoFrame -> DOM',
     smokeMode,
     status: 'fail',
