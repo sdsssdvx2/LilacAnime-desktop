@@ -5,8 +5,8 @@ on:
   push:
     branches: [mpv-native-engine]
     paths:
-      - scripts/probe-webcontentsview-native-zorder.cjs
-      - native/win32-mpv-host.cpp
+      - scripts/probe-webcontentsview-d3d11-zorder.cjs
+      - native/win32-d3d11-layer-probe.cpp
       - native/win32-screen-pixel.cpp
       - .github/workflows/native-layer-composition-probe.yml
 
@@ -26,12 +26,12 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Build raw Win32 HWND host helper
+      - name: Build D3D11 native child renderer
         shell: cmd
         run: >-
           cl /nologo /EHsc /std:c++17 /O2
-          /Fe:electron\\win32-mpv-host.exe
-          native\\win32-mpv-host.cpp user32.lib gdi32.lib
+          /Fe:electron\\win32-d3d11-layer-probe.exe
+          native\\win32-d3d11-layer-probe.cpp user32.lib gdi32.lib d3d11.lib dxgi.lib
       - name: Build real-screen pixel sampler
         shell: cmd
         run: >-
@@ -40,17 +40,17 @@ jobs:
           native\\win32-screen-pixel.cpp user32.lib gdi32.lib
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run same-window composition probe and preserve status
+      - name: Run D3D11 same-window composition probe and preserve status
         shell: powershell
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'native-layer-probe'
           New-Item -ItemType Directory -Path $out -Force | Out-Null
           $env:LILAC_NATIVE_PROBE_OUTDIR = $out
-          & npx.cmd electron scripts/probe-webcontentsview-native-zorder.cjs
+          & npx.cmd electron scripts/probe-webcontentsview-d3d11-zorder.cjs
           $probeExit = $LASTEXITCODE
           Set-Content -Path (Join-Path $out 'exit-code.txt') -Value $probeExit -Encoding ascii
           if (-not (Test-Path (Join-Path $out 'result.json'))) {
-            '{"schema":2,"probe":"same-window-webcontentsview-native-child","status":"fail","error":"probe exited before writing result.json"}' | Set-Content -Path (Join-Path $out 'result.json') -Encoding utf8
+            '{"schema":4,"probe":"same-window-webcontentsview-d3d11-child","status":"fail","error":"probe exited before writing result.json"}' | Set-Content -Path (Join-Path $out 'result.json') -Encoding utf8
           }
           Write-Host "NATIVE_LAYER_PROBE_PROCESS_EXIT=$probeExit"
           # Evidence must be uploaded before the workflow decides pass/fail.
