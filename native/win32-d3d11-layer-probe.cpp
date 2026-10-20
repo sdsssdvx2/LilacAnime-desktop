@@ -131,24 +131,33 @@ static void PrintPixel(HWND host, int x, int y) {
 }
 
 static void SendClick(HWND parent, HWND host, int x, int y) {
-  POINT point{std::max(0, std::min(gWidth - 1, x)), std::max(0, std::min(gHeight - 1, y))};
-  ClientToScreen(host, &point);
-  SetForegroundWindow(parent);
-  SetCursorPos(point.x, point.y);
+  POINT target{std::max(0, std::min(gWidth - 1, x)), std::max(0, std::min(gHeight - 1, y))};
+  ClientToScreen(host, &target);
+  const BOOL foregroundRequested = SetForegroundWindow(parent);
+  const BOOL cursorSet = SetCursorPos(target.x, target.y);
   Sleep(60);
+  POINT cursor{};
+  const BOOL cursorRead = GetCursorPos(&cursor);
+  const bool parentForeground = GetForegroundWindow() == parent;
+
   INPUT inputs[2]{};
   inputs[0].type = INPUT_MOUSE;
   inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
   inputs[1].type = INPUT_MOUSE;
   inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
   const UINT sent = SendInput(2, inputs, sizeof(INPUT));
-  std::cout << "CLICK " << (sent == 2 ? 1 : 0) << std::endl;
+  std::cout << "CLICK " << (sent == 2 ? 1 : 0)
+            << " FGREQ " << (foregroundRequested ? 1 : 0)
+            << " FG " << (parentForeground ? 1 : 0)
+            << " CURSET " << (cursorSet ? 1 : 0)
+            << " CURREAD " << (cursorRead ? 1 : 0)
+            << " CUR " << cursor.x << ' ' << cursor.y
+            << " TARGET " << target.x << ' ' << target.y
+            << std::endl;
   std::cout.flush();
 }
 
 int main(int argc, char** argv) {
-  // Make child bounds and ClientToScreen coordinates explicit physical pixels,
-  // matching the production prototype's DPR-scaled HWND geometry.
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
   if (argc < 2) {
@@ -215,8 +224,6 @@ int main(int argc, char** argv) {
     return 6;
   }
 
-  // Keep the original READY protocol so the CI composition probe remains
-  // backward-compatible; optional geometry follows on a separate line.
   std::cout << "READY host "
             << static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(host))
             << std::endl;
