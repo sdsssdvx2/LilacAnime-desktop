@@ -1,5 +1,6 @@
 appId: com.lilac.anime.sharedtextureprobe
 productName: LilacSharedTextureProbe
+electronVersion: 43.8.1
 directories:
   output: dist-shared-texture-probe
 files:
