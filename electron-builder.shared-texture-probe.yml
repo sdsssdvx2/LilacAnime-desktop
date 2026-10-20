@@ -1,0 +1,21 @@
+appId: com.lilac.anime.sharedtextureprobe
+productName: LilacSharedTextureProbe
+directories:
+  output: dist-shared-texture-probe
+files:
+  - electron/shared-texture-import-probe.cjs
+  - electron/lilac-shared-texture-probe.node
+  - src/shared-texture-probe.html
+  - src/shared-texture-probe-renderer.js
+  - package.json
+  - build/icon.ico
+asarUnpack:
+  - electron/lilac-shared-texture-probe.node
+extraMetadata:
+  main: electron/shared-texture-import-probe.cjs
+win:
+  icon: build/icon.ico
+  executableName: LilacSharedTextureProbe
+  target:
+    - portable
+  artifactName: LilacSharedTextureProbe.exe
