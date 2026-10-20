@@ -4,9 +4,11 @@
 #include <d3d11.h>
 #include <dxgi.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -213,10 +215,12 @@ int main(int argc, char** argv) {
     return 6;
   }
 
+  // Keep the original READY protocol so the CI composition probe remains
+  // backward-compatible; optional geometry follows on a separate line.
   std::cout << "READY host "
             << static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(host))
-            << ' ' << gWidth << ' ' << gHeight
             << std::endl;
+  std::cout << "SIZE " << gWidth << ' ' << gHeight << std::endl;
   std::cout.flush();
 
   std::thread inputThread([parent, host]() {
