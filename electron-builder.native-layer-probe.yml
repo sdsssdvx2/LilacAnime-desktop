@@ -1,5 +1,5 @@
-appId: com.lilac.anime.nativeprobe
-productName: Lilac Native Layer Probe
+appId: com.lilac.anime.nativempvprobe
+productName: Lilac Native mpv Layer Probe
 directories:
   output: dist-native-layer-probe
 files:
@@ -8,13 +8,15 @@ files:
 extraMetadata:
   main: electron/native-layer-local-probe.cjs
 extraResources:
-  - from: electron/win32-d3d11-layer-probe.exe
-    to: probe-native/win32-d3d11-layer-probe.exe
+  - from: electron/win32-mpv-host.exe
+    to: probe-native/win32-mpv-host.exe
+  - from: electron/win32-screen-pixel.exe
+    to: probe-native/win32-screen-pixel.exe
 win:
   icon: build/icon.ico
-  executableName: LilacNativeLayerProbe
+  executableName: LilacNativeMpvLayerProbe
   target:
     - target: portable
       arch:
         - x64
-  artifactName: LilacNativeLayerProbe.${ext}
+  artifactName: LilacNativeMpvLayerProbe.${ext}
