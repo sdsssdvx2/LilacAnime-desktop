@@ -1,0 +1,63 @@
+name: Build one-click native layer probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mpv-native-engine]
+    paths:
+      - electron/native-layer-local-probe.cjs
+      - native/win32-d3d11-layer-probe.cpp
+      - electron-builder.native-layer-probe.yml
+      - .github/workflows/native-layer-local-probe-build.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-probe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build D3D11 native helper
+        shell: cmd
+        run: >-
+          cl /nologo /EHsc /std:c++17 /O2
+          /Fe:electron\\win32-d3d11-layer-probe.exe
+          native\\win32-d3d11-layer-probe.cpp user32.lib gdi32.lib d3d11.lib dxgi.lib
+      - name: Validate probe source
+        shell: powershell
+        run: |
+          node --check electron/native-layer-local-probe.cjs
+          if (-not (Test-Path electron/win32-d3d11-layer-probe.exe)) { throw 'native helper missing' }
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build portable probe EXE
+        shell: powershell
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --config electron-builder.native-layer-probe.yml --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem dist-native-layer-probe -Filter 'LilacNativeLayerProbe.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'portable probe EXE was not produced' }
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path 'dist-native-layer-probe/LilacNativeLayerProbe.sha256.txt' -Value "$hash  LilacNativeLayerProbe.exe" -Encoding ascii
+          Write-Host "PROBE_EXE_BYTES=$($exe.Length)"
+          Write-Host "PROBE_EXE_SHA256=$hash"
+      - name: Upload direct probe EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: LilacNativeLayerProbe
+          path: |
+            dist-native-layer-probe/LilacNativeLayerProbe.exe
+            dist-native-layer-probe/LilacNativeLayerProbe.sha256.txt
+          if-no-files-found: error
+          retention-days: 14
