@@ -38,8 +38,13 @@ try {
       ipcRenderer.send('probe-frame-drawn', { label, ok: false, error: String(error?.message || error) });
     }
   });
-  ipcRenderer.send('probe-ready', { ready: true });
+  const ready = { ready: true };
+  ipcRenderer.send('probe-ready', ready);
+  setTimeout(() => ipcRenderer.send('probe-ready', ready), 350);
+  setTimeout(() => ipcRenderer.send('probe-ready', ready), 900);
 } catch (error) {
   status.textContent = String(error?.message || error);
-  ipcRenderer.send('probe-ready', { ready: false, error: String(error?.message || error) });
+  const failed = { ready: false, error: String(error?.message || error) };
+  ipcRenderer.send('probe-ready', failed);
+  setTimeout(() => ipcRenderer.send('probe-ready', failed), 350);
 }
