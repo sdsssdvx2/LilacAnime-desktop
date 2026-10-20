@@ -1,0 +1,69 @@
+name: SharedTexture local probe
+
+on:
+  push:
+    branches: [shared-texture-probe]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-shared-texture-local-probe
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-probe:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install dependencies
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund node-gyp@11
+      - name: Build Electron ABI D3D11 shared texture addon
+        shell: powershell
+        run: |
+          $electronVersion = node -p "require('electron/package.json').version"
+          Write-Host "ELECTRON_VERSION=$electronVersion"
+          $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
+          & $nodeGyp rebuild --directory native/shared-texture-probe --target=$electronVersion --dist-url=https://electronjs.org/headers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item native/shared-texture-probe/build/Release/lilac_shared_texture_probe.node electron/lilac-shared-texture-probe.node -Force
+          if (-not (Test-Path electron/lilac-shared-texture-probe.node)) { throw 'native addon missing' }
+      - name: Syntax check
+        run: |
+          node --check electron/shared-texture-import-probe.cjs
+          node --check src/shared-texture-probe-renderer.js
+      - name: Electron API and native D3D11 smoke
+        shell: powershell
+        run: |
+          $env:LILAC_SHARED_TEXTURE_PROBE_SMOKE = '1'
+          & npx.cmd electron electron/shared-texture-import-probe.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build portable local probe
+        run: npx electron-builder --config electron-builder.shared-texture-probe.yml --publish never
+      - name: Probe checksum
+        shell: powershell
+        run: |
+          $exe = Get-Item dist-shared-texture-probe/LilacSharedTextureProbe.exe
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content dist-shared-texture-probe/LilacSharedTextureProbe.sha256.txt "$hash  LilacSharedTextureProbe.exe" -Encoding ascii
+          Write-Host "PROBE_EXE_BYTES=$($exe.Length)"
+          Write-Host "PROBE_EXE_SHA256=$hash"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacSharedTextureProbe
+          path: |
+            dist-shared-texture-probe/LilacSharedTextureProbe.exe
+            dist-shared-texture-probe/LilacSharedTextureProbe.sha256.txt
+          if-no-files-found: error
+          retention-days: 14
