@@ -38,6 +38,9 @@ jobs:
         run: electron\win32-mpv-host.exe --self-test-region
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Probe same-window WebContentsView over native child
+        continue-on-error: true
+        run: npx electron scripts/probe-webcontentsview-native-zorder.cjs
       - name: Real ReAnime and Flix HLS fragment smoke gate
         shell: powershell
         run: |
