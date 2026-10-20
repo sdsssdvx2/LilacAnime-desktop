@@ -51,6 +51,8 @@ jobs:
         run: node scripts/apply-native-mpv-v13d4.cjs
       - name: Apply V13D5 deferred diagnostics and full-stage HWND holes
         run: node scripts/apply-native-mpv-v13d5.cjs
+      - name: Apply V13D6 Windows DPI scaling and settings-region hole
+        run: node scripts/apply-native-mpv-v13d6.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
       - name: Candidate checksum
