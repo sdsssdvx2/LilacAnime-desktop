@@ -1,13 +1,42 @@
 'use strict';
 
 const { app, BrowserWindow, WebContentsView } = require('electron');
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, execFileSync, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const WIDTH = 640;
 const HEIGHT = 360;
 const TITLE = `LilacNativeLayerProbe-${process.pid}`;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const evidenceDir = path.resolve(process.env.LILAC_NATIVE_PROBE_OUTDIR || path.join(process.cwd(), 'native-layer-probe-evidence'));
+const resultPath = path.join(evidenceDir, 'result.json');
+const logPath = path.join(evidenceDir, 'probe.log');
+
+fs.mkdirSync(evidenceDir, { recursive: true });
+fs.writeFileSync(logPath, '', 'utf8');
+
+const result = {
+  schema: 2,
+  probe: 'same-window-webcontentsview-native-child',
+  platform: process.platform,
+  status: 'running',
+  phaseA: null,
+  phaseB: null,
+  screenshots: {},
+  screenshotErrors: [],
+  error: null
+};
+
+function emit(line, isError = false) {
+  const safe = String(line).replace(/https?:\/\/\S+/gi, '[url]');
+  fs.appendFileSync(logPath, `${safe}\n`, 'utf8');
+  (isError ? console.error : console.log)(safe);
+}
+
+function saveResult() {
+  fs.writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+}
 
 function nativeHandleDecimal(win) {
   const raw = win.getNativeWindowHandle();
@@ -20,9 +49,17 @@ async function startHelper(win) {
   const helper = path.join(__dirname, '..', 'electron', 'win32-mpv-host.exe');
   const proc = spawn(helper, [nativeHandleDecimal(win)], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let buffer = '';
+  proc.stderr.setEncoding('utf8');
+  proc.stderr.on('data', chunk => {
+    const text = String(chunk).trim();
+    if (text) emit(`HELPER_STDERR ${text}`, true);
+  });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('helper ready timeout')), 7000);
-    proc.once('error', reject);
+    proc.once('error', error => {
+      clearTimeout(timer);
+      reject(error);
+    });
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', chunk => {
       buffer += chunk;
@@ -55,6 +92,41 @@ function sampleScreen(x, y) {
   return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
 }
 
+function captureDesktop(bounds, filename) {
+  const outputPath = path.join(evidenceDir, filename);
+  const quotedPath = outputPath.replace(/'/g, "''");
+  const script = [
+    "Add-Type -AssemblyName System.Drawing",
+    `$bmp = New-Object System.Drawing.Bitmap(${Math.round(bounds.width)}, ${Math.round(bounds.height)})`,
+    '$g = [System.Drawing.Graphics]::FromImage($bmp)',
+    `$g.CopyFromScreen(${Math.round(bounds.x)}, ${Math.round(bounds.y)}, 0, 0, $bmp.Size)`,
+    `$bmp.Save('${quotedPath}', [System.Drawing.Imaging.ImageFormat]::Png)`,
+    '$g.Dispose()',
+    '$bmp.Dispose()'
+  ].join('; ');
+  const proc = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    windowsHide: true,
+    encoding: 'utf8'
+  });
+  if (proc.status !== 0 || !fs.existsSync(outputPath)) {
+    const detail = String(proc.stderr || proc.stdout || `exit ${proc.status}`).trim().replace(/\s+/g, ' ').slice(0, 240);
+    throw new Error(`desktop screenshot failed: ${detail}`);
+  }
+  return filename;
+}
+
+function tryCapture(bounds, key, filename) {
+  try {
+    result.screenshots[key] = captureDesktop(bounds, filename);
+    emit(`NATIVE_LAYER_SCREENSHOT ${key} ${filename}`);
+  } catch (error) {
+    const message = String(error?.message || error);
+    result.screenshotErrors.push({ phase: key, message });
+    emit(`NATIVE_LAYER_SCREENSHOT_FAIL ${key} ${message}`, true);
+  }
+  saveResult();
+}
+
 function isGreen(pixel) {
   return pixel.g > 150 && pixel.g > pixel.r * 1.7 && pixel.g > pixel.b * 1.7;
 }
@@ -67,79 +139,103 @@ function isRed(pixel) {
 
 async function main() {
   if (process.platform !== 'win32') throw new Error('probe is Windows-only');
-  const win = new BrowserWindow({
-    width: WIDTH,
-    height: HEIGHT,
-    useContentSize: true,
-    frame: false,
-    show: true,
-    title: TITLE,
-    backgroundColor: '#b00020',
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
-  });
-  await win.loadURL('data:text/html,<html><body style="margin:0;background:%23b00020;width:100vw;height:100vh"></body></html>');
-  win.setTitle(TITLE);
-  win.show();
-  win.focus();
-  await sleep(300);
 
-  const helper = await startHelper(win);
-  await sleep(600);
-  const bounds = win.getContentBounds();
-  const point = (x, y) => [bounds.x + x, bounds.y + y];
+  let win = null;
+  let helper = null;
+  let overlay = null;
+  try {
+    win = new BrowserWindow({
+      width: WIDTH,
+      height: HEIGHT,
+      useContentSize: true,
+      frame: false,
+      show: true,
+      title: TITLE,
+      backgroundColor: '#b00020',
+      webPreferences: { contextIsolation: true, nodeIntegration: false }
+    });
+    await win.loadURL('data:text/html,<html><body style="margin:0;background:%23b00020;width:100vw;height:100vh"></body></html>');
+    win.setTitle(TITLE);
+    win.show();
+    win.focus();
+    await sleep(300);
 
-  // Phase A proves the measurement method itself can see the native child.
-  const [cx, cy] = point(WIDTH / 2, HEIGHT / 2);
-  const nativeOnlyCenter = sampleScreen(cx, cy);
-  const [rx, ry] = point(10, 10);
-  const nativeOnlyCorner = sampleScreen(rx, ry);
-  const phaseA = {
-    centerNativeDark: isDark(nativeOnlyCenter),
-    cornerNativeDark: isDark(nativeOnlyCorner),
-    center: nativeOnlyCenter,
-    corner: nativeOnlyCorner
-  };
-  console.log(`NATIVE_LAYER_PROBE_PHASE_A ${JSON.stringify(phaseA)}`);
-  if (!phaseA.centerNativeDark || !phaseA.cornerNativeDark) {
-    throw new Error(`screen pixel method did not observe full raw native child; centerRed=${isRed(nativeOnlyCenter)}`);
+    helper = await startHelper(win);
+    await sleep(600);
+    const bounds = win.getContentBounds();
+    const point = (x, y) => [bounds.x + x, bounds.y + y];
+
+    // Phase A proves the real-desktop pixel sampler can see the raw native child.
+    const [cx, cy] = point(WIDTH / 2, HEIGHT / 2);
+    const nativeOnlyCenter = sampleScreen(cx, cy);
+    const [rx, ry] = point(10, 10);
+    const nativeOnlyCorner = sampleScreen(rx, ry);
+    const phaseA = {
+      centerNativeDark: isDark(nativeOnlyCenter),
+      cornerNativeDark: isDark(nativeOnlyCorner),
+      center: nativeOnlyCenter,
+      corner: nativeOnlyCorner
+    };
+    result.phaseA = phaseA;
+    emit(`NATIVE_LAYER_PROBE_PHASE_A ${JSON.stringify(phaseA)}`);
+    tryCapture(bounds, 'phaseA', 'phase-a.png');
+    if (!phaseA.centerNativeDark || !phaseA.cornerNativeDark) {
+      throw new Error(`screen pixel method did not observe full raw native child; centerRed=${isRed(nativeOnlyCenter)}`);
+    }
+
+    overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
+    overlay.setBackgroundColor('#00000000');
+    overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
+    await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent(`<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden"><div style="position:absolute;left:24px;top:24px;width:120px;height:70px;background:#00e060"></div><div style="position:absolute;right:24px;bottom:24px;width:90px;height:50px;background:#00e060"></div></body></html>`));
+    win.contentView.addChildView(overlay);
+    await sleep(700);
+
+    const [tx, ty] = point(70, 55);
+    const [bx, by] = point(570, 310);
+    const topControl = sampleScreen(tx, ty);
+    const centerVideo = sampleScreen(cx, cy);
+    const bottomControl = sampleScreen(bx, by);
+    const phaseB = {
+      topControlGreen: isGreen(topControl),
+      centerNativeDark: isDark(centerVideo),
+      bottomControlGreen: isGreen(bottomControl),
+      topControl,
+      centerVideo,
+      bottomControl
+    };
+    result.phaseB = phaseB;
+    emit(`NATIVE_LAYER_PROBE_PHASE_B ${JSON.stringify(phaseB)}`);
+    tryCapture(bounds, 'phaseB', 'phase-b.png');
+
+    if (!phaseB.topControlGreen || !phaseB.bottomControlGreen || !phaseB.centerNativeDark) {
+      throw new Error('same-window WebContentsView did not preserve native video while drawing Chromium controls above it');
+    }
+
+    result.status = 'pass';
+    saveResult();
+    emit('NATIVE_LAYER_PROBE_OK same-window native child plus transparent WebContentsView controls composed on the real desktop');
+  } finally {
+    if (helper) {
+      try { helper.stdin.write('Q\n'); } catch {}
+      await sleep(100);
+      try { helper.kill(); } catch {}
+    }
+    if (overlay) {
+      try { overlay.webContents.close(); } catch {}
+    }
+    if (win && !win.isDestroyed()) win.destroy();
   }
-
-  const overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
-  overlay.setBackgroundColor('#00000000');
-  overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
-  await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent(`<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden"><div style="position:absolute;left:24px;top:24px;width:120px;height:70px;background:#00e060"></div><div style="position:absolute;right:24px;bottom:24px;width:90px;height:50px;background:#00e060"></div></body></html>`));
-  win.contentView.addChildView(overlay);
-  await sleep(700);
-
-  const [tx, ty] = point(70, 55);
-  const [bx, by] = point(570, 310);
-  const topControl = sampleScreen(tx, ty);
-  const centerVideo = sampleScreen(cx, cy);
-  const bottomControl = sampleScreen(bx, by);
-  const phaseB = {
-    topControlGreen: isGreen(topControl),
-    centerNativeDark: isDark(centerVideo),
-    bottomControlGreen: isGreen(bottomControl),
-    topControl,
-    centerVideo,
-    bottomControl
-  };
-  console.log(`NATIVE_LAYER_PROBE_PHASE_B ${JSON.stringify(phaseB)}`);
-
-  try { helper.stdin.write('Q\n'); } catch {}
-  await sleep(100);
-  try { helper.kill(); } catch {}
-  overlay.webContents.close();
-  win.destroy();
-
-  if (!phaseB.topControlGreen || !phaseB.bottomControlGreen || !phaseB.centerNativeDark) {
-    throw new Error('same-window WebContentsView did not preserve native video while drawing Chromium controls above it');
-  }
-  console.log('NATIVE_LAYER_PROBE_OK same-window native child plus transparent WebContentsView controls composed on the real desktop');
 }
 
-app.whenReady().then(main).then(() => app.quit()).catch(error => {
-  console.error(`NATIVE_LAYER_PROBE_FAIL ${String(error?.message || error).replace(/https?:\/\/\S+/gi, '[url]')}`);
+saveResult();
+app.whenReady().then(main).then(() => {
+  saveResult();
+  app.quit();
+}).catch(error => {
+  result.status = 'fail';
+  result.error = String(error?.message || error).replace(/https?:\/\/\S+/gi, '[url]');
+  saveResult();
+  emit(`NATIVE_LAYER_PROBE_FAIL ${result.error}`, true);
   process.exitCode = 1;
   app.quit();
 });
