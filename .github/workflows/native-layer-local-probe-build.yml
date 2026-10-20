@@ -1,4 +1,4 @@
-name: Build one-click native layer probe
+name: Build one-click native mpv layer probe
 
 on:
   workflow_dispatch:
@@ -6,7 +6,8 @@ on:
     branches: [mpv-native-engine]
     paths:
       - electron/native-layer-local-probe.cjs
-      - native/win32-d3d11-layer-probe.cpp
+      - native/win32-mpv-host.cpp
+      - native/win32-screen-pixel.cpp
       - electron-builder.native-layer-probe.yml
       - .github/workflows/native-layer-local-probe-build.yml
 
@@ -26,25 +27,34 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Build D3D11 native helper
+      - name: Build production-equivalent Win32 mpv host helper
         shell: cmd
         run: >-
           cl /nologo /EHsc /std:c++17 /O2
-          /Fe:electron\\win32-d3d11-layer-probe.exe
-          native\\win32-d3d11-layer-probe.cpp user32.lib gdi32.lib d3d11.lib dxgi.lib
-      - name: Validate probe source
+          /Fe:electron\\win32-mpv-host.exe
+          native\\win32-mpv-host.cpp user32.lib gdi32.lib
+      - name: Build real-screen pixel sampler
+        shell: cmd
+        run: >-
+          cl /nologo /EHsc /std:c++17 /O2
+          /Fe:electron\\win32-screen-pixel.exe
+          native\\win32-screen-pixel.cpp user32.lib gdi32.lib
+      - name: Validate probe source and host region parser
         shell: powershell
         run: |
           node --check electron/native-layer-local-probe.cjs
-          if (-not (Test-Path electron/win32-d3d11-layer-probe.exe)) { throw 'native helper missing' }
+          if (-not (Test-Path electron/win32-mpv-host.exe)) { throw 'mpv host helper missing' }
+          if (-not (Test-Path electron/win32-screen-pixel.exe)) { throw 'screen pixel helper missing' }
+          & electron/win32-mpv-host.exe --self-test-region
+          if ($LASTEXITCODE -ne 0) { throw "host region self-test failed: $LASTEXITCODE" }
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Smoke-test WebContentsView rendering and input handler path
+      - name: Smoke-test packaged Electron WebContentsView path
         shell: powershell
         env:
           LILAC_NATIVE_LAYER_PROBE_SMOKE: '1'
         run: |
-          $resultPath = Join-Path $env:RUNNER_TEMP 'LilacNativeLayerProbe-smoke.json'
+          $resultPath = Join-Path $env:RUNNER_TEMP 'LilacNativeMpvLayerProbe-smoke.json'
           $env:LILAC_NATIVE_LAYER_PROBE_RESULT = $resultPath
           & npx.cmd electron electron/native-layer-local-probe.cjs
           $probeExit = $LASTEXITCODE
@@ -53,30 +63,27 @@ jobs:
           Write-Host (Get-Content $resultPath -Raw)
           if ($probeExit -ne 0) { throw "smoke probe process failed with exit $probeExit" }
           if ($result.verdict -ne 'SMOKE-PASS') { throw "unexpected smoke verdict: $($result.verdict) / $($result.error)" }
-          if (-not $result.phaseB.topControlGreen -or -not $result.phaseB.bottomControlGreen) { throw 'WebContentsView green controls were not visible in smoke mode' }
-          if (-not $result.phaseC.osClickDelivered -and -not $result.phaseC.smokeInputDelivered) { throw 'WebContentsView click handler was not verified in smoke mode' }
-          if ($result.phaseC.osClickDelivered -and $result.phaseC.osChromiumClickCount -lt 1) { throw 'OS click delivery state is internally inconsistent' }
-          if ($result.phaseC.smokeInputDelivered -and $result.phaseC.smokeInjectedCount -lt 1) { throw 'smoke input delivery state is internally inconsistent' }
-          Write-Host 'LOCAL_PROBE_SMOKE_OK'
-      - name: Build portable probe EXE
+          if (-not $result.phaseSmoke.webContentsViewClickHandler) { throw 'WebContentsView click handler smoke failed' }
+          Write-Host 'LOCAL_MPV_PROBE_SMOKE_OK'
+      - name: Build portable exact-mpv probe EXE
         shell: powershell
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           npx electron-builder --config electron-builder.native-layer-probe.yml --publish never
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $exe = Get-ChildItem dist-native-layer-probe -Filter 'LilacNativeLayerProbe.exe' | Select-Object -First 1
-          if (-not $exe) { throw 'portable probe EXE was not produced' }
+          $exe = Get-ChildItem dist-native-layer-probe -Filter 'LilacNativeMpvLayerProbe.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'portable exact-mpv probe EXE was not produced' }
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -Path 'dist-native-layer-probe/LilacNativeLayerProbe.sha256.txt' -Value "$hash  LilacNativeLayerProbe.exe" -Encoding ascii
+          Set-Content -Path 'dist-native-layer-probe/LilacNativeMpvLayerProbe.sha256.txt' -Value "$hash  LilacNativeMpvLayerProbe.exe" -Encoding ascii
           Write-Host "PROBE_EXE_BYTES=$($exe.Length)"
           Write-Host "PROBE_EXE_SHA256=$hash"
-      - name: Upload direct probe EXE
+      - name: Upload direct exact-mpv probe EXE
         uses: actions/upload-artifact@v4
         with:
-          name: LilacNativeLayerProbe
+          name: LilacNativeMpvLayerProbe
           path: |
-            dist-native-layer-probe/LilacNativeLayerProbe.exe
-            dist-native-layer-probe/LilacNativeLayerProbe.sha256.txt
+            dist-native-layer-probe/LilacNativeMpvLayerProbe.exe
+            dist-native-layer-probe/LilacNativeMpvLayerProbe.sha256.txt
           if-no-files-found: error
           retention-days: 14
