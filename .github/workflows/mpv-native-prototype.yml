@@ -59,6 +59,8 @@ jobs:
         run: node scripts/apply-native-mpv-v13d8.cjs
       - name: Apply V13D9 compact visible-control HWND holes
         run: node scripts/apply-native-mpv-v13d9.cjs
+      - name: Keep V13D10 native video alive under diagnostic card
+        run: node scripts/apply-native-mpv-v13d10.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
       - name: Candidate checksum
