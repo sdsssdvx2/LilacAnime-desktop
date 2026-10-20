@@ -177,7 +177,7 @@ function sendPhysicalClick(parentHwnd, point) {
     'Start-Sleep -Milliseconds 100',
     '[LilacProbeInput]::mouse_event(2,0,0,0,[UIntPtr]::Zero)',
     '[LilacProbeInput]::mouse_event(4,0,0,0,[UIntPtr]::Zero)'
-  ].join("`n");
+  ].join('\n');
   const proc = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     windowsHide: true,
     encoding: 'utf8',
@@ -203,12 +203,12 @@ async function runSmoke() {
     overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
     if (typeof overlay.setBackgroundColor === 'function') overlay.setBackgroundColor('#00000000');
     overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
-    await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><button id="b">x</button><script>window.n=0;b.onclick=()=>window.n++<\/script>'));
+    await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><html><body style="margin:0"><button id="b" style="width:100px;height:100px">x</button><script>window.n=0;b.onclick=()=>window.n++<\/script></body></html>'));
     win.contentView.addChildView(overlay);
     overlay.webContents.focus();
-    overlay.webContents.sendInputEvent({ type: 'mouseMove', x: 8, y: 8, movementX: 0, movementY: 0 });
-    overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 8, y: 8, button: 'left', clickCount: 1 });
-    overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 8, y: 8, button: 'left', clickCount: 1 });
+    overlay.webContents.sendInputEvent({ type: 'mouseMove', x: 20, y: 20, movementX: 0, movementY: 0 });
+    overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 20, y: 20, button: 'left', clickCount: 1 });
+    overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 20, y: 20, button: 'left', clickCount: 1 });
     await sleep(100);
     const clicks = Number(await overlay.webContents.executeJavaScript('window.n', true)) || 0;
     return {
