@@ -18,53 +18,42 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Enable MSVC developer tools
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-
       - name: Configure prototype identity and packaging
         run: node scripts/configure-native-mpv-package.cjs
-
       - name: Build raw Win32 HWND host helper
         shell: cmd
         run: >-
           cl /nologo /EHsc /std:c++17 /O2
-          /Fe:electron\win32-mpv-host.exe
-          native\win32-mpv-host.cpp user32.lib gdi32.lib
-
+          /Fe:electron\\win32-mpv-host.exe
+          native\\win32-mpv-host.cpp user32.lib gdi32.lib
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
       - name: Apply V11 helper-created raw HWND source transform
         run: node scripts/apply-native-mpv-v11.cjs
-
       - name: Fix hosted mpv full-screen layout geometry
         run: node scripts/apply-native-mpv-layout-fix.cjs
-
       - name: Add automatic diagnostic self-test
         run: node scripts/apply-native-mpv-autodiag.cjs
-
       - name: Apply docked Lilac controls and mpv subtitle integration
         run: node scripts/apply-native-mpv-overlay.cjs
-
       - name: Activate V13D2 dock layout and diagnostics
         run: node scripts/apply-native-mpv-v13d2.cjs
-
+      - name: Add V13D3 safe load diagnostics and one-shot loopback recovery
+        run: node scripts/apply-native-mpv-v13d3.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
-
       - name: Candidate checksum
         shell: powershell
         run: |
           Get-FileHash dist/LilacAnime-Native-Prototype-Setup.exe -Algorithm SHA256 | Format-List
           Get-FileHash electron/win32-mpv-host.exe -Algorithm SHA256 | Format-List
-
       - uses: actions/upload-artifact@v4
         with:
           name: LilacAnime-native-mpv-prototype
