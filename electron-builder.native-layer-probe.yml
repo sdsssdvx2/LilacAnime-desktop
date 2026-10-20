@@ -1,0 +1,20 @@
+appId: com.lilac.anime.nativeprobe
+productName: Lilac Native Layer Probe
+directories:
+  output: dist-native-layer-probe
+files:
+  - electron/native-layer-local-probe.cjs
+  - package.json
+extraMetadata:
+  main: electron/native-layer-local-probe.cjs
+extraResources:
+  - from: electron/win32-d3d11-layer-probe.exe
+    to: probe-native/win32-d3d11-layer-probe.exe
+win:
+  icon: build/icon.ico
+  executableName: LilacNativeLayerProbe
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: LilacNativeLayerProbe.${ext}
