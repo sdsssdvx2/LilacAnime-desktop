@@ -47,6 +47,8 @@ jobs:
         run: node scripts/apply-native-mpv-v13d2.cjs
       - name: Add V13D3 safe load diagnostics and one-shot loopback recovery
         run: node scripts/apply-native-mpv-v13d3.cjs
+      - name: Fix V13D4 dock CSS and native subtitle renderer
+        run: node scripts/apply-native-mpv-v13d4.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
       - name: Candidate checksum
