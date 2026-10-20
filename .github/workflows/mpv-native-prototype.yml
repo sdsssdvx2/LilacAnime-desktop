@@ -15,7 +15,7 @@ permissions:
 jobs:
   windows-native-mpv:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,8 +33,31 @@ jobs:
           cl /nologo /EHsc /std:c++17 /O2
           /Fe:electron\\win32-mpv-host.exe
           native\\win32-mpv-host.cpp user32.lib gdi32.lib
+      - name: Verify Win32 region and bounds parser
+        shell: cmd
+        run: electron\win32-mpv-host.exe --self-test-region
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Real ReAnime and Flix HLS fragment smoke gate
+        shell: powershell
+        run: |
+          $env:LILAC_SMOKE_REANIME = '1'
+          $stdout = Join-Path $env:RUNNER_TEMP 'lilac-reanime-smoke-out.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'lilac-reanime-smoke-err.log'
+          $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('electron','.') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $lines = @()
+          if (Test-Path $stdout) { $lines += Get-Content $stdout }
+          if (Test-Path $stderr) { $lines += Get-Content $stderr }
+          $safe = $lines | ForEach-Object {
+            $_ `
+              -replace 'http://127\.0\.0\.1:\d+/\S+', '[local-media]' `
+              -replace 'https?://\S+', '[media-url]' `
+              -replace '(?i)\b(authorization|cookie|referer|origin)\s*[:=]\s*\S+', '$1=[redacted]'
+          }
+          $safe | ForEach-Object { Write-Host $_ }
+          Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+          if ($proc.ExitCode -ne 0) { throw "ReAnime smoke exited $($proc.ExitCode)" }
+          if (-not ($safe -match 'LILAC_SMOKE_OK')) { throw 'ReAnime smoke did not report LILAC_SMOKE_OK' }
       - name: Apply V11 helper-created raw HWND source transform
         run: node scripts/apply-native-mpv-v11.cjs
       - name: Fix hosted mpv full-screen layout geometry
@@ -61,6 +84,10 @@ jobs:
         run: node scripts/apply-native-mpv-v13d9.cjs
       - name: Keep V13D10 native video alive under diagnostic card
         run: node scripts/apply-native-mpv-v13d10.cjs
+      - name: Add V13D11 deep mpv and Flix diagnostics
+        run: node scripts/apply-native-mpv-v13d11-diagnostics.cjs
+      - name: Verify transformed bounds and input-hole serialization
+        run: node scripts/verify-native-mpv-transforms.cjs
       - name: Build Windows installer
         run: npm run dist -- --publish never
       - name: Candidate checksum
@@ -76,6 +103,7 @@ jobs:
             electron/main.cjs
             electron/mpv-native-main.cjs
             electron/mpv-relay.cjs
+            electron/flix-proxy.cjs
             electron/win32-mpv-host.exe
             native/win32-mpv-host.cpp
             src/mpv-native-entry.js
