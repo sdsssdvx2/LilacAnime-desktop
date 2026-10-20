@@ -1,7 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, WebContentsView, clipboard, dialog, screen } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,178 +11,307 @@ const HEIGHT = 360;
 const SMOKE = process.env.LILAC_NATIVE_LAYER_PROBE_SMOKE === '1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function isBlue(pixel) {
-  return pixel && pixel.b > 150 && pixel.b > pixel.r * 2.3 && pixel.b > pixel.g * 2.3;
-}
-
-function isGreen(pixel) {
-  return pixel && pixel.g > 150 && pixel.g > pixel.r * 1.7 && pixel.g > pixel.b * 1.7;
-}
-
 function nativeHandleDecimal(win) {
   const raw = win.getNativeWindowHandle();
   if (raw.length >= 8 && process.arch === 'x64') return raw.readBigUInt64LE(0).toString();
   return String(raw.readUInt32LE(0));
 }
 
-function probeHelperPath() {
-  const candidates = [
-    path.join(process.resourcesPath || '', 'probe-native', 'win32-d3d11-layer-probe.exe'),
-    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'electron', 'win32-d3d11-layer-probe.exe'),
-    path.join(app.getAppPath(), 'electron', 'win32-d3d11-layer-probe.exe'),
-    path.join(__dirname, 'win32-d3d11-layer-probe.exe')
-  ];
+function findExisting(candidates) {
   return candidates.find(candidate => candidate && fs.existsSync(candidate)) || null;
 }
 
-function createLineProcess(executable, args) {
-  const proc = spawn(executable, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-  let buffer = '';
-  const waiters = [];
-  const bufferedLines = [];
+function hostHelperPath() {
+  return findExisting([
+    path.join(process.resourcesPath || '', 'probe-native', 'win32-mpv-host.exe'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'electron', 'win32-mpv-host.exe'),
+    path.join(app.getAppPath(), 'electron', 'win32-mpv-host.exe'),
+    path.join(__dirname, 'win32-mpv-host.exe')
+  ]);
+}
 
-  function dispatch(line) {
-    for (let i = 0; i < waiters.length; i++) {
-      if (waiters[i].predicate(line)) {
-        const waiter = waiters.splice(i, 1)[0];
-        clearTimeout(waiter.timer);
-        waiter.resolve(line);
-        return;
+function pixelSamplerPath() {
+  return findExisting([
+    path.join(process.resourcesPath || '', 'probe-native', 'win32-screen-pixel.exe'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'electron', 'win32-screen-pixel.exe'),
+    path.join(app.getAppPath(), 'electron', 'win32-screen-pixel.exe'),
+    path.join(__dirname, 'win32-screen-pixel.exe')
+  ]);
+}
+
+function mpvExecutable() {
+  const candidates = [
+    path.join(process.env.PROGRAMFILES || '', 'MPV Player', 'mpv.exe'),
+    path.join(process.env.PROGRAMFILES || '', 'mpv', 'mpv.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'mpv', 'mpv.exe'),
+    path.join(process.resourcesPath || '', 'mpv', 'mpv.exe'),
+    path.join(app.getAppPath(), 'bin', 'mpv.exe')
+  ];
+  for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+    if (dir) candidates.push(path.join(dir, 'mpv.exe'));
+  }
+  return findExisting(candidates);
+}
+
+function writeSolidBmp(file, width, height, r, g, b) {
+  const rowBytes = width * 3;
+  const stride = (rowBytes + 3) & ~3;
+  const imageSize = stride * height;
+  const buffer = Buffer.alloc(54 + imageSize);
+  buffer.write('BM', 0, 'ascii');
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(imageSize, 34);
+  for (let y = 0; y < height; y++) {
+    const row = 54 + y * stride;
+    for (let x = 0; x < width; x++) {
+      const at = row + x * 3;
+      buffer[at] = b;
+      buffer[at + 1] = g;
+      buffer[at + 2] = r;
+    }
+  }
+  fs.writeFileSync(file, buffer);
+}
+
+function isBlue(pixel) {
+  return pixel && pixel.b > 120 && pixel.b > pixel.r * 1.6 && pixel.b > pixel.g * 1.6;
+}
+
+function isGreen(pixel) {
+  return pixel && pixel.g > 140 && pixel.g > pixel.r * 1.5 && pixel.g > pixel.b * 1.5;
+}
+
+function isMagenta(pixel) {
+  return pixel && pixel.r > 130 && pixel.b > 130 && pixel.g < Math.min(pixel.r, pixel.b) * 0.7;
+}
+
+function samplePixel(sampler, point) {
+  const output = execFileSync(sampler, [String(Math.round(point.x)), String(Math.round(point.y))], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 3000
+  }).trim();
+  const match = /^PIXEL\s+(\d+)\s+(\d+)\s+(\d+)$/.exec(output);
+  if (!match) throw new Error(`pixel sampler returned unexpected output: ${output.slice(0, 80)}`);
+  return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
+}
+
+function screenPointFor(win, xDip, yDip) {
+  const bounds = win.getContentBounds();
+  const dip = { x: Math.round(bounds.x + xDip), y: Math.round(bounds.y + yDip) };
+  try {
+    return screen.dipToScreenPoint(dip);
+  } catch {
+    return dip;
+  }
+}
+
+async function waitForHostReady(proc, timeout = 8000) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      error ? reject(error) : resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error(`Win32 mpv host timeout${stderr ? `: ${stderr.slice(-160)}` : ''}`)), timeout);
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-1000); });
+    proc.stdout.on('data', chunk => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const raw of lines) {
+        const line = raw.trim();
+        const match = /^READY\s+host\s+(\d+)$/.exec(line);
+        if (match) return finish(null, match[1]);
+        if (line.startsWith('ERR ')) return finish(new Error(`Win32 mpv host: ${line.slice(4)}`));
       }
-    }
-    bufferedLines.push(line);
-    if (bufferedLines.length > 40) bufferedLines.shift();
-  }
-
-  proc.stdout.setEncoding('utf8');
-  proc.stdout.on('data', chunk => {
-    buffer += chunk;
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || '';
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (line) dispatch(line);
-    }
-  });
-
-  proc.stderr.setEncoding('utf8');
-  let stderr = '';
-  proc.stderr.on('data', chunk => {
-    stderr = (stderr + String(chunk)).slice(-2000);
-  });
-
-  function waitFor(predicate, timeout = 6000) {
-    const existingIndex = bufferedLines.findIndex(predicate);
-    if (existingIndex >= 0) return Promise.resolve(bufferedLines.splice(existingIndex, 1)[0]);
-    return new Promise((resolve, reject) => {
-      const waiter = { predicate, resolve, reject, timer: null };
-      waiter.timer = setTimeout(() => {
-        const at = waiters.indexOf(waiter);
-        if (at >= 0) waiters.splice(at, 1);
-        reject(new Error(`native helper response timeout${stderr ? `: ${stderr.trim().slice(0, 160)}` : ''}`));
-      }, timeout);
-      waiters.push(waiter);
     });
+    proc.once('error', finish);
+    proc.once('exit', code => finish(new Error(`Win32 mpv host exited (${code ?? 'unknown'})`)));
+  });
+}
+
+function sendHostBounds(proc, widthPx, heightPx) {
+  if (!proc?.stdin || proc.stdin.destroyed) return;
+  proc.stdin.write(`B 0 0 ${widthPx} ${heightPx} 1 0\n`);
+}
+
+async function waitForBlue(sampler, win, timeout = 6500) {
+  const deadline = Date.now() + timeout;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = samplePixel(sampler, screenPointFor(win, 320, 190));
+    if (isBlue(last)) return last;
+    await sleep(120);
   }
-
-  return { proc, waitFor };
+  return last;
 }
 
-function parseClickLine(line) {
-  const sent = /^CLICK 1(?:\s|$)/.test(line);
-  const value = key => {
-    const match = new RegExp(`(?:^|\\s)${key} (-?\\d+)`).exec(line);
-    return match ? Number(match[1]) : null;
-  };
-  const cursorMatch = /(?:^|\s)CUR (-?\d+) (-?\d+)/.exec(line);
-  const targetMatch = /(?:^|\s)TARGET (-?\d+) (-?\d+)/.exec(line);
-  return {
-    rawAccepted: sent,
-    foregroundRequestAccepted: value('FGREQ'),
-    parentForeground: value('FG'),
-    cursorSet: value('CURSET'),
-    cursorRead: value('CURREAD'),
-    cursor: cursorMatch ? { x: Number(cursorMatch[1]), y: Number(cursorMatch[2]) } : null,
-    target: targetMatch ? { x: Number(targetMatch[1]), y: Number(targetMatch[2]) } : null
-  };
+function sendPhysicalClick(parentHwnd, point) {
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
+  const script = [
+    "Add-Type -TypeDefinition @'",
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public static class LilacProbeInput {',
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);',
+    '  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);',
+    '}',
+    "'@",
+    `[LilacProbeInput]::SetForegroundWindow([IntPtr]::new([Int64]${parentHwnd})) | Out-Null`,
+    `[LilacProbeInput]::SetCursorPos(${x}, ${y}) | Out-Null`,
+    'Start-Sleep -Milliseconds 100',
+    '[LilacProbeInput]::mouse_event(2,0,0,0,[UIntPtr]::Zero)',
+    '[LilacProbeInput]::mouse_event(4,0,0,0,[UIntPtr]::Zero)'
+  ].join("`n");
+  const proc = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 5000
+  });
+  return { ok: proc.status === 0, exitCode: proc.status };
 }
 
-async function runProbe() {
-  if (process.platform !== 'win32') throw new Error('Windows 전용 진단입니다.');
-  const helperPath = probeHelperPath();
-  if (!helperPath) throw new Error('D3D11 probe helper를 찾지 못했습니다.');
-
+async function runSmoke() {
   let win = null;
   let overlay = null;
-  let native = null;
-  const result = {
-    schema: 3,
-    probe: 'Lilac local same-window D3D11 + WebContentsView + OS click',
-    smokeMode: SMOKE,
-    status: 'running',
-    verdict: null,
-    scaleFactor: null,
-    phaseA: null,
-    phaseB: null,
-    phaseC: null,
-    error: null
-  };
-
   try {
     win = new BrowserWindow({
       width: WIDTH,
       height: HEIGHT,
       useContentSize: true,
+      frame: false,
+      show: false,
+      backgroundColor: '#b00020',
+      webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+    });
+    await win.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><html><body style="margin:0;background:#b00020"></body></html>'));
+    overlay = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
+    if (typeof overlay.setBackgroundColor === 'function') overlay.setBackgroundColor('#00000000');
+    overlay.setBounds({ x: 0, y: 0, width: WIDTH, height: HEIGHT });
+    await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><button id="b">x</button><script>window.n=0;b.onclick=()=>window.n++<\/script>'));
+    win.contentView.addChildView(overlay);
+    overlay.webContents.focus();
+    overlay.webContents.sendInputEvent({ type: 'mouseMove', x: 8, y: 8, movementX: 0, movementY: 0 });
+    overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 8, y: 8, button: 'left', clickCount: 1 });
+    overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 8, y: 8, button: 'left', clickCount: 1 });
+    await sleep(100);
+    const clicks = Number(await overlay.webContents.executeJavaScript('window.n', true)) || 0;
+    return {
+      schema: 4,
+      probe: 'Lilac exact mpv host + WebContentsView local probe',
+      smokeMode: true,
+      status: clicks > 0 ? 'pass' : 'fail',
+      verdict: clicks > 0 ? 'SMOKE-PASS' : 'SMOKE-FAIL',
+      phaseSmoke: { webContentsViewClickHandler: clicks > 0 },
+      error: clicks > 0 ? null : 'WebContentsView smoke input did not reach the click handler.'
+    };
+  } finally {
+    if (overlay) { try { overlay.webContents.close(); } catch {} }
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
+async function runProbe() {
+  if (SMOKE) return runSmoke();
+  if (process.platform !== 'win32') throw new Error('Windows 전용 진단입니다.');
+
+  const helper = hostHelperPath();
+  const sampler = pixelSamplerPath();
+  const mpv = mpvExecutable();
+  const result = {
+    schema: 4,
+    probe: 'Lilac exact mpv --wid host + WebContentsView + OS click',
+    smokeMode: false,
+    status: 'running',
+    verdict: null,
+    scaleFactor: null,
+    mpvFound: Boolean(mpv),
+    phaseA: null,
+    phaseB: null,
+    phaseBRefresh: null,
+    phaseC: null,
+    error: null
+  };
+
+  if (!helper) throw new Error('Win32 mpv host helper를 찾지 못했습니다.');
+  if (!sampler) throw new Error('Win32 screen pixel helper를 찾지 못했습니다.');
+  if (!mpv) {
+    result.status = 'error';
+    result.verdict = 'ERROR-MPV-NOT-FOUND';
+    result.error = 'Lilac과 동일한 탐색 규칙으로 mpv.exe를 찾지 못했습니다.';
+    return result;
+  }
+
+  let win = null;
+  let overlay = null;
+  let hostProc = null;
+  let mpvProc = null;
+  let refresh = null;
+  const bmpPath = path.join(os.tmpdir(), `LilacNativeMpvProbe-${process.pid}.bmp`);
+
+  try {
+    writeSolidBmp(bmpPath, WIDTH, HEIGHT, 6, 64, 230);
+    win = new BrowserWindow({
+      width: WIDTH,
+      height: HEIGHT,
+      useContentSize: true,
+      frame: false,
       show: true,
       backgroundColor: '#b00020',
-      titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#121212', symbolColor: '#d0cdd6', height: 42 },
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        backgroundThrottling: false
-      }
+      webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
     });
     await win.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><html><body style="margin:0;background:#b00020;width:100vw;height:100vh;overflow:hidden"></body></html>'));
     win.show();
     win.focus();
-    await sleep(450);
+    await sleep(350);
 
     const display = screen.getDisplayMatching(win.getBounds());
     const scale = Number(display?.scaleFactor) || 1;
     result.scaleFactor = scale;
-    const px = value => Math.round(value * scale);
-    const widthPx = px(WIDTH);
-    const heightPx = px(HEIGHT);
+    const widthPx = Math.max(1, Math.round(WIDTH * scale));
+    const heightPx = Math.max(1, Math.round(HEIGHT * scale));
 
-    native = createLineProcess(helperPath, [nativeHandleDecimal(win), String(widthPx), String(heightPx)]);
-    await native.waitFor(line => /^READY host \d+(?: \d+ \d+)?$/.test(line), 10000);
-    await sleep(700);
+    hostProc = spawn(helper, [nativeHandleDecimal(win)], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const hostHwnd = await waitForHostReady(hostProc, 10000);
+    sendHostBounds(hostProc, widthPx, heightPx);
 
-    const command = async (line, predicate, timeout = 5000) => {
-      const pending = native.waitFor(predicate, timeout);
-      native.proc.stdin.write(`${line}\n`);
-      return pending;
-    };
-    const readPixel = async (xDip, yDip) => {
-      const line = await command(`P ${px(xDip)} ${px(yDip)}`, value => /^PIXEL(?: |_)\S*/.test(value));
-      const match = /^PIXEL (\d+) (\d+) (\d+)$/.exec(line);
-      if (!match) throw new Error(`픽셀 판독 실패: ${line.slice(0, 80)}`);
-      return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
-    };
+    const args = [
+      '--no-config', '--force-window=yes', '--no-border', `--wid=${hostHwnd}`,
+      '--hwdec=no', '--vo=gpu-next', '--gpu-api=d3d11', '--osc=no', '--input-default-bindings=no',
+      '--keep-open=yes', '--idle=no', '--osd-level=0', '--cursor-autohide=always',
+      '--loop-file=inf', '--image-display-duration=3600', '--really-quiet', bmpPath
+    ];
+    mpvProc = spawn(mpv, args, { windowsHide: true, stdio: 'ignore' });
+    if (!mpvProc.pid) throw new Error('mpv process did not start.');
 
-    const centerA = await readPixel(320, 190);
-    const cornerA = await readPixel(24, 64);
+    const centerA = await waitForBlue(sampler, win, 7000);
+    const cornerA = samplePixel(sampler, screenPointFor(win, 24, 64));
     result.phaseA = {
       center: centerA,
       corner: cornerA,
-      centerNativeBlue: isBlue(centerA),
-      cornerNativeBlue: isBlue(cornerA)
+      centerMpvBlue: isBlue(centerA),
+      cornerMpvBlue: isBlue(cornerA),
+      mpvAlive: mpvProc.exitCode == null
     };
-    if (!SMOKE && (!result.phaseA.centerNativeBlue || !result.phaseA.cornerNativeBlue)) {
+    if (!result.phaseA.centerMpvBlue || !result.phaseA.cornerMpvBlue) {
       result.status = 'fail';
-      result.verdict = 'FAIL-A';
-      result.error = '실제 화면에서 D3D11 native child를 확인하지 못했습니다.';
+      result.verdict = 'FAIL-A-MPV';
+      result.error = '실제 Lilac 방식의 mpv --wid 렌더링이 probe 창의 실제 화면 픽셀에 나타나지 않았습니다.';
       return result;
     }
 
@@ -196,71 +325,65 @@ async function runProbe() {
     </body></html>`;
     await overlay.webContents.loadURL('data:text/html,' + encodeURIComponent(html));
     win.contentView.addChildView(overlay);
-    await sleep(850);
+    await sleep(700);
 
-    const topB = await readPixel(130, 120);
-    const centerB = await readPixel(320, 190);
-    const bottomB = await readPixel(505, 275);
-    result.phaseB = {
-      top: topB,
-      center: centerB,
-      bottom: bottomB,
-      topControlGreen: isGreen(topB),
-      centerNativeBlue: isBlue(centerB),
-      bottomControlGreen: isGreen(bottomB)
+    const readVisual = () => {
+      const top = samplePixel(sampler, screenPointFor(win, 130, 120));
+      const center = samplePixel(sampler, screenPointFor(win, 320, 190));
+      const bottom = samplePixel(sampler, screenPointFor(win, 505, 275));
+      return {
+        top,
+        center,
+        bottom,
+        topControlGreen: isGreen(top),
+        centerMpvBlue: isBlue(center),
+        bottomControlGreen: isGreen(bottom)
+      };
     };
-    const visualOk = result.phaseB.topControlGreen && result.phaseB.bottomControlGreen && (SMOKE || result.phaseB.centerNativeBlue);
-    if (!visualOk) {
+
+    result.phaseB = readVisual();
+    if (!result.phaseB.topControlGreen || !result.phaseB.bottomControlGreen || !result.phaseB.centerMpvBlue) {
       result.status = 'fail';
-      result.verdict = SMOKE ? 'SMOKE-FAIL-B' : 'FAIL-B';
-      result.error = SMOKE
-        ? 'CI smoke에서 WebContentsView 컨트롤 렌더링을 확인하지 못했습니다.'
-        : 'native D3D11 화면과 WebContentsView 컨트롤이 같은 창에서 동시에 합성되지 않았습니다.';
+      result.verdict = 'FAIL-B-COMPOSITION';
+      result.error = 'mpv 영상층과 WebContentsView 컨트롤이 같은 창에서 동시에 보이지 않았습니다.';
       return result;
     }
 
-    const clickLine = await command(`C ${px(130)} ${px(120)}`, value => /^CLICK [01](?:\s|$)/.test(value));
-    await sleep(450);
-    const osClickCount = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
-    const clickNative = parseClickLine(clickLine);
-    const osClickDelivered = clickNative.rawAccepted && osClickCount > 0;
-
-    let smokeInjectedCount = null;
-    let smokeInputDelivered = null;
-    if (SMOKE && !osClickDelivered) {
-      try {
-        overlay.webContents.focus();
-        overlay.webContents.sendInputEvent({ type: 'mouseMove', x: 130, y: 120, movementX: 0, movementY: 0 });
-        overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 130, y: 120, button: 'left', clickCount: 1 });
-        overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 130, y: 120, button: 'left', clickCount: 1 });
-        await sleep(250);
-        smokeInjectedCount = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
-        smokeInputDelivered = smokeInjectedCount > osClickCount;
-      } catch {
-        smokeInjectedCount = osClickCount;
-        smokeInputDelivered = false;
-      }
+    refresh = setInterval(() => {
+      try { sendHostBounds(hostProc, widthPx, heightPx); } catch {}
+    }, 200);
+    await sleep(1100);
+    result.phaseBRefresh = readVisual();
+    clearInterval(refresh);
+    refresh = null;
+    if (!result.phaseBRefresh.topControlGreen || !result.phaseBRefresh.bottomControlGreen || !result.phaseBRefresh.centerMpvBlue) {
+      result.status = 'fail';
+      result.verdict = 'FAIL-B-ZORDER';
+      result.error = '초기 합성은 됐지만 production식 HWND bounds/z-order 재적용 후 WebContentsView가 유지되지 않았습니다.';
+      return result;
     }
 
+    const target = screenPointFor(win, 130, 120);
+    const clickAttempt = sendPhysicalClick(nativeHandleDecimal(win), target);
+    await sleep(450);
+    const clicks = Number(await overlay.webContents.executeJavaScript('window.__probeClicks', true)) || 0;
+    const clickedPixel = samplePixel(sampler, target);
     result.phaseC = {
-      native: clickNative,
-      osChromiumClickCount: osClickCount,
-      osClickDelivered,
-      smokeInjectedCount,
-      smokeInputDelivered
+      clickInjectionProcessOk: clickAttempt.ok,
+      osChromiumClickCount: clicks,
+      clickedPixel,
+      clickedControlMagenta: isMagenta(clickedPixel),
+      osClickDelivered: clicks > 0
     };
-
-    if ((!SMOKE && !osClickDelivered) || (SMOKE && !osClickDelivered && !smokeInputDelivered)) {
+    if (!clickAttempt.ok || clicks < 1) {
       result.status = 'fail';
-      result.verdict = SMOKE ? 'SMOKE-FAIL-C' : 'FAIL-C';
-      result.error = SMOKE
-        ? 'CI smoke에서 WebContentsView 클릭 핸들러까지 검증하지 못했습니다.'
-        : '화면 합성은 성공했지만 실제 Windows 마우스 클릭이 WebContentsView에 전달되지 않았습니다.';
+      result.verdict = 'FAIL-C-INPUT';
+      result.error = '화면 합성은 성공했지만 실제 Windows 마우스 클릭이 WebContentsView 버튼에 전달되지 않았습니다.';
       return result;
     }
 
     result.status = 'pass';
-    result.verdict = SMOKE ? 'SMOKE-PASS' : 'PASS';
+    result.verdict = 'PASS';
     return result;
   } catch (error) {
     result.status = 'error';
@@ -268,20 +391,21 @@ async function runProbe() {
     result.error = String(error?.message || error).replace(/https?:\/\/\S+/gi, '[url]');
     return result;
   } finally {
-    if (native?.proc) {
-      try { native.proc.stdin.write('Q\n'); } catch {}
+    if (refresh) clearInterval(refresh);
+    if (mpvProc && mpvProc.exitCode == null) { try { mpvProc.kill(); } catch {} }
+    if (hostProc) {
+      try { hostProc.stdin?.write('Q\n'); } catch {}
       await sleep(100);
-      try { native.proc.kill(); } catch {}
+      try { if (hostProc.exitCode == null) hostProc.kill(); } catch {}
     }
-    if (overlay) {
-      try { overlay.webContents.close(); } catch {}
-    }
+    if (overlay) { try { overlay.webContents.close(); } catch {} }
     if (win && !win.isDestroyed()) win.destroy();
+    try { fs.unlinkSync(bmpPath); } catch {}
   }
 }
 
 function resultPath() {
-  return process.env.LILAC_NATIVE_LAYER_PROBE_RESULT || path.join(os.tmpdir(), 'LilacNativeLayerProbe-result.json');
+  return process.env.LILAC_NATIVE_LAYER_PROBE_RESULT || path.join(os.tmpdir(), 'LilacNativeMpvLayerProbe-result.json');
 }
 
 app.whenReady().then(async () => {
@@ -290,23 +414,24 @@ app.whenReady().then(async () => {
   try { fs.writeFileSync(resultPath(), `${text}\n`, 'utf8'); } catch {}
 
   if (SMOKE) {
-    console.log(`LILAC_LOCAL_PROBE_SMOKE ${text}`);
+    console.log(`LILAC_LOCAL_MPV_PROBE_SMOKE ${text}`);
     app.exit(result.verdict === 'SMOKE-PASS' ? 0 : 1);
     return;
   }
 
   clipboard.writeText(text);
   const messages = {
-    PASS: 'PASS — native D3D11 영상층 + WebContentsView 컨트롤 + 실제 OS 클릭 전달이 모두 성립했습니다.',
-    'FAIL-A': 'FAIL-A — 이 PC에서 probe의 native D3D11 child가 Electron 표면 위에 나타나지 않았습니다.',
-    'FAIL-B': 'FAIL-B — native D3D11은 보였지만 WebContentsView 컨트롤을 그 위에 함께 합성하지 못했습니다.',
-    'FAIL-C': 'FAIL-C — 화면 합성은 됐지만 실제 Windows 클릭이 WebContentsView로 전달되지 않았습니다.',
+    PASS: 'PASS — 실제 mpv --wid 영상층 + WebContentsView 컨트롤 + 실제 Windows 클릭이 모두 성립했습니다.',
+    'FAIL-A-MPV': 'FAIL-A-MPV — 실제 Lilac 방식의 mpv --wid 영상층이 이 probe 창에 나타나지 않았습니다.',
+    'FAIL-B-COMPOSITION': 'FAIL-B-COMPOSITION — mpv는 보였지만 WebContentsView 컨트롤을 그 위에 함께 합성하지 못했습니다.',
+    'FAIL-B-ZORDER': 'FAIL-B-ZORDER — 처음엔 합성됐지만 HWND z-order/bounds 재적용 후 컨트롤이 유지되지 않았습니다.',
+    'FAIL-C-INPUT': 'FAIL-C-INPUT — 화면 합성은 됐지만 실제 Windows 클릭이 WebContentsView로 전달되지 않았습니다.',
+    'ERROR-MPV-NOT-FOUND': 'ERROR-MPV-NOT-FOUND — Lilac과 같은 규칙으로 mpv.exe를 찾지 못했습니다.',
     ERROR: `ERROR — ${result.error || '알 수 없는 오류'}`
   };
-
   await dialog.showMessageBox({
     type: result.verdict === 'PASS' ? 'info' : 'warning',
-    title: 'Lilac Native Layer Probe',
+    title: 'Lilac Native mpv Layer Probe',
     message: messages[result.verdict] || messages.ERROR,
     detail: '진단 JSON은 클립보드에 자동 복사되었습니다. 이 창을 닫은 뒤 ChatGPT 채팅에 그대로 붙여넣으면 됩니다.',
     buttons: ['확인'],
@@ -315,14 +440,14 @@ app.whenReady().then(async () => {
   });
   app.quit();
 }).catch(async error => {
-  const fallback = JSON.stringify({ schema: 3, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
+  const fallback = JSON.stringify({ schema: 4, status: 'error', verdict: 'ERROR', error: String(error?.message || error) }, null, 2);
   try { fs.writeFileSync(resultPath(), `${fallback}\n`, 'utf8'); } catch {}
   if (SMOKE) {
-    console.error(`LILAC_LOCAL_PROBE_SMOKE_ERROR ${fallback}`);
+    console.error(`LILAC_LOCAL_MPV_PROBE_SMOKE_ERROR ${fallback}`);
     app.exit(1);
     return;
   }
   clipboard.writeText(fallback);
-  try { await dialog.showMessageBox({ type: 'error', title: 'Lilac Native Layer Probe', message: '진단 실행 오류', detail: fallback, buttons: ['확인'] }); } catch {}
+  try { await dialog.showMessageBox({ type: 'error', title: 'Lilac Native mpv Layer Probe', message: '진단 실행 오류', detail: fallback, buttons: ['확인'] }); } catch {}
   app.quit();
 });
