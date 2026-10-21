@@ -115,9 +115,10 @@ async function main() {
       if (Number.isFinite(Number(state.textureSlotCount))) report.textureSlotCount = Number(state.textureSlotCount);
       const frame = addon.renderFrame(playerId, 256, 144);
       if (frame.updated) {
-        // Sampling every sixth frame verifies content without making the lifetime
-        // test CPU-bound through staging-texture readback.
-        if (held.length % 6 === 0) {
+        // The fixture cycles through four colors. Sampling every fifth retained
+        // frame walks every palette phase (1,6,11,16,21) instead of aliasing
+        // against the four-frame cycle as the old six-frame sampling did.
+        if (held.length % 5 === 0) {
           const sample = addon.sampleFrame(playerId, frame.slotId, frame.frameId);
           const hit = nearest(sample, palette);
           report.sampledFrames.push({ frameId: frame.frameId, slotId: frame.slotId, sample, hit });
