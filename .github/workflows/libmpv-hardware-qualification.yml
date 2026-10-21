@@ -198,27 +198,48 @@ jobs:
             payloadSha256 = $hashes
           }
           $manifestPath = Join-Path $probe 'qualification-manifest.json'
-          $manifest | ConvertTo-Json -Depth 8 | Set-Content $manifestPath -Encoding utf8
+          $manifestJson = $manifest | ConvertTo-Json -Depth 8
+          [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding($false)))
+          & node -e "const fs=require('fs'); const p=process.argv[1]; const s=fs.readFileSync(p,'utf8'); JSON.parse(s); if(s.charCodeAt(0)===0xFEFF) throw new Error('manifest unexpectedly contains UTF-8 BOM'); console.log('HWQ_MANIFEST_JSON_BOM_FREE_OK')" $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw 'qualification manifest JSON/BOM verification failed' }
           Write-Host "HWQ_FIXTURE_BYTES=$((Get-Item $fixture).Length)"
           Write-Host "HWQ_MANIFEST_SHA256=$((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Build unpacked qualification payload
+        run: npx electron-builder --config electron-builder.libmpv-hardware-qualification.yml --dir --publish never
+
+      - name: Verify unpacked packaged payload without GPU acceptance
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'dist-libmpv-hardware-qualification/win-unpacked/LilacLibmpvHardwareQualification.exe'
+          $resultPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\LilacLibmpvHardwareQualification-result.json'
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru
+          if (-not (Test-Path $resultPath)) { throw "unpacked qualification self-check produced no result file; exit=$($proc.ExitCode)" }
+          $report = Get-Content $resultPath -Raw | ConvertFrom-Json
+          Write-Host "LILAC_HWQ_UNPACKED_VERIFY_REPORT=$($report | ConvertTo-Json -Depth 8 -Compress)"
+          if ($proc.ExitCode -ne 0) { throw "unpacked qualification self-check failed with exit $($proc.ExitCode): $($report.error)" }
+          if ($report.pass -ne $true -or $report.classification -ne 'PACKAGED_PAYLOAD_VERIFIED') { throw "unpacked qualification self-check did not verify payload: $($report.classification) $($report.error)" }
+          Write-Host 'LILAC_HWQ_UNPACKED_PAYLOAD_OK'
 
       - name: Build portable one-shot hardware qualification EXE
         run: npx electron-builder --config electron-builder.libmpv-hardware-qualification.yml --publish never
 
-      - name: Verify packaged qualification payload without GPU acceptance
+      - name: Verify portable wrapper dispatches exact packaged payload
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
           $exe = Resolve-Path 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe'
-          $stdout = Join-Path $env:RUNNER_TEMP 'hwq-verify-out.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'hwq-verify-err.log'
-          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          $lines = @()
-          if (Test-Path $stdout) { $lines += Get-Content $stdout }
-          if (Test-Path $stderr) { $lines += Get-Content $stderr }
-          $lines | ForEach-Object { Write-Host $_ }
-          if ($proc.ExitCode -ne 0) { throw "packaged qualification self-check failed with exit $($proc.ExitCode)" }
-          if (($lines -join "`n") -notmatch 'PACKAGED_PAYLOAD_VERIFIED') { throw 'packaged qualification verification marker missing' }
-          Write-Host 'LILAC_HWQ_PACKAGED_PAYLOAD_OK'
+          $resultPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\LilacLibmpvHardwareQualification-result.json'
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru
+          if (-not (Test-Path $resultPath)) { throw "portable qualification wrapper produced no result file; exit=$($proc.ExitCode)" }
+          $report = Get-Content $resultPath -Raw | ConvertFrom-Json
+          Write-Host "LILAC_HWQ_PORTABLE_VERIFY_REPORT=$($report | ConvertTo-Json -Depth 8 -Compress)"
+          if ($proc.ExitCode -ne 0) { throw "portable qualification self-check failed with exit $($proc.ExitCode): $($report.error)" }
+          if ($report.pass -ne $true -or $report.classification -ne 'PACKAGED_PAYLOAD_VERIFIED') { throw "portable qualification self-check did not verify payload: $($report.classification) $($report.error)" }
+          Write-Host 'LILAC_HWQ_PORTABLE_PAYLOAD_OK'
 
       - name: Qualification checksum
         shell: powershell
