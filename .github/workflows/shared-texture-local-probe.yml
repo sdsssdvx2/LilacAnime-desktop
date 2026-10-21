@@ -48,8 +48,30 @@ jobs:
         shell: powershell
         run: |
           $env:LILAC_SHARED_TEXTURE_PROBE_SMOKE = '1'
-          & npx.cmd electron electron/shared-texture-import-probe.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $stdout = Join-Path $env:RUNNER_TEMP 'shared-texture-smoke-out.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'shared-texture-smoke-err.log'
+          $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('electron','electron/shared-texture-import-probe.cjs') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $lines = @()
+          if (Test-Path $stdout) { $lines += Get-Content $stdout }
+          if (Test-Path $stderr) { $lines += Get-Content $stderr }
+          $text = $lines -join "`n"
+          $lines | ForEach-Object { Write-Host $_ }
+          Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+          if ($proc.ExitCode -eq 0) {
+            Write-Host 'SHARED_TEXTURE_HOSTED_SMOKE_OK'
+            exit 0
+          }
+          $hostedGpuUnavailable = `
+            $text -match 'GPU is not available' -and `
+            $text -match '"nativeTextureCreated"\s*:\s*true' -and `
+            $text -match '"importApi"\s*:\s*true' -and `
+            $text -match '"sendApi"\s*:\s*true'
+          if ($hostedGpuUnavailable) {
+            Write-Warning 'Hosted Chromium GPU is unavailable. API presence, native D3D11 hardware device, NT shared handle creation and Electron ABI loading passed; real import/composition remains a local-GPU probe.'
+            Write-Host 'SHARED_TEXTURE_HOSTED_GPU_UNAVAILABLE_EXPECTED'
+            exit 0
+          }
+          throw "Unexpected shared texture smoke failure (exit $($proc.ExitCode))."
       - name: Build portable local probe
         run: npx electron-builder --config electron-builder.shared-texture-probe.yml --publish never
       - name: Probe checksum
