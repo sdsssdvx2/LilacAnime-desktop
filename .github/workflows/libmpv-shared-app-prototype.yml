@@ -74,6 +74,9 @@ jobs:
       - name: Apply R2 frame lifetime, input and subtitle fixes
         run: node scripts/apply-libmpv-r2-runtime-fixes.cjs
 
+      - name: Apply R2B command and import diagnostics
+        run: node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+
       - name: Apply one-pass libmpv shared-texture integration
         run: node scripts/apply-libmpv-shared-texture.cjs
 
@@ -103,6 +106,13 @@ jobs:
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
           & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Gate muxed AAC video through actual relay and libmpv
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/smoke-libmpv-relay-av.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Gate full-HD shared runtime throughput, audio and input
@@ -145,6 +155,8 @@ jobs:
           if ($bridge -notmatch "diagnosticVersion: 'LIBMPV-SHARED-D2'") { throw 'D2 main diagnostics missing' }
           if ($bridge -notmatch "runtimeRevision: 'FRAME-INPUT-SUBTITLE-R2'") { throw 'R2 main diagnostics missing' }
           if ($bridge -notmatch 'effectiveSentFps' -or $bridge -notmatch 'backpressureRatio' -or $bridge -match 'schedulePump\(5\)') { throw 'paced shared frame pump missing' }
+          if ($bridge -notmatch "originalName === 'set_property'" -or $bridge -notmatch "commandArray = \['set', safeProperty, encodedValue\]") { throw 'mpv property command normalization missing' }
+          if ($bridge -notmatch 'lastImportError' -or $bridge -notmatch 'lastCommandError') { throw 'causal bridge diagnostics missing' }
           if ($preload -match 'await nextFrame\(\)' -or $preload -match 'const nextFrame') { throw 'stale two-rAF shared texture hold returned' }
           if ($preload -notmatch 'avgDrawMs') { throw 'receiver draw diagnostics missing' }
           if ($bridge -notmatch 'flixProxyStats') { throw 'Flix stats not wired into bridge diagnostics' }
