@@ -1,0 +1,270 @@
+name: Libmpv hardware qualification payload
+
+on:
+  push:
+    branches: [libmpv-d3d11-prototype]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-hardware-qualification
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  build-hardware-qualification:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for exact-commit app and bridge CI attestation
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Wait-WorkflowSuccess([string]$workflow, [string]$label, [string]$envName) {
+            for ($attempt = 0; $attempt -lt 120; $attempt++) {
+              $json = & gh run list --repo $env:GITHUB_REPOSITORY --workflow $workflow --branch $env:GITHUB_REF_NAME --commit $env:GITHUB_SHA --limit 10 --json databaseId,status,conclusion,headSha 2>$null
+              if ($LASTEXITCODE -eq 0 -and $json) {
+                $runs = $json | ConvertFrom-Json
+                $run = $runs | Where-Object { $_.headSha -eq $env:GITHUB_SHA } | Select-Object -First 1
+                if ($run) {
+                  Write-Host "$label status=$($run.status) conclusion=$($run.conclusion) run=$($run.databaseId)"
+                  if ($run.status -eq 'completed') {
+                    if ($run.conclusion -ne 'success') { throw "$label failed for exact commit $env:GITHUB_SHA" }
+                    "$envName=$($run.databaseId)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+                    return
+                  }
+                }
+              }
+              Start-Sleep -Seconds 10
+            }
+            throw "$label did not complete successfully for exact commit $env:GITHUB_SHA"
+          }
+          Wait-WorkflowSuccess 'libmpv-shared-app-prototype.yml' 'APP_CI' 'LILAC_UPSTREAM_APP_RUN_ID'
+          Wait-WorkflowSuccess 'libmpv-d3d11-bridge-smoke.yml' 'BRIDGE_CI' 'LILAC_UPSTREAM_BRIDGE_RUN_ID'
+          Write-Host 'LILAC_HWQ_UPSTREAM_CI_ATTESTED'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch pinned libmpv SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z'
+          $expected = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
+          $archive = Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract = Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $url
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv download failed' }
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "LIBMPV_ARCHIVE_SHA256=$actual"
+          if ($actual -ne $expected) { throw "libmpv SHA mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & 7z.exe x $archive "-o$extract" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv extraction failed' }
+
+          $client = Get-ChildItem $extract -Recurse -File -Filter client.h |
+            Where-Object { $_.FullName -match '[\\/]mpv[\\/]client\.h$' } |
+            Select-Object -First 1
+          if (-not $client) { throw 'mpv/client.h not found' }
+          $headerDir = Split-Path $client.FullName -Parent
+          $vendor = Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv'
+          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
+          Copy-Item (Join-Path $headerDir '*') $vendor -Recurse -Force
+          if (-not (Test-Path (Join-Path $vendor 'render_d3d11.h'))) { throw 'pinned render_d3d11.h missing' }
+
+          $dll = Get-ChildItem $extract -Recurse -File |
+            Where-Object { $_.Name -in @('libmpv-2.dll','mpv-2.dll') } |
+            Select-Object -First 1
+          if (-not $dll) { throw 'libmpv DLL not found' }
+          $runtimeDir = Join-Path $PWD 'native\libmpv-d3d11-bridge\runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          Copy-Item $dll.FullName (Join-Path $runtimeDir 'libmpv-2.dll') -Force
+
+      - name: Install baseline build dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Reproduce exact production libmpv shared runtime transforms
+        run: |
+          node scripts/apply-libmpv-d2-diagnostics.cjs
+          node scripts/apply-libmpv-r2-runtime-fixes.cjs
+          node --check scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+          node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+          node scripts/apply-libmpv-r2c-texture-pool.cjs
+          node scripts/apply-libmpv-shared-texture.cjs
+          node scripts/apply-libmpv-r2e-native-command-gates.cjs
+
+      - name: Install pinned Electron 43 build dependencies
+        shell: powershell
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund node-gyp@12.2.0
+          node -e "const v=require('electron/package.json').version;if(v!=='43.8.1')throw new Error('unexpected Electron '+v);console.log('HWQ_ELECTRON='+v)"
+
+      - name: Build exact Electron ABI libmpv payload
+        shell: powershell
+        run: |
+          $electronVersion = node -p "require('electron/package.json').version"
+          $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
+          & $nodeGyp rebuild --directory native/libmpv-d3d11-bridge --target=$electronVersion --dist-url=https://electronjs.org/headers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item native/libmpv-d3d11-bridge/runtime/libmpv-2.dll electron/libmpv-2.dll -Force
+          if (-not (Test-Path electron/preload-libmpv-shared.generated.cjs)) { throw 'generated preload missing' }
+          if (-not (Test-Path src/libmpv-shared.generated.js)) { throw 'generated shared renderer bundle missing' }
+
+      - name: Verify qualification source and transformed architecture
+        shell: powershell
+        run: |
+          node --check electron/libmpv-hardware-qualification.cjs
+          $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $preload = Get-Content electron/preload-libmpv-shared.generated.cjs -Raw
+          $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)') { throw 'R2 paced bridge missing' }
+          if ($bridge -notmatch "originalName === 'set_property'" -or $bridge -notmatch 'lastCommandError') { throw 'R2B command gate missing' }
+          if ($preload -match 'await nextFrame\(\)' -or $preload -notmatch 'avgDrawMs') { throw 'fixed receiver lifetime missing' }
+          if ($entry -match "\['sub-add'" -or $entry -notmatch 'pointer-events:none') { throw 'single subtitle/input architecture regressed' }
+          if ($player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'native subtitle lockout missing' }
+          if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive track metadata leaked' }
+          Write-Host 'LILAC_HWQ_TRANSFORMED_ARCHITECTURE_OK'
+
+      - name: Build deterministic 1080p H264 AAC qualification fixture and manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = Join-Path $PWD 'release-probe'
+          New-Item -ItemType Directory -Force -Path $probe | Out-Null
+          $fixture = Join-Path $probe 'fullhd-av.mp4'
+          $ffmpeg = (& node -p "require('ffmpeg-static')").Trim()
+          if (-not (Test-Path $ffmpeg)) { throw 'ffmpeg-static binary missing' }
+          & $ffmpeg -hide_banner -loglevel error -y `
+            -f lavfi -i 'testsrc2=size=1920x1080:rate=24000/1001:duration=14' `
+            -f lavfi -i 'sine=frequency=660:sample_rate=48000:duration=14' `
+            -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p `
+            -c:a aac -b:a 96k -shortest -movflags +faststart $fixture
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $fixture)) { throw 'H264/AAC qualification fixture encode failed' }
+
+          $payloadFiles = [ordered]@{
+            'electron/lilac-libmpv-player-bridge.node' = 'electron/lilac-libmpv-player-bridge.node'
+            'electron/libmpv-2.dll' = 'electron/libmpv-2.dll'
+            'electron/libmpv-shared-main.cjs' = 'electron/libmpv-shared-main.cjs'
+            'electron/preload-libmpv-shared.generated.cjs' = 'electron/preload-libmpv-shared.generated.cjs'
+            'src/libmpv-shared-entry.js' = 'src/libmpv-shared-entry.js'
+            'src/libmpv-shared.generated.js' = 'src/libmpv-shared.generated.js'
+            'electron/libmpv-hardware-qualification.cjs' = 'electron/libmpv-hardware-qualification.cjs'
+            'release-probe/fullhd-av.mp4' = 'release-probe/fullhd-av.mp4'
+          }
+          $hashes = [ordered]@{}
+          foreach ($item in $payloadFiles.GetEnumerator()) {
+            $hashes[$item.Key] = (Get-FileHash $item.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $manifest = [ordered]@{
+            schema = 1
+            qualificationId = 'LILAC-LIBMPV-HWQ-R1'
+            commitSha = $env:GITHUB_SHA
+            electronVersion = '43.8.1'
+            libmpvArchiveSha256 = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
+            acceptance = [ordered]@{
+              minPresentedFps = 20
+              maxBackpressureRatio = 0.20
+              avgReleaseLatencyMaxMs = 100
+              peakReleaseLatencyMaxMs = 300
+              maxInputLatencyMs = 500
+              video = '1920x1080 H264 24000/1001'
+              audio = 'AAC 48kHz'
+            }
+            ciAttestation = [ordered]@{
+              appWorkflowRunId = [long]$env:LILAC_UPSTREAM_APP_RUN_ID
+              appWorkflowConclusion = 'success'
+              bridgeWorkflowRunId = [long]$env:LILAC_UPSTREAM_BRIDGE_RUN_ID
+              bridgeWorkflowConclusion = 'success'
+              productionTransformsRebuilt = $true
+              nativeSubtitleRendererLockedOut = $true
+              sensitiveMetadataGatePassed = $true
+            }
+            payloadSha256 = $hashes
+          }
+          $manifestPath = Join-Path $probe 'qualification-manifest.json'
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content $manifestPath -Encoding utf8
+          Write-Host "HWQ_FIXTURE_BYTES=$((Get-Item $fixture).Length)"
+          Write-Host "HWQ_MANIFEST_SHA256=$((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Build portable one-shot hardware qualification EXE
+        run: npx electron-builder --config electron-builder.libmpv-hardware-qualification.yml --publish never
+
+      - name: Verify packaged qualification payload without GPU acceptance
+        shell: powershell
+        run: |
+          $exe = Resolve-Path 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe'
+          $stdout = Join-Path $env:RUNNER_TEMP 'hwq-verify-out.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'hwq-verify-err.log'
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $lines = @()
+          if (Test-Path $stdout) { $lines += Get-Content $stdout }
+          if (Test-Path $stderr) { $lines += Get-Content $stderr }
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($proc.ExitCode -ne 0) { throw "packaged qualification self-check failed with exit $($proc.ExitCode)" }
+          if (($lines -join "`n") -notmatch 'PACKAGED_PAYLOAD_VERIFIED') { throw 'packaged qualification verification marker missing' }
+          Write-Host 'LILAC_HWQ_PACKAGED_PAYLOAD_OK'
+
+      - name: Qualification checksum
+        shell: powershell
+        run: |
+          $exe = Get-Item dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $shaFile = 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt'
+          Set-Content $shaFile "$hash  $($exe.Name)" -Encoding ascii
+          Write-Host "HWQ_EXE_BYTES=$($exe.Length)"
+          Write-Host "HWQ_EXE_SHA256=$hash"
+
+      - name: Publish exact-commit hardware qualification prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $short = $env:GITHUB_SHA.Substring(0, 12)
+          $tag = "libmpv-hwq-$short"
+          $exe = 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe'
+          $sha = 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt'
+          $manifest = 'release-probe/qualification-manifest.json'
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'qualification release upload failed' }
+          } else {
+            $notes = @"
+          One-shot hardware qualification for the exact libmpv sharedTexture payload at commit $env:GITHUB_SHA.
+
+          This is NOT the LilacAnime installer. It only runs the real production bridge/runtime against a deterministic 1920x1080 H.264 + AAC fixture and emits a safe PASS/FAIL report. A final installer remains withheld until this hardware release gate passes.
+          "@
+            & gh release create $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Lilac libmpv hardware qualification $short" --notes $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'qualification prerelease creation failed' }
+          }
+          $url = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json url --jq .url
+          if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'qualification prerelease URL lookup failed' }
+          Write-Host "LILAC_HWQ_RELEASE_TAG=$tag"
+          Write-Host "LILAC_HWQ_RELEASE_URL=$url"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacLibmpvHardwareQualification-${{ github.sha }}
+          path: |
+            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe
+            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt
+            release-probe/qualification-manifest.json
+          if-no-files-found: error
+          retention-days: 14
