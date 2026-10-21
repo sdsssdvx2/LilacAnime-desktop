@@ -52,12 +52,12 @@ window.__startStress=async()=>{
 window.__snapshot=()=>{
   const host=document.querySelector('#video');const canvas=host.shadowRoot.querySelector('canvas[data-lilac-libmpv-surface]');
   const hr=host.getBoundingClientRect();const br=button.getBoundingClientRect();
-  return{stress:{...window.__stress},focus:{document:document.hasFocus(),activeTag:document.activeElement?.tagName||null,activeId:document.activeElement?.id||null},host:{width:hr.width,height:hr.height,pointerEvents:getComputedStyle(host).pointerEvents},canvas:{width:canvas.width,height:canvas.height},button:{x:br.left+br.width/2,y:br.top+br.height/2}};
+  return{stress:{...window.__stress},focus:{document:document.hasFocus(),activeTag:document.activeElement?.tagName||null,activeId:document.activeElement?.id||null},viewport:{width:innerWidth,height:innerHeight},host:{width:hr.width,height:hr.height,pointerEvents:getComputedStyle(host).pointerEvents},canvas:{width:canvas.width,height:canvas.height},button:{x:br.left+br.width/2,y:br.top+br.height/2}};
 };
 </script></body></html>`);
 
   const report = {
-    schema: 2,
+    schema: 3,
     smoke: 'transformed 1080p renderer draw + pointer + keyboard responsiveness',
     status: 'running',
     focusBefore: null,
@@ -94,8 +94,12 @@ window.__snapshot=()=>{
     await win.webContents.executeJavaScript('window.__startStress()');
     await sleep(700);
     let snap = await win.webContents.executeJavaScript('window.__snapshot()');
-    report.geometry = { host: snap.host, canvas: snap.canvas, button: snap.button };
-    if (snap.host.width < 1800 || snap.host.height < 1000) throw new Error(`renderer host geometry regressed: ${JSON.stringify(snap.host)}`);
+    report.geometry = { viewport: snap.viewport, host: snap.host, canvas: snap.canvas, button: snap.button };
+    const widthRatio = snap.viewport.width > 0 ? snap.host.width / snap.viewport.width : 0;
+    const heightRatio = snap.viewport.height > 0 ? snap.host.height / snap.viewport.height : 0;
+    if (widthRatio < 0.98 || heightRatio < 0.98) {
+      throw new Error(`renderer host no longer fills viewport: ${JSON.stringify({ viewport: snap.viewport, host: snap.host, widthRatio, heightRatio })}`);
+    }
     if (snap.host.pointerEvents !== 'none') throw new Error(`video custom element still intercepts pointer input: ${snap.host.pointerEvents}`);
     if (snap.canvas.width !== 1920 || snap.canvas.height !== 1080) throw new Error(`renderer stress canvas size wrong: ${JSON.stringify(snap.canvas)}`);
 
@@ -172,6 +176,7 @@ window.__snapshot=()=>{
       timerSamples: final.stress.timerSamples,
       avgTimerDriftMs: avgTimerDrift,
       maxTimerDriftMs: final.stress.timerDriftMax,
+      viewport: final.viewport,
       host: final.host,
       canvas: final.canvas
     };
@@ -194,6 +199,7 @@ window.__snapshot=()=>{
       avgTimerDriftMs: Math.round(avgTimerDrift * 1000) / 1000,
       maxTimerDriftMs: Math.round(final.stress.timerDriftMax * 1000) / 1000,
       focus: report.focusAfter,
+      viewport: final.viewport,
       host: final.host,
       canvas: final.canvas
     })}`);
