@@ -136,8 +136,8 @@ std::unique_ptr<TextureResource> CreateTexture(uint32_t width, uint32_t height, 
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
   desc.CPUAccessFlags = 0;
-  // Match Electron/Chromium's Windows BGRA shared-texture contract: NT handle, no keyed mutex.
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  // This combination is validated by the prior local/CI probe and still produces an NT handle.
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
 
   HRESULT hr = gDevice.device->CreateTexture2D(&desc, nullptr, &resource->texture);
   if (FAILED(hr)) {
