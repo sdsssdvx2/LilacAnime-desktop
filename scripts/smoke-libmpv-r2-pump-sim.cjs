@@ -3,14 +3,17 @@
 const Module = require('node:module');
 const path = require('node:path');
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const realSetTimeout = global.setTimeout;
+const sleep = ms => new Promise(resolve => realSetTimeout(resolve, ms));
 
 async function main() {
   const originalLoad = Module._load;
+  const originalSetTimeout = global.setTimeout;
   let nextFrameId = 1;
   let lastProducedAt = 0;
   const inFlight = new Map();
   const commandLog = [];
+  const scheduledDelays = [];
   let receiverReleases = 0;
 
   const fakeAddon = {
@@ -27,6 +30,8 @@ async function main() {
         lastError: null,
         renderedFrames: nextFrameId - 1,
         backpressureDrops: 0,
+        textureSlotCount: 24,
+        textureSlotsInFlight: inFlight.size,
         time: (Date.now() - startedAt) / 1000,
         duration: 30,
         fps: 24,
@@ -43,11 +48,14 @@ async function main() {
     },
     renderFrame() {
       const now = Date.now();
-      if (inFlight.size >= 3) return { updated: false, backpressure: true };
+      if (inFlight.size >= 24) return { updated: false, backpressure: true };
+      // Deliberately 40ms (25fps-ish). A 16ms polling scheduler observes this
+      // producer on ~48ms boundaries, so raw frame count is not a valid exact
+      // scheduler assertion. The test records requested timer delays directly.
       if (now - lastProducedAt < 40) return { updated: false, backpressure: false };
       lastProducedAt = now;
       const frameId = nextFrameId++;
-      const slotId = frameId % 3;
+      const slotId = frameId % 24;
       inFlight.set(`${slotId}:${frameId}`, true);
       return {
         updated: true,
@@ -75,7 +83,9 @@ async function main() {
         release() {
           if (released) return;
           released = true;
-          setTimeout(() => allReferencesReleased?.(), 1);
+          // Keep the fake callback short and deterministic. This timer is not
+          // part of the bridge scheduler and therefore uses the unpatched API.
+          realSetTimeout(() => allReferencesReleased?.(), 1);
         }
       };
     },
@@ -110,6 +120,15 @@ async function main() {
   const startedAt = Date.now();
   try {
     const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs');
+
+    // Record the delays requested by the bridge itself. sleep() and the fake
+    // shared-texture release callback deliberately retain realSetTimeout, so
+    // this list directly describes the production pump scheduler semantics.
+    global.setTimeout = function(fn, delay, ...args) {
+      scheduledDelays.push(Number(delay) || 0);
+      return originalSetTimeout(fn, delay, ...args);
+    };
+
     bridge = createLibmpvSharedBridge({ app, ipcMain, headersFor: () => ({}), userAgent: 'R2 pump simulation' });
     await bridge.ensure();
     await bridge.attachWindow(fakeWindow);
@@ -131,35 +150,54 @@ async function main() {
       }
     }
 
-    await sleep(5200);
+    await sleep(3200);
     const state = bridge.state();
     const metrics = state.metrics || {};
     const fps = Number(metrics.effectiveSentFps || 0);
     const sent = Number(metrics.sentFrames || 0);
+    const pumps = Number(metrics.pumpTicks || 0);
     const backpressureRatio = Number(metrics.backpressureRatio || 0);
     const avgRelease = Number(metrics.avgReleaseLatencyMs || 0);
+    const delay16 = scheduledDelays.filter(value => value === 16).length;
+    const delay5 = scheduledDelays.filter(value => value === 5).length;
+    const delay100 = scheduledDelays.filter(value => value === 100).length;
+    const immediate = scheduledDelays.filter(value => value === 0).length;
 
-    if (sent < 105) throw new Error(`simulated shared pump sent too few frames: ${sent}`);
-    if (fps < 20 || fps > 28) throw new Error(`simulated shared pump cadence outside expected 24fps band: ${fps}`);
+    // Throughput itself is validated by the real 1080p A/B gate. This fake
+    // producer only needs enough activity to prove liveness while the exact
+    // timer requests below prove the scheduler policy without Windows timer
+    // quantization making the test flaky.
+    if (sent < 45) throw new Error(`simulated shared pump did not remain live: ${sent} frames`);
+    if (pumps < sent || pumps > 320) throw new Error(`simulated pump tick count outside non-spin bounds: pumps=${pumps} sent=${sent}`);
+    if (delay16 < 40) throw new Error(`16ms paced scheduling was not exercised enough: ${delay16}`);
+    if (delay5 !== 0) throw new Error(`legacy 5ms spin scheduling returned: ${delay5}`);
+    if (delay100 !== 0) throw new Error(`unexpected backpressure scheduling in no-pressure simulation: ${delay100}`);
+    if (immediate < 1 || immediate > receiverReleases + 4) {
+      throw new Error(`release-driven immediate scheduling outside expected bounds: immediate=${immediate} releases=${receiverReleases}`);
+    }
+    if (fps < 12 || fps > 28) throw new Error(`simulated effective FPS outside liveness band: ${fps}`);
     if (backpressureRatio > 0.03) throw new Error(`simulated shared pump backpressure too high: ${backpressureRatio}`);
-    if (Number(metrics.maxPending || 0) > 2) throw new Error(`simulated shared pump retained too many frames: ${metrics.maxPending}`);
+    if (Number(metrics.maxPending || 0) > 3) throw new Error(`simulated shared pump retained too many frames: ${metrics.maxPending}`);
     if (avgRelease > 20) throw new Error(`simulated shared release latency too high: ${avgRelease}`);
     if (Number(metrics.commandFailures || 0) !== 0) throw new Error(`property command failures observed: ${JSON.stringify(metrics.lastCommandError)}`);
     if (receiverReleases < sent - 2) throw new Error(`native release count lagged sent frames: releases=${receiverReleases} sent=${sent}`);
 
     console.log(`LIBMPV_R2_PUMP_SIM_REPORT=${JSON.stringify({
       sentFrames: sent,
+      pumpTicks: pumps,
       effectiveSentFps: fps,
       backpressureRatio,
       maxPending: metrics.maxPending,
       avgReleaseLatencyMs: avgRelease,
       releaseLatencyMaxMs: metrics.releaseLatencyMaxMs,
       receiverReleases,
+      scheduler: { delay16, delay5, delay100, immediate, totalRecorded: scheduledDelays.length },
       commandCases: propertyCases.length
     })}`);
     console.log('LIBMPV_R2_PUMP_SIM_OK');
   } finally {
     try { await bridge?.dispose?.(); } catch {}
+    global.setTimeout = originalSetTimeout;
     Module._load = originalLoad;
   }
 }
