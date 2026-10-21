@@ -46,3 +46,9 @@ for (const marker of [
 if (check.includes('std::array<TextureSlot, 3>')) throw new Error('legacy three-slot texture pool remains');
 
 console.log('LIBMPV_R2C_TEXTURE_POOL_OK slots=24 nativeSubtitles=disabled');
+
+// R2C is already a mandatory workflow transform immediately after R2. Chain the
+// empirically proven Windows frame-lifetime rule here so this hard gate can only
+// succeed when both the 24-slot producer pool and the two-compositor-turn
+// consumer lifetime are present together.
+require('./apply-libmpv-r2d-safe-frame-lifetime.cjs');
