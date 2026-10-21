@@ -102,8 +102,6 @@ bridge = replaceAllExpected(bridge, `runtimeRevision: 'SURFACE-AUDIO-R1'`, `runt
 write('electron/libmpv-shared-main.cjs', bridge);
 
 let entry = read('src/libmpv-shared-entry.js');
-// apply-libmpv-renderer-compat.cjs runs in the D2 preflight and has already added
-// width/height/min-size declarations by the time this transform executes.
 entry = replaceOnce(
   entry,
   `:host{display:block;position:relative;width:100%;height:100%;min-width:0;min-height:0;background:#000;overflow:hidden;contain:layout paint size}`,
@@ -119,7 +117,10 @@ entry = replaceOnce(
 entry = replaceAllExpected(entry, `runtimeRevision: 'SURFACE-AUDIO-R1'`, `runtimeRevision: 'FRAME-INPUT-SUBTITLE-R2'`, 1, 'renderer runtime revision');
 write('src/libmpv-shared-entry.js', entry);
 
-let player = read('native/libmpv-d3d11-bridge/player_addon.cc');
+// Git for Windows can materialize this C++ source with CRLF while all JS files stay
+// LF. Normalize it before deterministic string transforms; the compiled content is
+// otherwise byte-for-byte equivalent for the anchors below.
+let player = read('native/libmpv-d3d11-bridge/player_addon.cc').replace(/\r\n/g, '\n');
 player = replaceOnce(
   player,
   `void SetMaybeString(napi_env env, napi_value object, const char* key, Player* player, const char* property) {\n  std::string value;\n  Set(env, object, key, GetStringProperty(player, property, &value) ? StringValue(env, value) : NullValue(env));\n}\n\nnapi_value CreatePlayer`,
