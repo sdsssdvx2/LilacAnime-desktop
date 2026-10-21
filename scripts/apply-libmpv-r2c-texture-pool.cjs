@@ -20,6 +20,12 @@ replaceOnce(
 );
 
 replaceOnce(
+  '    {"audio-display", "no"},\n    {"vo", "libmpv"},',
+  '    {"audio-display", "no"},\n    {"sid", "no"},\n    {"sub-auto", "no"},\n    {"vo", "libmpv"},',
+  'native subtitle disable options'
+);
+
+replaceOnce(
   '  Set(env, out, "backpressureDrops", DoubleValue(env, static_cast<double>(player->droppedForBackpressure)));\n',
   '  Set(env, out, "backpressureDrops", DoubleValue(env, static_cast<double>(player->droppedForBackpressure)));\n  uint32_t inFlightSlots = 0;\n  for (const auto& slot : player->slots) if (slot.inFlight) inFlightSlots += 1;\n  Set(env, out, "textureSlotCount", Uint32Value(env, static_cast<uint32_t>(player->slots.size())));\n  Set(env, out, "textureSlotsInFlight", Uint32Value(env, inFlightSlots));\n',
   'shared texture slot diagnostics'
@@ -30,6 +36,8 @@ fs.writeFileSync(target, source);
 const check = fs.readFileSync(target, 'utf8');
 for (const marker of [
   'kSharedTextureSlots = 24',
+  '{"sid", "no"}',
+  '{"sub-auto", "no"}',
   'textureSlotCount',
   'textureSlotsInFlight'
 ]) {
@@ -37,4 +45,4 @@ for (const marker of [
 }
 if (check.includes('std::array<TextureSlot, 3>')) throw new Error('legacy three-slot texture pool remains');
 
-console.log('LIBMPV_R2C_TEXTURE_POOL_OK slots=24');
+console.log('LIBMPV_R2C_TEXTURE_POOL_OK slots=24 nativeSubtitles=disabled');
