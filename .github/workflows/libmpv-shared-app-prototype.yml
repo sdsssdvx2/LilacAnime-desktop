@@ -74,6 +74,9 @@ jobs:
       - name: Apply R2 frame lifetime, input and subtitle fixes
         run: node scripts/apply-libmpv-r2-runtime-fixes.cjs
 
+      - name: Syntax-check R2B transform (fail-fast)
+        run: node --check scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+
       - name: Apply R2B command and import diagnostics
         run: node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
 
@@ -82,6 +85,9 @@ jobs:
 
       - name: Apply one-pass libmpv shared-texture integration
         run: node scripts/apply-libmpv-shared-texture.cjs
+
+      - name: Apply R2E native command readback and explicit sandbox
+        run: node scripts/apply-libmpv-r2e-native-command-gates.cjs
 
       - name: Install pinned Electron 43 dependencies
         shell: powershell
@@ -132,6 +138,13 @@ jobs:
           & npx.cmd electron scripts/smoke-libmpv-relay-av.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Gate actual libmpv pause play seek volume and speed roundtrip
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/smoke-libmpv-native-command-roundtrip.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Gate transformed 1080p renderer pointer and keyboard responsiveness
         shell: powershell
         run: |
@@ -173,6 +186,8 @@ jobs:
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           if ($main -notmatch 'contextIsolation:\s*true') { throw 'contextIsolation was not preserved' }
           if ($main -notmatch 'nodeIntegration:\s*false') { throw 'nodeIntegration=false was not preserved' }
+          if ($main -notmatch "preload:\s*path\.join\(__dirname, 'preload-libmpv-shared\.generated\.cjs'\),\s*contextIsolation:\s*true,\s*nodeIntegration:\s*false,\s*sandbox:\s*true") { throw 'main shared renderer sandbox=true was not preserved explicitly' }
+          if ($main -match "preload:\s*path\.join\(__dirname, 'preload-libmpv-shared\.generated\.cjs'\),[\s\S]{0,180}sandbox:\s*false") { throw 'main shared renderer sandbox was disabled' }
           if ($main -match "require\('./mpv-native-main\.cjs'\)") { throw 'legacy HWND bridge leaked into app' }
           if ($index -match 'mpv-native\.generated\.js') { throw 'legacy HWND renderer leaked into app' }
           if ($index -notmatch 'libmpv-shared\.generated\.js') { throw 'shared renderer bundle missing' }
@@ -193,6 +208,7 @@ jobs:
           if ($flix -notmatch 'function flixProxyStats\(\)') { throw 'Flix proxy counters missing' }
           if ($player -notmatch 'voDropFrameCount' -or $player -notmatch 'mistimedFrameCount' -or $player -notmatch 'currentAo') { throw 'native playback diagnostics missing' }
           if ($player -notmatch 'SafeTrackSummary' -or $player -notmatch 'track-list/count') { throw 'bounded safe track diagnostics missing' }
+          if ($player -notmatch 'SetMaybeDouble\(env, out, "volume", player, "volume"\)' -or $player -notmatch 'SetMaybeDouble\(env, out, "speed", player, "speed"\)') { throw 'native volume/speed command readback missing' }
           if ($player -notmatch 'kSharedTextureSlots = 24' -or $player -notmatch 'textureSlotCount' -or $player -notmatch 'textureSlotsInFlight') { throw '24-slot retained-frame pool missing' }
           if ($player -notmatch '\{"sid", "no"\}' -or $player -notmatch '\{"sub-auto", "no"\}') { throw 'native subtitle rendering is not hard-disabled' }
           if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive external track metadata leaked into diagnostics' }
