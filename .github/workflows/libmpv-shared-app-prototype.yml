@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-app:
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
 
@@ -77,6 +77,9 @@ jobs:
       - name: Apply R2B command and import diagnostics
         run: node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
 
+      - name: Apply R2C retained-frame texture pool and native subtitle lockout
+        run: node scripts/apply-libmpv-r2c-texture-pool.cjs
+
       - name: Apply one-pass libmpv shared-texture integration
         run: node scripts/apply-libmpv-shared-texture.cjs
 
@@ -101,11 +104,25 @@ jobs:
           "LILAC_LIBMPV_PLAYER_ADDON=$($playerAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LILAC_LIBMPV_DLL=$($runtimeDll.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Re-run dynamic libmpv frame and lifetime smoke
+      - name: Gate 24-slot native shared texture lifetime and recovery
         shell: powershell
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
           & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Gate 1080p retained-frame throughput under 800ms Chromium-like lifetime
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/smoke-libmpv-native-retention-fhd.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Gate bridge pacing and mpv property command normalization
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/smoke-libmpv-r2-pump-sim.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Gate muxed AAC video through actual relay and libmpv
@@ -115,12 +132,25 @@ jobs:
           & npx.cmd electron scripts/smoke-libmpv-relay-av.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Gate full-HD shared runtime throughput, audio and input
+      - name: Gate transformed 1080p renderer pointer and keyboard responsiveness
         shell: powershell
         run: |
           Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          & npx.cmd electron scripts/smoke-libmpv-shared-runtime.cjs
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Gate baseline player interaction regressions
+        run: node --test tests/player-interactions.test.cjs
+
+      - name: Exercise full shared runtime or classify exact hosted GPU limitation
+        shell: powershell
+        run: |
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          $env:LILAC_ALLOW_HOSTED_GPU_UNAVAILABLE = '1'
+          & npx.cmd electron scripts/smoke-libmpv-shared-runtime.cjs
+          $code = $LASTEXITCODE
+          Remove-Item Env:LILAC_ALLOW_HOSTED_GPU_UNAVAILABLE -ErrorAction SilentlyContinue
+          if ($code -ne 0) { exit $code }
 
       - name: Verify isolated preload reaches shadow canvas
         shell: powershell
@@ -163,11 +193,13 @@ jobs:
           if ($flix -notmatch 'function flixProxyStats\(\)') { throw 'Flix proxy counters missing' }
           if ($player -notmatch 'voDropFrameCount' -or $player -notmatch 'mistimedFrameCount' -or $player -notmatch 'currentAo') { throw 'native playback diagnostics missing' }
           if ($player -notmatch 'SafeTrackSummary' -or $player -notmatch 'track-list/count') { throw 'bounded safe track diagnostics missing' }
+          if ($player -notmatch 'kSharedTextureSlots = 24' -or $player -notmatch 'textureSlotCount' -or $player -notmatch 'textureSlotsInFlight') { throw '24-slot retained-frame pool missing' }
+          if ($player -notmatch '\{"sid", "no"\}' -or $player -notmatch '\{"sub-auto", "no"\}') { throw 'native subtitle rendering is not hard-disabled' }
           if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive external track metadata leaked into diagnostics' }
           if ($pkg.devDependencies.electron -ne '43.8.1') { throw 'Electron is not pinned to 43.8.1' }
           if ($pkg.build.asarUnpack -notcontains 'electron/lilac-libmpv-player-bridge.node') { throw 'native addon unpack rule missing' }
           if ($pkg.build.asarUnpack -notcontains 'electron/libmpv-2.dll') { throw 'libmpv DLL unpack rule missing' }
-          Write-Host 'LIBMPV_SHARED_SECURITY_DIAGNOSTICS_ARCHITECTURE_OK'
+          Write-Host 'LIBMPV_SHARED_R2_SECURITY_PERFORMANCE_ARCHITECTURE_OK'
 
       - name: Deterministic Flix proxy fixture regression gate
         run: node scripts/smoke-flix-proxy-fixture.cjs
