@@ -53,6 +53,7 @@ jobs:
           $vendor = Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv'
           New-Item -ItemType Directory -Force -Path $vendor | Out-Null
           Copy-Item (Join-Path $mpvHeaderDir '*') $vendor -Recurse -Force
+          if (-not (Test-Path (Join-Path $vendor 'render_d3d11.h'))) { throw 'pinned render_d3d11.h missing after SDK overlay' }
 
           $dll = Get-ChildItem $extract -Recurse -File |
             Where-Object { $_.Name -in @('libmpv-2.dll','mpv-2.dll') } |
@@ -75,18 +76,22 @@ jobs:
           npm install --no-save --no-audit --no-fund electron@43.8.1 node-gyp@12.2.0
           node -e "const v=require('electron/package.json').version;if(v!=='43.8.1')throw new Error('unexpected Electron '+v);console.log('BRIDGE_ELECTRON='+v)"
 
-      - name: Build Electron ABI libmpv D3D11 addon
+      - name: Build Electron ABI libmpv D3D11 addons
         shell: powershell
         run: |
           $electronVersion = node -p "require('electron/package.json').version"
           $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
           & $nodeGyp rebuild --directory native/libmpv-d3d11-bridge --target=$electronVersion --dist-url=https://electronjs.org/headers
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $addon = Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_d3d11_bridge.node'
-          "LILAC_LIBMPV_BRIDGE_ADDON=$($addon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $smokeAddon = Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_d3d11_bridge.node'
+          $playerAddon = Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node'
+          "LILAC_LIBMPV_BRIDGE_ADDON=$($smokeAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LILAC_LIBMPV_PLAYER_ADDON=$($playerAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Syntax check smoke harness
-        run: node --check scripts/libmpv-d3d11-smoke.cjs
+      - name: Syntax check smoke harnesses
+        run: |
+          node --check scripts/libmpv-d3d11-smoke.cjs
+          node --check scripts/libmpv-d3d11-stream-smoke.cjs
 
       - name: Render deterministic BMP through libmpv D3D11
         shell: powershell
@@ -98,6 +103,16 @@ jobs:
           Copy-Item $log 'libmpv-d3d11-smoke.log' -Force
           if ($code -ne 0) { exit $code }
 
+      - name: Exercise persistent dynamic player and texture lifetime
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $log = Join-Path $env:RUNNER_TEMP 'libmpv-d3d11-stream-smoke.log'
+          & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          Copy-Item $log 'libmpv-d3d11-stream-smoke.log' -Force
+          if ($code -ne 0) { exit $code }
+
       - name: Upload bridge smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,7 +120,9 @@ jobs:
           name: libmpv-d3d11-bridge-smoke
           path: |
             libmpv-d3d11-smoke.log
+            libmpv-d3d11-stream-smoke.log
             native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_d3d11_bridge.node
+            native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node
             native/libmpv-d3d11-bridge/runtime/libmpv-2.dll
           if-no-files-found: warn
           retention-days: 7
