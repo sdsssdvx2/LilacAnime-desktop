@@ -40,6 +40,26 @@ function sendStats(extra = {}) {
   } catch {}
 }
 
+ipcRenderer.on('libmpv-shared:probe-surface', () => {
+  try {
+    const { host, canvas } = findSurface();
+    ipcRenderer.send('libmpv-shared:probe-surface-result', {
+      host: Boolean(host),
+      shadowRoot: Boolean(host?.shadowRoot),
+      canvas: Boolean(canvas),
+      context2d: Boolean(canvas && contextFor(canvas))
+    });
+  } catch (error) {
+    ipcRenderer.send('libmpv-shared:probe-surface-result', {
+      host: false,
+      shadowRoot: false,
+      canvas: false,
+      context2d: false,
+      error: String(error?.message || error).slice(0, 160)
+    });
+  }
+});
+
 try {
   if (!sharedTexture || typeof sharedTexture.setSharedTextureReceiver !== 'function') {
     throw new Error('Electron sharedTexture receiver API is unavailable');
