@@ -6,13 +6,37 @@ const path = require('node:path');
 const target = path.resolve(__dirname, '..', 'native', 'libmpv-d3d11-bridge', 'player_addon.cc');
 let source = fs.readFileSync(target, 'utf8');
 
-const anchor = `  SetMaybeString(env, out, "vid", player, "vid");\n  SetMaybeString(env, out, "aid", player, "aid");\n  SetMaybeString(env, out, "hwdecCurrent", player, "hwdec-current");\n  return out;`;
+if (source.includes('"voDropFrameCount"')) {
+  throw new Error('libmpv player diagnostics already applied');
+}
 
-const replacement = `  SetMaybeString(env, out, "vid", player, "vid");\n  SetMaybeString(env, out, "aid", player, "aid");\n  SetMaybeString(env, out, "hwdecCurrent", player, "hwdec-current");\n\n  // Safe scalar playback diagnostics only. Never expose filenames, URLs, headers,\n  // structured track enumeration, command lines, or other potentially sensitive values.\n  SetMaybeInt64(env, out, "voDropFrameCount", player, "vo-drop-frame-count");\n  SetMaybeInt64(env, out, "decoderFrameDropCount", player, "decoder-frame-drop-count");\n  SetMaybeInt64(env, out, "mistimedFrameCount", player, "mistimed-frame-count");\n  SetMaybeDouble(env, out, "estimatedVfFps", player, "estimated-vf-fps");\n  SetMaybeDouble(env, out, "displayFps", player, "display-fps");\n  SetMaybeDouble(env, out, "demuxerCacheDuration", player, "demuxer-cache-duration");\n  SetMaybeInt64(env, out, "cacheBufferingState", player, "cache-buffering-state");\n  SetMaybeInt64(env, out, "cacheSpeed", player, "cache-speed");\n  SetMaybeString(env, out, "currentVo", player, "current-vo");\n  SetMaybeString(env, out, "currentAo", player, "current-ao");\n  SetMaybeString(env, out, "audioDevice", player, "audio-device");\n  SetMaybeDouble(env, out, "volume", player, "volume");\n  SetMaybeFlag(env, out, "mute", player, "mute");\n  return out;`;
+const anchor = /^(\s*)SetMaybeString\(env, out, "hwdecCurrent", player, "hwdec-current"\);\r?$/gm;
+const matches = [...source.matchAll(anchor)];
+if (matches.length !== 1) {
+  throw new Error(`libmpv player diagnostics anchor expected once, found ${matches.length}`);
+}
 
-const occurrences = source.split(anchor).length - 1;
-if (occurrences !== 1) throw new Error(`libmpv player diagnostics anchor expected once, found ${occurrences}`);
-source = source.replace(anchor, replacement);
+const indent = matches[0][1];
+const metrics = [
+  '',
+  `${indent}// Safe scalar playback diagnostics only. Never expose filenames, URLs, headers,`,
+  `${indent}// structured track enumeration, command lines, or other potentially sensitive values.`,
+  `${indent}SetMaybeInt64(env, out, "voDropFrameCount", player, "vo-drop-frame-count");`,
+  `${indent}SetMaybeInt64(env, out, "decoderFrameDropCount", player, "decoder-frame-drop-count");`,
+  `${indent}SetMaybeInt64(env, out, "mistimedFrameCount", player, "mistimed-frame-count");`,
+  `${indent}SetMaybeDouble(env, out, "estimatedVfFps", player, "estimated-vf-fps");`,
+  `${indent}SetMaybeDouble(env, out, "displayFps", player, "display-fps");`,
+  `${indent}SetMaybeDouble(env, out, "demuxerCacheDuration", player, "demuxer-cache-duration");`,
+  `${indent}SetMaybeInt64(env, out, "cacheBufferingState", player, "cache-buffering-state");`,
+  `${indent}SetMaybeInt64(env, out, "cacheSpeed", player, "cache-speed");`,
+  `${indent}SetMaybeString(env, out, "currentVo", player, "current-vo");`,
+  `${indent}SetMaybeString(env, out, "currentAo", player, "current-ao");`,
+  `${indent}SetMaybeString(env, out, "audioDevice", player, "audio-device");`,
+  `${indent}SetMaybeDouble(env, out, "volume", player, "volume");`,
+  `${indent}SetMaybeFlag(env, out, "mute", player, "mute");`
+].join('\n');
+
+source = source.replace(anchor, match => `${match}${metrics}`);
 fs.writeFileSync(target, source);
 
 for (const marker of [
