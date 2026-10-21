@@ -17,27 +17,23 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
-struct TextureResource {
+struct DeviceState {
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> context;
-  ComPtr<ID3D11Texture2D> texture;
-  HANDLE sharedHandle = nullptr;
-  uint32_t width = 0;
-  uint32_t height = 0;
   D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_9_1;
   const char* deviceMode = "unknown";
 };
 
-struct CreateFailure {
-  const char* stage = "unknown";
-  HRESULT hr = E_FAIL;
-  HRESULT hardwareHr = S_OK;
-  HRESULT warpHr = S_OK;
-  const char* deviceMode = "none";
-  D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_9_1;
+struct TextureResource {
+  ComPtr<ID3D11Texture2D> texture;
+  HANDLE sharedHandle = nullptr;
+  uint32_t width = 0;
+  uint32_t height = 0;
 };
 
 std::mutex gMutex;
+DeviceState gDevice;
+bool gDeviceReady = false;
 std::unordered_map<uint32_t, std::unique_ptr<TextureResource>> gResources;
 uint32_t gNextId = 1;
 
@@ -67,33 +63,9 @@ napi_value MakeBool(napi_env env, bool value) {
   return out;
 }
 
-bool FillTexture(TextureResource* resource, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-  if (!resource || !resource->context || !resource->texture) return false;
-  const size_t rowBytes = static_cast<size_t>(resource->width) * 4;
-  std::vector<uint8_t> pixels(rowBytes * resource->height);
-  for (size_t i = 0; i < pixels.size(); i += 4) {
-    pixels[i + 0] = b;
-    pixels[i + 1] = g;
-    pixels[i + 2] = r;
-    pixels[i + 3] = a;
-  }
-  resource->context->UpdateSubresource(resource->texture.Get(), 0, nullptr, pixels.data(), static_cast<UINT>(rowBytes), 0);
-  resource->context->Flush();
-  return true;
-}
-
-std::unique_ptr<TextureResource> CreateTexture(
-  uint32_t width,
-  uint32_t height,
-  uint8_t r,
-  uint8_t g,
-  uint8_t b,
-  uint8_t a,
-  CreateFailure* failure
-) {
-  auto resource = std::make_unique<TextureResource>();
-  resource->width = width;
-  resource->height = height;
+bool EnsureDevice(std::string* error) {
+  std::lock_guard<std::mutex> lock(gMutex);
+  if (gDeviceReady && gDevice.device && gDevice.context) return true;
 
   UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
   D3D_FEATURE_LEVEL levels[] = {
@@ -102,52 +74,57 @@ std::unique_ptr<TextureResource> CreateTexture(
     D3D_FEATURE_LEVEL_10_1,
     D3D_FEATURE_LEVEL_10_0
   };
-  D3D_FEATURE_LEVEL actualLevel{};
+  D3D_FEATURE_LEVEL actual{};
   HRESULT hardwareHr = D3D11CreateDevice(
-    nullptr,
-    D3D_DRIVER_TYPE_HARDWARE,
-    nullptr,
-    flags,
-    levels,
-    static_cast<UINT>(std::size(levels)),
-    D3D11_SDK_VERSION,
-    &resource->device,
-    &actualLevel,
-    &resource->context
-  );
+    nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+    levels, static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
+    &gDevice.device, &actual, &gDevice.context);
   HRESULT warpHr = S_OK;
   HRESULT hr = hardwareHr;
   if (SUCCEEDED(hardwareHr)) {
-    resource->deviceMode = "hardware";
+    gDevice.deviceMode = "hardware";
   } else {
-    resource->device.Reset();
-    resource->context.Reset();
+    gDevice.device.Reset();
+    gDevice.context.Reset();
     warpHr = D3D11CreateDevice(
-      nullptr,
-      D3D_DRIVER_TYPE_WARP,
-      nullptr,
-      flags,
-      levels,
-      static_cast<UINT>(std::size(levels)),
-      D3D11_SDK_VERSION,
-      &resource->device,
-      &actualLevel,
-      &resource->context
-    );
+      nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
+      levels, static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
+      &gDevice.device, &actual, &gDevice.context);
     hr = warpHr;
-    if (SUCCEEDED(warpHr)) resource->deviceMode = "warp";
+    if (SUCCEEDED(warpHr)) gDevice.deviceMode = "warp";
   }
   if (FAILED(hr)) {
-    if (failure) {
-      failure->stage = "create-device";
-      failure->hr = hr;
-      failure->hardwareHr = hardwareHr;
-      failure->warpHr = warpHr;
-      failure->deviceMode = "none";
+    if (error) {
+      *error = "D3D11_DEVICE_FAILED hr=" + HrHex(hr) +
+        " hardwareHr=" + HrHex(hardwareHr) + " warpHr=" + HrHex(warpHr);
     }
-    return nullptr;
+    return false;
   }
-  resource->featureLevel = actualLevel;
+  gDevice.featureLevel = actual;
+  gDeviceReady = true;
+  return true;
+}
+
+bool FillTexture(TextureResource* resource, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+  if (!resource || !resource->texture || !gDevice.context) return false;
+  const size_t rowBytes = static_cast<size_t>(resource->width) * 4;
+  std::vector<uint8_t> pixels(rowBytes * resource->height);
+  for (size_t i = 0; i < pixels.size(); i += 4) {
+    pixels[i + 0] = b;
+    pixels[i + 1] = g;
+    pixels[i + 2] = r;
+    pixels[i + 3] = a;
+  }
+  gDevice.context->UpdateSubresource(resource->texture.Get(), 0, nullptr, pixels.data(), static_cast<UINT>(rowBytes), 0);
+  gDevice.context->Flush();
+  return true;
+}
+
+std::unique_ptr<TextureResource> CreateTexture(uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a, std::string* error) {
+  if (!EnsureDevice(error)) return nullptr;
+  auto resource = std::make_unique<TextureResource>();
+  resource->width = width;
+  resource->height = height;
 
   D3D11_TEXTURE2D_DESC desc{};
   desc.Width = width;
@@ -159,65 +136,47 @@ std::unique_ptr<TextureResource> CreateTexture(
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
   desc.CPUAccessFlags = 0;
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
+  // Match Electron/Chromium's Windows BGRA shared-texture contract: NT handle, no keyed mutex.
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
-  hr = resource->device->CreateTexture2D(&desc, nullptr, &resource->texture);
+  HRESULT hr = gDevice.device->CreateTexture2D(&desc, nullptr, &resource->texture);
   if (FAILED(hr)) {
-    if (failure) {
-      failure->stage = "create-texture2d";
-      failure->hr = hr;
-      failure->hardwareHr = hardwareHr;
-      failure->warpHr = warpHr;
-      failure->deviceMode = resource->deviceMode;
-      failure->featureLevel = actualLevel;
-    }
+    if (error) *error = "D3D11_TEXTURE_FAILED hr=" + HrHex(hr);
     return nullptr;
   }
 
   ComPtr<IDXGIResource1> dxgiResource;
   hr = resource->texture.As(&dxgiResource);
   if (FAILED(hr)) {
-    if (failure) {
-      failure->stage = "query-idxgiresource1";
-      failure->hr = hr;
-      failure->hardwareHr = hardwareHr;
-      failure->warpHr = warpHr;
-      failure->deviceMode = resource->deviceMode;
-      failure->featureLevel = actualLevel;
-    }
+    if (error) *error = "DXGI_RESOURCE_FAILED hr=" + HrHex(hr);
     return nullptr;
   }
-
-  hr = dxgiResource->CreateSharedHandle(
-    nullptr,
+  hr = dxgiResource->CreateSharedHandle(nullptr,
     DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-    nullptr,
-    &resource->sharedHandle
-  );
+    nullptr, &resource->sharedHandle);
   if (FAILED(hr) || !resource->sharedHandle) {
-    if (failure) {
-      failure->stage = "create-shared-handle";
-      failure->hr = FAILED(hr) ? hr : E_HANDLE;
-      failure->hardwareHr = hardwareHr;
-      failure->warpHr = warpHr;
-      failure->deviceMode = resource->deviceMode;
-      failure->featureLevel = actualLevel;
-    }
+    if (error) *error = "SHARED_HANDLE_FAILED hr=" + HrHex(FAILED(hr) ? hr : E_HANDLE);
     return nullptr;
   }
-
   if (!FillTexture(resource.get(), r, g, b, a)) {
-    if (failure) {
-      failure->stage = "fill-texture";
-      failure->hr = E_FAIL;
-      failure->hardwareHr = hardwareHr;
-      failure->warpHr = warpHr;
-      failure->deviceMode = resource->deviceMode;
-      failure->featureLevel = actualLevel;
-    }
+    if (error) *error = "FILL_TEXTURE_FAILED";
     return nullptr;
   }
   return resource;
+}
+
+napi_value PixelObject(napi_env env, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+  napi_value out, vr, vg, vb, va;
+  napi_create_object(env, &out);
+  napi_create_uint32(env, r, &vr);
+  napi_create_uint32(env, g, &vg);
+  napi_create_uint32(env, b, &vb);
+  napi_create_uint32(env, a, &va);
+  napi_set_named_property(env, out, "r", vr);
+  napi_set_named_property(env, out, "g", vg);
+  napi_set_named_property(env, out, "b", vb);
+  napi_set_named_property(env, out, "a", va);
+  return out;
 }
 
 napi_value CreateSolidTexture(napi_env env, napi_callback_info info) {
@@ -228,7 +187,6 @@ napi_value CreateSolidTexture(napi_env env, napi_callback_info info) {
     Throw(env, "createSolidTexture(width,height,r,g,b[,a]) requires at least 5 arguments");
     return nullptr;
   }
-
   uint32_t width = 0, height = 0, r = 0, g = 0, b = 0, a = 255;
   if (!GetUint32(env, argv[0], &width) || !GetUint32(env, argv[1], &height) ||
       !GetUint32(env, argv[2], &r) || !GetUint32(env, argv[3], &g) || !GetUint32(env, argv[4], &b) ||
@@ -241,26 +199,17 @@ napi_value CreateSolidTexture(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  CreateFailure failure{};
+  std::string error;
   auto resource = CreateTexture(width, height,
     static_cast<uint8_t>(std::min<uint32_t>(r, 255)),
     static_cast<uint8_t>(std::min<uint32_t>(g, 255)),
     static_cast<uint8_t>(std::min<uint32_t>(b, 255)),
-    static_cast<uint8_t>(std::min<uint32_t>(a, 255)),
-    &failure);
+    static_cast<uint8_t>(std::min<uint32_t>(a, 255)), &error);
   if (!resource) {
-    const std::string message = std::string("D3D11_SHARED_TEXTURE_FAILED stage=") + failure.stage +
-      " hr=" + HrHex(failure.hr) +
-      " device=" + failure.deviceMode +
-      " feature=" + FeatureLevelText(failure.featureLevel) +
-      " hardwareHr=" + HrHex(failure.hardwareHr) +
-      " warpHr=" + HrHex(failure.warpHr);
-    Throw(env, message.c_str());
+    Throw(env, error.c_str());
     return nullptr;
   }
 
-  const std::string deviceMode = resource->deviceMode;
-  const std::string featureLevel = FeatureLevelText(resource->featureLevel);
   uint32_t id;
   HANDLE handle = resource->sharedHandle;
   {
@@ -275,11 +224,11 @@ napi_value CreateSolidTexture(napi_env env, napi_callback_info info) {
   napi_create_uint32(env, width, &widthValue);
   napi_create_uint32(env, height, &heightValue);
   napi_create_string_utf8(env, "bgra", NAPI_AUTO_LENGTH, &formatValue);
-  napi_create_string_utf8(env, deviceMode.c_str(), NAPI_AUTO_LENGTH, &modeValue);
-  napi_create_string_utf8(env, featureLevel.c_str(), NAPI_AUTO_LENGTH, &featureValue);
+  napi_create_string_utf8(env, gDevice.deviceMode, NAPI_AUTO_LENGTH, &modeValue);
+  const std::string feature = FeatureLevelText(gDevice.featureLevel);
+  napi_create_string_utf8(env, feature.c_str(), NAPI_AUTO_LENGTH, &featureValue);
   void* copied = nullptr;
   napi_create_buffer_copy(env, sizeof(HANDLE), &handle, &copied, &handleBuffer);
-
   napi_set_named_property(env, out, "id", idValue);
   napi_set_named_property(env, out, "width", widthValue);
   napi_set_named_property(env, out, "height", heightValue);
@@ -290,13 +239,59 @@ napi_value CreateSolidTexture(napi_env env, napi_callback_info info) {
   return out;
 }
 
+napi_value SampleTexture(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  uint32_t id = 0;
+  if (argc < 1 || !GetUint32(env, argv[0], &id)) {
+    Throw(env, "sampleTexture(id) requires texture id");
+    return nullptr;
+  }
+  TextureResource* resource = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(gMutex);
+    auto it = gResources.find(id);
+    if (it != gResources.end()) resource = it->second.get();
+  }
+  if (!resource || !resource->texture) {
+    Throw(env, "texture not found");
+    return nullptr;
+  }
+
+  D3D11_TEXTURE2D_DESC sourceDesc{};
+  resource->texture->GetDesc(&sourceDesc);
+  D3D11_TEXTURE2D_DESC stagingDesc = sourceDesc;
+  stagingDesc.Usage = D3D11_USAGE_STAGING;
+  stagingDesc.BindFlags = 0;
+  stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  stagingDesc.MiscFlags = 0;
+  ComPtr<ID3D11Texture2D> staging;
+  HRESULT hr = gDevice.device->CreateTexture2D(&stagingDesc, nullptr, &staging);
+  if (FAILED(hr)) {
+    Throw(env, ("staging texture failed " + HrHex(hr)).c_str());
+    return nullptr;
+  }
+  gDevice.context->CopyResource(staging.Get(), resource->texture.Get());
+  gDevice.context->Flush();
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  hr = gDevice.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+  if (FAILED(hr) || !mapped.pData) {
+    Throw(env, ("map staging failed " + HrHex(hr)).c_str());
+    return nullptr;
+  }
+  const auto* p = static_cast<const uint8_t*>(mapped.pData);
+  const uint8_t b = p[0], g = p[1], r = p[2], a = p[3];
+  gDevice.context->Unmap(staging.Get(), 0);
+  return PixelObject(env, r, g, b, a);
+}
+
 napi_value ReleaseTexture(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1];
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   uint32_t id = 0;
   if (argc < 1 || !GetUint32(env, argv[0], &id)) return MakeBool(env, false);
-
   std::unique_ptr<TextureResource> resource;
   {
     std::lock_guard<std::mutex> lock(gMutex);
@@ -317,9 +312,7 @@ napi_value OsClick(napi_env env, napi_callback_info info) {
   napi_value argv[2];
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   uint32_t x = 0, y = 0;
-  if (argc < 2 || !GetUint32(env, argv[0], &x) || !GetUint32(env, argv[1], &y)) {
-    return MakeBool(env, false);
-  }
+  if (argc < 2 || !GetUint32(env, argv[0], &x) || !GetUint32(env, argv[1], &y)) return MakeBool(env, false);
   POINT previous{};
   GetCursorPos(&previous);
   if (!SetCursorPos(static_cast<int>(x), static_cast<int>(y))) return MakeBool(env, false);
@@ -338,17 +331,18 @@ napi_value OsClick(napi_env env, napi_callback_info info) {
 void Cleanup(void*) {
   std::lock_guard<std::mutex> lock(gMutex);
   for (auto& [id, resource] : gResources) {
-    if (resource && resource->sharedHandle) {
-      CloseHandle(resource->sharedHandle);
-      resource->sharedHandle = nullptr;
-    }
+    if (resource && resource->sharedHandle) CloseHandle(resource->sharedHandle);
   }
   gResources.clear();
+  gDevice.context.Reset();
+  gDevice.device.Reset();
+  gDeviceReady = false;
 }
 
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor props[] = {
     {"createSolidTexture", nullptr, CreateSolidTexture, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"sampleTexture", nullptr, SampleTexture, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"releaseTexture", nullptr, ReleaseTexture, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"osClick", nullptr, OsClick, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
