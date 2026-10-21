@@ -251,6 +251,16 @@ jobs:
           Write-Host "HWQ_EXE_BYTES=$($exe.Length)"
           Write-Host "HWQ_EXE_SHA256=$hash"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacLibmpvHardwareQualification-${{ github.sha }}
+          path: |
+            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe
+            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt
+            release-probe/qualification-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish exact-commit hardware qualification prerelease
         shell: powershell
         env:
@@ -262,8 +272,14 @@ jobs:
           $exe = 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe'
           $sha = 'dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt'
           $manifest = 'release-probe/qualification-manifest.json'
+
+          $savedErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
           & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $savedErrorActionPreference
+
+          if ($releaseExists) {
             & gh release upload $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --clobber
             if ($LASTEXITCODE -ne 0) { throw 'qualification release upload failed' }
           } else {
@@ -279,13 +295,3 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'qualification prerelease URL lookup failed' }
           Write-Host "LILAC_HWQ_RELEASE_TAG=$tag"
           Write-Host "LILAC_HWQ_RELEASE_URL=$url"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LilacLibmpvHardwareQualification-${{ github.sha }}
-          path: |
-            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.exe
-            dist-libmpv-hardware-qualification/LilacLibmpvHardwareQualification.sha256.txt
-            release-probe/qualification-manifest.json
-          if-no-files-found: error
-          retention-days: 14
