@@ -76,6 +76,9 @@ jobs:
           npm install --no-save --no-audit --no-fund electron@43.8.1 node-gyp@12.2.0
           node -e "const v=require('electron/package.json').version;if(v!=='43.8.1')throw new Error('unexpected Electron '+v);console.log('BRIDGE_ELECTRON='+v)"
 
+      - name: Apply safe playback diagnostics
+        run: node scripts/apply-libmpv-player-diagnostics.cjs
+
       - name: Build Electron ABI libmpv D3D11 addons
         shell: powershell
         run: |
