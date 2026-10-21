@@ -24,6 +24,21 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
   let listenersInstalled = false;
   let lastState = null;
   let lastError = null;
+  let receiverReady = { ok: false, at: 0, error: null };
+  let receiverStats = {
+    receivedFrames: 0,
+    presentedFrames: 0,
+    droppedNoSurface: 0,
+    drawFailures: 0,
+    lastFrameAt: 0,
+    lastFrameId: 0,
+    playerId: 0,
+    width: 0,
+    height: 0,
+    reason: null,
+    error: null,
+    updatedAt: 0
+  };
 
   const metrics = {
     pumpTicks: 0,
@@ -253,7 +268,14 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
 
   function state() {
     if (!active || playerId == null || !addon) {
-      return { active: false, route, metrics: { ...metrics }, lastError };
+      return {
+        active: false,
+        route,
+        metrics: { ...metrics },
+        receiverReady: { ...receiverReady },
+        receiver: { ...receiverStats },
+        lastError
+      };
     }
     try {
       lastState = addon.poll(playerId);
@@ -268,6 +290,8 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
       target: { width: targetWidth, height: targetHeight },
       pendingFrames: pendingFrames.size,
       metrics: { ...metrics },
+      receiverReady: { ...receiverReady },
+      receiver: { ...receiverStats },
       lastError,
       ...(lastState || {})
     };
@@ -312,6 +336,10 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
     attachedWindow = null;
   }
 
+  function senderIsAttached(event) {
+    return Boolean(attachedWindow && !attachedWindow.isDestroyed() && event?.sender?.id === attachedWindow.webContents.id);
+  }
+
   function installListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;
@@ -320,7 +348,44 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
     ipcMain.handle('libmpv-shared:state', () => state());
     ipcMain.handle('libmpv-shared:resize', (_event, value) => resize(value));
     ipcMain.handle('libmpv-shared:close', () => close());
-    ipcMain.handle('libmpv-shared:diagnostics', () => ({ ...state(), relay: relay.stats() }));
+    ipcMain.handle('libmpv-shared:diagnostics', () => ({
+      diagnosticVersion: 'LIBMPV-SHARED-D1',
+      ...state(),
+      receiverReady: { ...receiverReady },
+      receiver: { ...receiverStats },
+      relay: relay.stats()
+    }));
+
+    ipcMain.on('libmpv-shared:receiver-ready', (event, payload = {}) => {
+      if (!senderIsAttached(event)) return;
+      receiverReady = {
+        ok: payload?.ok === true,
+        at: Date.now(),
+        error: payload?.error ? String(payload.error).slice(0, 180) : null
+      };
+    });
+
+    ipcMain.on('libmpv-shared:receiver-stats', (event, payload = {}) => {
+      if (!senderIsAttached(event)) return;
+      const numeric = key => {
+        const value = Number(payload?.[key]);
+        return Number.isFinite(value) ? value : 0;
+      };
+      receiverStats = {
+        receivedFrames: numeric('receivedFrames'),
+        presentedFrames: numeric('presentedFrames'),
+        droppedNoSurface: numeric('droppedNoSurface'),
+        drawFailures: numeric('drawFailures'),
+        lastFrameAt: numeric('lastFrameAt'),
+        lastFrameId: numeric('lastFrameId'),
+        playerId: numeric('playerId'),
+        width: numeric('width'),
+        height: numeric('height'),
+        reason: payload?.reason ? String(payload.reason).slice(0, 80) : null,
+        error: payload?.error ? String(payload.error).slice(0, 180) : null,
+        updatedAt: Date.now()
+      };
+    });
   }
 
   async function ensure() {
@@ -331,6 +396,21 @@ function createLibmpvSharedBridge({ app, ipcMain, headersFor = () => ({}), userA
 
   async function attachWindow(win) {
     attachedWindow = win;
+    receiverReady = { ok: false, at: 0, error: null };
+    receiverStats = {
+      receivedFrames: 0,
+      presentedFrames: 0,
+      droppedNoSurface: 0,
+      drawFailures: 0,
+      lastFrameAt: 0,
+      lastFrameId: 0,
+      playerId: 0,
+      width: 0,
+      height: 0,
+      reason: null,
+      error: null,
+      updatedAt: 0
+    };
     installListeners();
     win.once('closed', () => {
       if (attachedWindow === win) attachedWindow = null;
