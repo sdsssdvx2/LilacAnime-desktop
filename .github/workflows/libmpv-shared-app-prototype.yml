@@ -68,6 +68,13 @@ jobs:
       - name: Install baseline build dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Apply safe diagnostic instrumentation
+        run: |
+          node scripts/apply-flix-proxy-diagnostics.cjs
+          node scripts/apply-libmpv-flix-diagnostics-wiring.cjs
+          node scripts/apply-libmpv-player-diagnostics.cjs
+          node scripts/apply-libmpv-renderer-diagnostics.cjs
+
       - name: Apply one-pass libmpv shared-texture integration
         run: node scripts/apply-libmpv-shared-texture.cjs
 
@@ -106,12 +113,16 @@ jobs:
           & npx.cmd electron scripts/smoke-libmpv-isolated-preload.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify security and transformed architecture
+      - name: Verify security diagnostics and transformed architecture
         shell: powershell
         run: |
           $main = Get-Content electron/main.cjs -Raw
+          $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
           $index = Get-Content src/index.html -Raw
           $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          $bundle = Get-Content src/libmpv-shared.generated.js -Raw
+          $flix = Get-Content electron/flix-proxy.cjs -Raw
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           if ($main -notmatch 'contextIsolation:\s*true') { throw 'contextIsolation was not preserved' }
           if ($main -notmatch 'nodeIntegration:\s*false') { throw 'nodeIntegration=false was not preserved' }
@@ -119,10 +130,17 @@ jobs:
           if ($index -match 'mpv-native\.generated\.js') { throw 'legacy HWND renderer leaked into app' }
           if ($index -notmatch 'libmpv-shared\.generated\.js') { throw 'shared renderer bundle missing' }
           if ($entry -notmatch 'data-lilac-libmpv-surface') { throw 'shared canvas surface missing' }
+          if ($entry -notmatch 'LILAC_LIBMPV_SHARED_RENDERER_DIAGNOSTICS') { throw 'renderer diagnostics missing' }
+          if ($bundle -notmatch 'LIBMPV-SHARED-D2') { throw 'D2 diagnostics missing from renderer bundle' }
+          if ($bridge -notmatch "diagnosticVersion: 'LIBMPV-SHARED-D2'") { throw 'D2 main diagnostics missing' }
+          if ($bridge -notmatch 'flixProxyStats') { throw 'Flix stats not wired into bridge diagnostics' }
+          if ($flix -notmatch 'function flixProxyStats\(\)') { throw 'Flix proxy counters missing' }
+          if ($player -notmatch 'voDropFrameCount' -or $player -notmatch 'mistimedFrameCount' -or $player -notmatch 'currentAo') { throw 'native playback diagnostics missing' }
+          if ($player -match 'track-list') { throw 'unsafe track-list diagnostic leaked into native bridge' }
           if ($pkg.devDependencies.electron -ne '43.8.1') { throw 'Electron is not pinned to 43.8.1' }
           if ($pkg.build.asarUnpack -notcontains 'electron/lilac-libmpv-player-bridge.node') { throw 'native addon unpack rule missing' }
           if ($pkg.build.asarUnpack -notcontains 'electron/libmpv-2.dll') { throw 'libmpv DLL unpack rule missing' }
-          Write-Host 'LIBMPV_SHARED_SECURITY_ARCHITECTURE_OK'
+          Write-Host 'LIBMPV_SHARED_SECURITY_DIAGNOSTICS_ARCHITECTURE_OK'
 
       - name: Deterministic Flix proxy fixture regression gate
         run: node scripts/smoke-flix-proxy-fixture.cjs
