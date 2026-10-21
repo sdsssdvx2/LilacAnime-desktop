@@ -155,15 +155,29 @@ jobs:
       - name: Gate baseline player interaction regressions
         run: node --test tests/player-interactions.test.cjs
 
-      - name: Exercise full shared runtime or classify exact hosted GPU limitation
+      - name: Exercise full shared runtime and record release eligibility
         shell: powershell
         run: |
           Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          $eligibilityFile = Join-Path $env:RUNNER_TEMP 'libmpv-release-eligibility.json'
+          Remove-Item $eligibilityFile -Force -ErrorAction SilentlyContinue
           $env:LILAC_ALLOW_HOSTED_GPU_UNAVAILABLE = '1'
+          $env:LILAC_RELEASE_ELIGIBILITY_FILE = $eligibilityFile
+          $env:LIBMPV_MIN_PRESENT_FPS = '20'
+          $env:LIBMPV_MAX_BACKPRESSURE_RATIO = '0.20'
           & npx.cmd electron scripts/smoke-libmpv-shared-runtime.cjs
           $code = $LASTEXITCODE
           Remove-Item Env:LILAC_ALLOW_HOSTED_GPU_UNAVAILABLE -ErrorAction SilentlyContinue
+          Remove-Item Env:LILAC_RELEASE_ELIGIBILITY_FILE -ErrorAction SilentlyContinue
+          Remove-Item Env:LIBMPV_MIN_PRESENT_FPS -ErrorAction SilentlyContinue
+          Remove-Item Env:LIBMPV_MAX_BACKPRESSURE_RATIO -ErrorAction SilentlyContinue
           if ($code -ne 0) { exit $code }
+          if (-not (Test-Path $eligibilityFile)) { throw 'shared runtime did not write release eligibility' }
+          $eligibility = Get-Content $eligibilityFile -Raw | ConvertFrom-Json
+          $releaseEligible = if ($eligibility.releaseEligible -eq $true) { '1' } else { '0' }
+          "LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE=$releaseEligible" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "LIBMPV_CI_RELEASE_ELIGIBLE=$releaseEligible"
+          Write-Host "LIBMPV_CI_RELEASE_CLASSIFICATION=$($eligibility.classification)"
 
       - name: Verify isolated preload reaches shadow canvas
         shell: powershell
@@ -220,10 +234,19 @@ jobs:
       - name: Deterministic Flix proxy fixture regression gate
         run: node scripts/smoke-flix-proxy-fixture.cjs
 
+      - name: Record non-release hosted runner classification
+        if: env.LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE != '1'
+        shell: powershell
+        run: |
+          Write-Host 'LIBMPV_INSTALLER_WITHHELD_SHARED_RUNTIME_NOT_RELEASE_ELIGIBLE'
+          Write-Host 'The standard hosted runner may complete non-GPU regression gates, but no installer is built or uploaded without verified sharedTexture presentation.'
+
       - name: Build Windows installer
+        if: env.LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE == '1'
         run: npm run dist -- --publish never
 
       - name: Verify unpacked runtime payload
+        if: env.LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE == '1'
         shell: powershell
         run: |
           $unpacked = Get-ChildItem dist -Directory | Where-Object { $_.Name -match 'win.*unpacked' } | Select-Object -First 1
@@ -236,6 +259,7 @@ jobs:
           Write-Host "PACKAGED_LIBMPV_BYTES=$((Get-Item $dll).Length)"
 
       - name: Installer checksum
+        if: env.LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE == '1'
         shell: powershell
         run: |
           $exe = Get-Item dist/LilacAnime-Libmpv-Shared-Prototype-Setup.exe
@@ -245,6 +269,7 @@ jobs:
           Write-Host "INSTALLER_SHA256=$hash"
 
       - uses: actions/upload-artifact@v4
+        if: env.LILAC_SHARED_RUNTIME_RELEASE_ELIGIBLE == '1'
         with:
           name: LilacAnime-libmpv-shared-prototype
           path: |
