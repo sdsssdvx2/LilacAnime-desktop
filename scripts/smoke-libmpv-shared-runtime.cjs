@@ -9,6 +9,24 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const MIN_PRESENT_FPS = Number.parseFloat(process.env.LIBMPV_MIN_PRESENT_FPS || '20');
+const MAX_BACKPRESSURE_RATIO = Number.parseFloat(process.env.LIBMPV_MAX_BACKPRESSURE_RATIO || '0.20');
+const MEASURE_MS = Number.parseInt(process.env.LIBMPV_PRESENT_MEASURE_MS || '4000', 10);
+const WARMUP_MS = Number.parseInt(process.env.LIBMPV_PRESENT_WARMUP_MS || '1000', 10);
+
+function writeEligibility(payload) {
+  const report = {
+    schema: 1,
+    releaseEligible: payload?.releaseEligible === true,
+    classification: String(payload?.classification || 'UNKNOWN'),
+    ...(payload?.metrics ? { metrics: payload.metrics } : {})
+  };
+  const file = process.env.LILAC_RELEASE_ELIGIBILITY_FILE;
+  if (file) fs.writeFileSync(file, `${JSON.stringify(report)}\n`, 'utf8');
+  console.log(`LIBMPV_SHARED_RUNTIME_RELEASE_ELIGIBILITY=${JSON.stringify(report)}`);
+  console.log(`LIBMPV_SHARED_RUNTIME_RELEASE_ELIGIBLE=${report.releaseEligible ? '1' : '0'}`);
+  return report;
+}
 
 function buildAvFixture(root, dir) {
   const ffmpeg = require('ffmpeg-static');
@@ -16,8 +34,8 @@ function buildAvFixture(root, dir) {
   const output = path.join(dir, 'fullhd-av.mp4');
   const args = [
     '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=24:duration=7',
-    '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=7',
+    '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=24000/1001:duration=9',
+    '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=9',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '96k', '-shortest', '-movflags', '+faststart', output
   ];
@@ -25,8 +43,8 @@ function buildAvFixture(root, dir) {
   if (encoded.status !== 0 || !fs.existsSync(output)) {
     const fallback = [
       '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=24:duration=7',
-      '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=7',
+      '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=24000/1001:duration=9',
+      '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=9',
       '-c:v', 'mpeg4', '-q:v', '4', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '96k', '-shortest', '-movflags', '+faststart', output
     ];
@@ -73,6 +91,10 @@ function hostedGpuUnavailableIsOnlyBlocker(state) {
     audioSelected &&
     String(state?.aid || '').toLowerCase() !== 'no'
   );
+}
+
+function delta(end, start, key) {
+  return Math.max(0, Number(end?.[key] || 0) - Number(start?.[key] || 0));
 }
 
 async function main() {
@@ -129,9 +151,10 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
       const state = error?.lastState || bridge.state();
       if (!hostedGpuUnavailableIsOnlyBlocker(state)) throw error;
       const report = {
-        schema: 2,
+        schema: 3,
         smoke: 'full-HD shared runtime hosted-GPU classification',
         classification: 'HOSTED_GPU_UNAVAILABLE_EXPECTED',
+        releaseEligible: false,
         fileLoaded: state.fileLoaded,
         nativeFrames: state?.metrics?.nativeFrames,
         importFailures: state?.metrics?.importFailures,
@@ -141,15 +164,32 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
         aid: state?.aid,
         audioCodec: state?.audioCodec,
         tracks: (Array.isArray(state?.tracks) ? state.tracks : []).filter(track => ['audio', 'video', 'sub'].includes(track?.type)),
-        pass: true
+        pass: false
       };
+      writeEligibility({ releaseEligible: false, classification: report.classification });
       console.log(`LIBMPV_SHARED_RUNTIME_HOSTED_GPU_REPORT=${JSON.stringify(report)}`);
       console.log('LIBMPV_SHARED_RUNTIME_HOSTED_GPU_UNAVAILABLE_EXPECTED');
       return;
     }
 
-    await sleep(5000);
-    const state = bridge.state();
+    await sleep(WARMUP_MS);
+    const measureStartedAt = performance.now();
+    const measureStart = bridge.state();
+    await sleep(MEASURE_MS);
+    const measureEnd = bridge.state();
+    const measureSeconds = Math.max(0.001, (performance.now() - measureStartedAt) / 1000);
+
+    const sentDelta = delta(measureEnd?.metrics, measureStart?.metrics, 'sentFrames');
+    const presentedDelta = delta(measureEnd?.receiver, measureStart?.receiver, 'presentedFrames');
+    const receivedDelta = delta(measureEnd?.receiver, measureStart?.receiver, 'receivedFrames');
+    const backpressureDelta = delta(measureEnd?.metrics, measureStart?.metrics, 'backpressure');
+    const pumpDelta = delta(measureEnd?.metrics, measureStart?.metrics, 'pumpTicks');
+    const measuredSentFps = sentDelta / measureSeconds;
+    const measuredPresentedFps = presentedDelta / measureSeconds;
+    const measuredReceivedFps = receivedDelta / measureSeconds;
+    const measuredBackpressureRatio = backpressureDelta / Math.max(1, pumpDelta);
+
+    const state = measureEnd;
     const beforeInput = await win.webContents.executeJavaScript('window.__runtimeSnapshot()');
     if (!beforeInput?.host || beforeInput.host.width < 1800 || beforeInput.host.height < 1000) {
       throw new Error(`full-HD host geometry regressed: ${JSON.stringify(beforeInput?.host)}`);
@@ -158,14 +198,16 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
       throw new Error(`full-HD canvas geometry regressed: ${JSON.stringify(beforeInput?.canvas)}`);
     }
 
-    const sentFps = Number(state?.metrics?.effectiveSentFps || 0);
-    const backpressureRatio = Number(state?.metrics?.backpressureRatio || 0);
-    const presented = Number(state?.receiver?.presentedFrames || 0);
     const avgRelease = Number(state?.metrics?.avgReleaseLatencyMs || 0);
     const maxRelease = Number(state?.metrics?.releaseLatencyMaxMs || 0);
-    if (presented < 85) throw new Error(`shared presentation throughput too low: ${presented} frames`);
-    if (sentFps < 18) throw new Error(`effective shared send FPS too low: ${sentFps}`);
-    if (backpressureRatio > 0.20) throw new Error(`shared texture backpressure ratio too high: ${backpressureRatio}`);
+    const avgDraw = Number(state?.receiver?.avgDrawMs || 0);
+    const maxDraw = Number(state?.receiver?.maxDrawMs || 0);
+    if (presentedDelta < Math.floor(MIN_PRESENT_FPS * measureSeconds)) {
+      throw new Error(`shared presentation sample too low: ${presentedDelta} frames in ${measureSeconds.toFixed(3)}s`);
+    }
+    if (measuredPresentedFps < MIN_PRESENT_FPS) throw new Error(`measured shared presentation FPS too low: ${measuredPresentedFps.toFixed(3)}`);
+    if (measuredSentFps < MIN_PRESENT_FPS) throw new Error(`measured shared send FPS too low: ${measuredSentFps.toFixed(3)}`);
+    if (measuredBackpressureRatio > MAX_BACKPRESSURE_RATIO) throw new Error(`measured shared texture backpressure ratio too high: ${measuredBackpressureRatio.toFixed(4)}`);
     if (Number(state?.metrics?.importFailures || 0) !== 0) throw new Error(`shared texture import failures observed: ${state?.metrics?.lastImportError || 'unknown'}`);
     if (Number(state?.metrics?.sendFailures || 0) !== 0) throw new Error(`shared texture send failures observed: ${state?.metrics?.lastSendError || 'unknown'}`);
     if (Number(state?.receiver?.drawFailures || 0) !== 0) throw new Error('shared texture receiver draw failures observed');
@@ -199,22 +241,30 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
     if (clickLatency > 500 || keyLatency > 500) throw new Error(`input latency too high during playback: click=${clickLatency}ms key=${keyLatency}ms`);
 
     const final = bridge.state();
+    const releaseMetrics = {
+      measuredWindowMs: Math.round(measureSeconds * 1000),
+      measuredSentFrames: sentDelta,
+      measuredReceivedFrames: receivedDelta,
+      measuredPresentedFrames: presentedDelta,
+      measuredPumpTicks: pumpDelta,
+      measuredBackpressure: backpressureDelta,
+      measuredSentFps: Math.round(measuredSentFps * 1000) / 1000,
+      measuredReceivedFps: Math.round(measuredReceivedFps * 1000) / 1000,
+      measuredPresentedFps: Math.round(measuredPresentedFps * 1000) / 1000,
+      measuredBackpressureRatio: Math.round(measuredBackpressureRatio * 1000000) / 1000000,
+      avgReleaseLatencyMs: final?.metrics?.avgReleaseLatencyMs,
+      releaseLatencyMaxMs: final?.metrics?.releaseLatencyMaxMs,
+      receiverAvgDrawMs: final?.receiver?.avgDrawMs,
+      receiverMaxDrawMs: final?.receiver?.maxDrawMs
+    };
     const report = {
-      schema: 2,
-      smoke: 'full-HD libmpv sharedTexture sustained playback + AV + input',
+      schema: 3,
+      smoke: 'full-HD libmpv sharedTexture sustained presentation + AV + input',
+      classification: 'SHARED_TEXTURE_PRESENTATION_VERIFIED',
+      releaseEligible: true,
+      acceptance: { minPresentedFps: MIN_PRESENT_FPS, maxBackpressureRatio: MAX_BACKPRESSURE_RATIO },
       geometry: { host: beforeInput.host, canvas: beforeInput.canvas },
-      throughput: {
-        pumpTicks: final?.metrics?.pumpTicks,
-        sentFrames: final?.metrics?.sentFrames,
-        presentedFrames: final?.receiver?.presentedFrames,
-        effectiveSentFps: final?.metrics?.effectiveSentFps,
-        backpressure: final?.metrics?.backpressure,
-        backpressureRatio: final?.metrics?.backpressureRatio,
-        avgReleaseLatencyMs: final?.metrics?.avgReleaseLatencyMs,
-        releaseLatencyMaxMs: final?.metrics?.releaseLatencyMaxMs,
-        receiverAvgDrawMs: final?.receiver?.avgDrawMs,
-        receiverMaxDrawMs: final?.receiver?.maxDrawMs
-      },
+      throughput: releaseMetrics,
       audio: {
         aid: final?.aid,
         audioCodec: final?.audioCodec,
@@ -224,6 +274,7 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
       input: { clicks: afterInput.probe.clicks, keys: afterInput.probe.keys, clickLatencyMs: clickLatency, keyLatencyMs: keyLatency },
       pass: true
     };
+    writeEligibility({ releaseEligible: true, classification: report.classification, metrics: releaseMetrics });
     console.log(`LIBMPV_SHARED_RUNTIME_REPORT=${JSON.stringify(report)}`);
     console.log('LIBMPV_SHARED_RUNTIME_THROUGHPUT_INPUT_AUDIO_OK');
   } finally {
@@ -235,6 +286,7 @@ window.__runtimeSnapshot=()=>{const host=document.querySelector('#video');const 
 }
 
 app.whenReady().then(main).then(() => app.exit(0)).catch(error => {
+  try { writeEligibility({ releaseEligible: false, classification: 'SHARED_RUNTIME_FAILED' }); } catch {}
   console.error(error?.stack || error);
   app.exit(1);
 });
