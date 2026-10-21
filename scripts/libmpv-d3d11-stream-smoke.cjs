@@ -63,7 +63,9 @@ async function main() {
     { name: 'orange', r: 230, g: 116, b: 18 }
   ];
 
-  for (let i = 0; i < 16; i += 1) {
+  // Five seconds at 8fps gives enough distinct frames to occupy all 24 shared
+  // texture slots, prove backpressure at slot 25, then continue after release.
+  for (let i = 0; i < 40; i += 1) {
     const color = palette[i % palette.length];
     fs.writeFileSync(path.join(dir, `frame-${String(i + 1).padStart(2, '0')}.bmp`), makeBmp(256, 144, color.r, color.g, color.b));
   }
@@ -86,15 +88,16 @@ async function main() {
 
   let playerId = null;
   const report = {
-    schema: 1,
-    smoke: 'persistent libmpv D3D11 dynamic stream + triple-buffer lifetime',
+    schema: 2,
+    smoke: 'persistent libmpv D3D11 24-slot lifetime + recovery',
     electron: process.versions.electron,
     create: null,
     renderedFrameCount: 0,
     sampledFrames: [],
     distinctPaletteHits: [],
+    heldFrames: 0,
+    textureSlotCount: null,
     backpressureObserved: false,
-    stateSamples: [],
     finalState: null,
     pass: false
   };
@@ -107,28 +110,35 @@ async function main() {
 
     const held = [];
     const start = Date.now();
-    while (Date.now() - start < 5000 && held.length < 3) {
+    while (Date.now() - start < 7000 && held.length < 24) {
       const state = addon.poll(playerId);
-      if (report.stateSamples.length < 8) report.stateSamples.push(state);
+      if (Number.isFinite(Number(state.textureSlotCount))) report.textureSlotCount = Number(state.textureSlotCount);
       const frame = addon.renderFrame(playerId, 256, 144);
       if (frame.updated) {
-        const sample = addon.sampleFrame(playerId, frame.slotId, frame.frameId);
-        const hit = nearest(sample, palette);
+        // Sampling every sixth frame verifies content without making the lifetime
+        // test CPU-bound through staging-texture readback.
+        if (held.length % 6 === 0) {
+          const sample = addon.sampleFrame(playerId, frame.slotId, frame.frameId);
+          const hit = nearest(sample, palette);
+          report.sampledFrames.push({ frameId: frame.frameId, slotId: frame.slotId, sample, hit });
+        }
         held.push(frame);
-        report.sampledFrames.push({ frameId: frame.frameId, slotId: frame.slotId, sample, hit });
         report.renderedFrameCount += 1;
       }
-      await sleep(18);
+      await sleep(12);
     }
-    if (held.length !== 3) throw new Error(`expected 3 held frames, got ${held.length}`);
+    report.heldFrames = held.length;
+    if (report.textureSlotCount !== 24) throw new Error(`expected 24 shared texture slots, got ${report.textureSlotCount}`);
+    if (held.length !== 24) throw new Error(`expected 24 held frames, got ${held.length}`);
 
-    const pressureDeadline = Date.now() + 2500;
+    const pressureDeadline = Date.now() + 1600;
     while (Date.now() < pressureDeadline && !report.backpressureObserved) {
       addon.poll(playerId);
       const frame = addon.renderFrame(playerId, 256, 144);
       if (frame.backpressure === true) report.backpressureObserved = true;
-      await sleep(18);
+      await sleep(12);
     }
+    if (!report.backpressureObserved) throw new Error('24-slot pool never reported backpressure when fully retained');
 
     for (const frame of held) {
       if (!addon.releaseFrame(playerId, frame.slotId, frame.frameId)) {
@@ -136,21 +146,19 @@ async function main() {
       }
     }
 
-    const continuationDeadline = Date.now() + 3500;
-    while (Date.now() < continuationDeadline && report.renderedFrameCount < 10) {
+    const beforeContinuation = report.renderedFrameCount;
+    const continuationDeadline = Date.now() + 2500;
+    while (Date.now() < continuationDeadline && report.renderedFrameCount < beforeContinuation + 8) {
       const state = addon.poll(playerId);
       const frame = addon.renderFrame(playerId, 256, 144);
       if (frame.updated) {
-        const sample = addon.sampleFrame(playerId, frame.slotId, frame.frameId);
-        const hit = nearest(sample, palette);
-        report.sampledFrames.push({ frameId: frame.frameId, slotId: frame.slotId, sample, hit });
         report.renderedFrameCount += 1;
         if (!addon.releaseFrame(playerId, frame.slotId, frame.frameId)) {
-          throw new Error(`failed to release frame ${frame.frameId}`);
+          throw new Error(`failed to release continuation frame ${frame.frameId}`);
         }
       }
-      if (state.eof && report.renderedFrameCount >= 6) break;
-      await sleep(18);
+      if (state.eof && report.renderedFrameCount >= beforeContinuation + 3) break;
+      await sleep(12);
     }
 
     report.finalState = addon.poll(playerId);
@@ -162,11 +170,13 @@ async function main() {
     report.distinctPaletteHits = [...hitNames];
     report.pass = Boolean(
       report.create?.deviceMode === 'hardware' &&
-      report.renderedFrameCount >= 6 &&
+      report.textureSlotCount === 24 &&
+      report.heldFrames === 24 &&
       report.distinctPaletteHits.length >= 3 &&
       report.backpressureObserved &&
-      report.finalState?.renderedFrames >= report.renderedFrameCount &&
-      report.finalState?.backpressureDrops >= 1
+      report.renderedFrameCount >= beforeContinuation + 3 &&
+      report.finalState?.backpressureDrops >= 1 &&
+      Number(report.finalState?.textureSlotsInFlight || 0) === 0
     );
   } finally {
     if (playerId != null) {
@@ -180,6 +190,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(JSON.stringify({ schema: 1, smoke: 'persistent libmpv D3D11 dynamic stream + triple-buffer lifetime', pass: false, error: String(error?.stack || error) }, null, 2));
+  console.error(JSON.stringify({ schema: 2, smoke: 'persistent libmpv D3D11 24-slot lifetime + recovery', pass: false, error: String(error?.stack || error) }, null, 2));
   process.exitCode = 1;
 });
