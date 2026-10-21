@@ -76,8 +76,12 @@ jobs:
           npm install --no-save --no-audit --no-fund electron@43.8.1 node-gyp@12.2.0
           node -e "const v=require('electron/package.json').version;if(v!=='43.8.1')throw new Error('unexpected Electron '+v);console.log('BRIDGE_ELECTRON='+v)"
 
-      - name: Apply safe playback diagnostics
-        run: node scripts/apply-libmpv-player-diagnostics.cjs
+      - name: Apply D2 diagnostics and R2 runtime transforms
+        run: |
+          node scripts/apply-libmpv-d2-diagnostics.cjs
+          node scripts/apply-libmpv-r2-runtime-fixes.cjs
+          node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+          node scripts/apply-libmpv-r2c-texture-pool.cjs
 
       - name: Build Electron ABI libmpv D3D11 addons
         shell: powershell
@@ -106,7 +110,7 @@ jobs:
           Copy-Item $log 'libmpv-d3d11-smoke.log' -Force
           if ($code -ne 0) { exit $code }
 
-      - name: Exercise persistent dynamic player and texture lifetime
+      - name: Exercise persistent dynamic player and 24-slot texture lifetime
         shell: powershell
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
