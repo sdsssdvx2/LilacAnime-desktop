@@ -9,7 +9,8 @@ const scripts = [
   'apply-libmpv-flix-diagnostics-wiring.cjs',
   'apply-libmpv-player-diagnostics.cjs',
   'apply-libmpv-renderer-compat.cjs',
-  'apply-libmpv-renderer-diagnostics.cjs'
+  'apply-libmpv-renderer-diagnostics.cjs',
+  'apply-libmpv-d3-runtime-fixes.cjs'
 ];
 
 for (const name of scripts) {
