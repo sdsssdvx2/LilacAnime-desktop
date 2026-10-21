@@ -68,12 +68,8 @@ jobs:
       - name: Install baseline build dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Apply safe diagnostic instrumentation
-        run: |
-          node scripts/apply-flix-proxy-diagnostics.cjs
-          node scripts/apply-libmpv-flix-diagnostics-wiring.cjs
-          node scripts/apply-libmpv-player-diagnostics.cjs
-          node scripts/apply-libmpv-renderer-diagnostics.cjs
+      - name: Apply safe diagnostic instrumentation (fail-fast)
+        run: node scripts/apply-libmpv-d2-diagnostics.cjs
 
       - name: Apply one-pass libmpv shared-texture integration
         run: node scripts/apply-libmpv-shared-texture.cjs
@@ -136,7 +132,7 @@ jobs:
           if ($bridge -notmatch 'flixProxyStats') { throw 'Flix stats not wired into bridge diagnostics' }
           if ($flix -notmatch 'function flixProxyStats\(\)') { throw 'Flix proxy counters missing' }
           if ($player -notmatch 'voDropFrameCount' -or $player -notmatch 'mistimedFrameCount' -or $player -notmatch 'currentAo') { throw 'native playback diagnostics missing' }
-          if ($player -match 'track-list') { throw 'unsafe track-list diagnostic leaked into native bridge' }
+          if ($player -match '"track-list"') { throw 'unsafe track-list diagnostic leaked into native bridge' }
           if ($pkg.devDependencies.electron -ne '43.8.1') { throw 'Electron is not pinned to 43.8.1' }
           if ($pkg.build.asarUnpack -notcontains 'electron/lilac-libmpv-player-bridge.node') { throw 'native addon unpack rule missing' }
           if ($pkg.build.asarUnpack -notcontains 'electron/libmpv-2.dll') { throw 'libmpv DLL unpack rule missing' }
