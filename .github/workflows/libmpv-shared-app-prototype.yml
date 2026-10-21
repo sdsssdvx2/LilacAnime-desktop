@@ -1,0 +1,168 @@
+name: Libmpv shared-texture app prototype
+
+on:
+  push:
+    branches: [libmpv-d3d11-prototype]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-shared-app-prototype
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-app:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch pinned libmpv SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z'
+          $expected = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
+          $archive = Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract = Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $url
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv download failed' }
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "LIBMPV_ARCHIVE_SHA256=$actual"
+          if ($actual -ne $expected) { throw "libmpv SHA mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & 7z.exe x $archive "-o$extract" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv extraction failed' }
+
+          $client = Get-ChildItem $extract -Recurse -File -Filter client.h |
+            Where-Object { $_.FullName -match '[\\/]mpv[\\/]client\.h$' } |
+            Select-Object -First 1
+          if (-not $client) { throw 'mpv/client.h not found' }
+          $headerDir = Split-Path $client.FullName -Parent
+          $vendor = Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv'
+          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
+          Copy-Item (Join-Path $headerDir '*') $vendor -Recurse -Force
+          if (-not (Test-Path (Join-Path $vendor 'render_d3d11.h'))) { throw 'pinned render_d3d11.h missing' }
+
+          $dll = Get-ChildItem $extract -Recurse -File |
+            Where-Object { $_.Name -in @('libmpv-2.dll','mpv-2.dll') } |
+            Select-Object -First 1
+          if (-not $dll) { throw 'libmpv DLL not found' }
+          $runtimeDir = Join-Path $PWD 'native\libmpv-d3d11-bridge\runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          $runtimeDll = Join-Path $runtimeDir 'libmpv-2.dll'
+          Copy-Item $dll.FullName $runtimeDll -Force
+          "LILAC_LIBMPV_DLL=$runtimeDll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install baseline build dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Apply one-pass libmpv shared-texture integration
+        run: node scripts/apply-libmpv-shared-texture.cjs
+
+      - name: Install pinned Electron 43 dependencies
+        shell: powershell
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund node-gyp@12.2.0
+          node -e "const v=require('electron/package.json').version;if(v!=='43.8.1')throw new Error('unexpected Electron '+v);console.log('APP_ELECTRON='+v)"
+
+      - name: Build Electron ABI libmpv addons
+        shell: powershell
+        run: |
+          $electronVersion = node -p "require('electron/package.json').version"
+          $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
+          & $nodeGyp rebuild --directory native/libmpv-d3d11-bridge --target=$electronVersion --dist-url=https://electronjs.org/headers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item native/libmpv-d3d11-bridge/runtime/libmpv-2.dll electron/libmpv-2.dll -Force
+          $playerAddon = Resolve-Path 'electron/lilac-libmpv-player-bridge.node'
+          $runtimeDll = Resolve-Path 'electron/libmpv-2.dll'
+          "LILAC_LIBMPV_PLAYER_ADDON=$($playerAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LILAC_LIBMPV_DLL=$($runtimeDll.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Re-run dynamic libmpv frame and lifetime smoke
+        shell: powershell
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify isolated preload reaches shadow canvas
+        shell: powershell
+        run: |
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-isolated-preload.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify security and transformed architecture
+        shell: powershell
+        run: |
+          $main = Get-Content electron/main.cjs -Raw
+          $index = Get-Content src/index.html -Raw
+          $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($main -notmatch 'contextIsolation:\s*true') { throw 'contextIsolation was not preserved' }
+          if ($main -notmatch 'nodeIntegration:\s*false') { throw 'nodeIntegration=false was not preserved' }
+          if ($main -match "require\('./mpv-native-main\.cjs'\)") { throw 'legacy HWND bridge leaked into app' }
+          if ($index -match 'mpv-native\.generated\.js') { throw 'legacy HWND renderer leaked into app' }
+          if ($index -notmatch 'libmpv-shared\.generated\.js') { throw 'shared renderer bundle missing' }
+          if ($entry -notmatch 'data-lilac-libmpv-surface') { throw 'shared canvas surface missing' }
+          if ($pkg.devDependencies.electron -ne '43.8.1') { throw 'Electron is not pinned to 43.8.1' }
+          if ($pkg.build.asarUnpack -notcontains 'electron/lilac-libmpv-player-bridge.node') { throw 'native addon unpack rule missing' }
+          if ($pkg.build.asarUnpack -notcontains 'electron/libmpv-2.dll') { throw 'libmpv DLL unpack rule missing' }
+          Write-Host 'LIBMPV_SHARED_SECURITY_ARCHITECTURE_OK'
+
+      - name: Deterministic Flix proxy fixture regression gate
+        run: node scripts/smoke-flix-proxy-fixture.cjs
+
+      - name: Build Windows installer
+        run: npm run dist -- --publish never
+
+      - name: Verify unpacked runtime payload
+        shell: powershell
+        run: |
+          $unpacked = Get-ChildItem dist -Directory | Where-Object { $_.Name -match 'win.*unpacked' } | Select-Object -First 1
+          if (-not $unpacked) { throw 'win-unpacked output missing' }
+          $addon = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\lilac-libmpv-player-bridge.node'
+          $dll = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\libmpv-2.dll'
+          if (-not (Test-Path $addon)) { throw "packaged player addon missing: $addon" }
+          if (-not (Test-Path $dll)) { throw "packaged libmpv DLL missing: $dll" }
+          Write-Host "PACKAGED_ADDON_BYTES=$((Get-Item $addon).Length)"
+          Write-Host "PACKAGED_LIBMPV_BYTES=$((Get-Item $dll).Length)"
+
+      - name: Installer checksum
+        shell: powershell
+        run: |
+          $exe = Get-Item dist/LilacAnime-Libmpv-Shared-Prototype-Setup.exe
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content dist/LilacAnime-Libmpv-Shared-Prototype-Setup.sha256.txt "$hash  $($exe.Name)" -Encoding ascii
+          Write-Host "INSTALLER_BYTES=$($exe.Length)"
+          Write-Host "INSTALLER_SHA256=$hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-libmpv-shared-prototype
+          path: |
+            dist/LilacAnime-Libmpv-Shared-Prototype-Setup.exe
+            dist/LilacAnime-Libmpv-Shared-Prototype-Setup.sha256.txt
+            electron/libmpv-shared-main.cjs
+            electron/libmpv-shared-preload.cjs
+            electron/preload-libmpv-shared.generated.cjs
+            electron/lilac-libmpv-player-bridge.node
+            electron/libmpv-2.dll
+            src/libmpv-shared-entry.js
+            src/libmpv-shared.generated.js
+          if-no-files-found: error
+          retention-days: 14
