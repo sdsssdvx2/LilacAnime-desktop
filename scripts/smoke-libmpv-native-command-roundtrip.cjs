@@ -4,7 +4,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
-const { pathToFileURL } = require('node:url');
 const { spawnSync } = require('node:child_process');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -31,6 +30,50 @@ function buildFixture(dir) {
     throw new Error(`command fixture encode failed: ${String(encoded.stderr || '').slice(0, 300)}`);
   }
   return output;
+}
+
+function headerValue(headers, wanted) {
+  if (!headers) return '';
+  if (typeof headers.get === 'function') return headers.get(wanted) || '';
+  for (const [key, value] of Object.entries(headers)) {
+    if (String(key).toLowerCase() === wanted.toLowerCase()) return String(value);
+  }
+  return '';
+}
+
+function installFixtureFetch(media) {
+  const original = global.fetch;
+  const all = fs.readFileSync(media);
+  global.fetch = async (input, init = {}) => {
+    const raw = typeof input === 'string' || input instanceof URL ? String(input) : String(input?.url || '');
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.hostname !== 'fixture.invalid' || url.pathname !== '/command-roundtrip.mp4') {
+      throw new Error('native command smoke attempted an unexpected upstream');
+    }
+    const method = String(init?.method || 'GET').toUpperCase();
+    const baseHeaders = {
+      'content-type': 'video/mp4',
+      'accept-ranges': 'bytes'
+    };
+    if (method === 'HEAD') {
+      return new Response(null, { status: 200, headers: { ...baseHeaders, 'content-length': String(all.length) } });
+    }
+    const range = headerValue(init?.headers, 'range');
+    const match = range.match(/^bytes=(\d+)-(\d*)$/i);
+    if (match) {
+      const start = Math.min(all.length, Number(match[1]));
+      const requestedEnd = match[2] ? Number(match[2]) : all.length - 1;
+      const end = Math.min(all.length - 1, Math.max(start, requestedEnd));
+      const body = all.subarray(start, end + 1);
+      return new Response(body, { status: 206, headers: {
+        ...baseHeaders,
+        'content-length': String(body.length),
+        'content-range': `bytes ${start}-${end}/${all.length}`
+      } });
+    }
+    return new Response(all, { status: 200, headers: { ...baseHeaders, 'content-length': String(all.length) } });
+  };
+  return () => { global.fetch = original; };
 }
 
 async function waitForState(bridge, label, predicate, timeoutMs = 5000) {
@@ -84,6 +127,7 @@ async function main() {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-libmpv-command-'));
   const media = buildFixture(dir);
+  const restoreFetch = installFixtureFetch(media);
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -107,7 +151,7 @@ async function main() {
     bridge = createLibmpvSharedBridge({ app, ipcMain, headersFor: () => ({}), userAgent: 'Lilac native command CI' });
     await bridge.ensure();
     await bridge.attachWindow(fakeWindow);
-    await bridge.open(pathToFileURL(media).href, {}, false, { width: 640, height: 360 });
+    await bridge.open('https://fixture.invalid/command-roundtrip.mp4', {}, false, { width: 640, height: 360 });
 
     const loaded = await waitForState(bridge, 'file load', state => state.fileLoaded === true && Number(state.time) >= 0);
     if (Number(loaded.metrics?.commandFailures || 0) !== 0) throw new Error('command failures existed before roundtrip');
@@ -167,6 +211,7 @@ async function main() {
     console.log('LIBMPV_NATIVE_COMMAND_ROUNDTRIP_OK');
   } finally {
     try { await bridge?.dispose?.(); } catch {}
+    restoreFetch();
     Module._load = originalLoad;
     delete process.env.LILAC_LIBMPV_TEST_AO_NULL;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
