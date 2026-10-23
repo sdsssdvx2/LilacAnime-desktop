@@ -1,0 +1,58 @@
+name: Publish verified R2M artifact
+
+on:
+  push:
+    branches: [libmpv-r2m-open-race-key-ui]
+    paths: [.github/workflows/libmpv-r2m-publish-only.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  SOURCE_RUN_ID: '40014308049'
+  ARTIFACT_NAME: lilac-libmpv-r2m-v0.5.49-r3
+  RELEASE_TAG: libmpv-r2k-v0.5.49-r3
+  EXPECTED_EXE_SHA256: 77f665b38f5fac35df134b8cb0afe4dced27adf7f35ba8f7e31bf21ea826855f
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified artifact from successful build stages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified-r2m
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir verified-r2m
+          test -f verified-r2m/LilacAnime-Libmpv-R2M-Setup.exe
+          test -f verified-r2m/LilacAnime-Libmpv-R2M-Setup.sha256.txt
+          test -f verified-r2m/LilacAnime-Libmpv-R2M-attestation.json
+          actual="$(sha256sum verified-r2m/LilacAnime-Libmpv-R2M-Setup.exe | awk '{print $1}')"
+          echo "R2M_PUBLISH_EXE_SHA256=$actual"
+          test "$actual" = "$EXPECTED_EXE_SHA256"
+          grep -qi "$EXPECTED_EXE_SHA256" verified-r2m/LilacAnime-Libmpv-R2M-Setup.sha256.txt
+          echo 'R2M_VERIFIED_ARTIFACT_REDOWNLOADED_OK'
+
+      - name: Publish verified R2M prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target d3926d0db300ff2ae68fadbc2aaa474266aafa19 \
+            --prerelease \
+            --title 'LilacAnime libmpv R2M · reopen race + key UI' \
+            --notes 'Fixes the real reopen stale-EOF race that could chain episode 11 through later episodes. Stale timing and EOF are ignored until the replacement file is confirmed loaded. Keyboard control reveal is selective again: C now reveals controls while Space, volume keys, brackets, Z/X, P/S and page episode keys stay quiet. Exact hardware-qualified playback payload is retained.' \
+            verified-r2m/LilacAnime-Libmpv-R2M-Setup.exe \
+            verified-r2m/LilacAnime-Libmpv-R2M-Setup.sha256.txt \
+            verified-r2m/LilacAnime-Libmpv-R2M-attestation.json
+          echo 'R2M_RELEASE_PUBLISHED_FROM_VERIFIED_ARTIFACT'
