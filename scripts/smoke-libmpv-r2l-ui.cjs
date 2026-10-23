@@ -11,10 +11,10 @@ const pkg = JSON.parse(read('package.json'));
 const checks = {
   generationBound: entry.includes('Number(state.generation) !== this._generation'),
   endedEdge: entry.includes("this._ended && !previousEnded"),
-  episodeLock: player.includes('let episodeTransitioning = false') && player.includes('if (!episode || episodeTransitioning) return'),
+  episodeLock: player.includes('let episodeTransitioning = false') && player.includes('if (!episode || episodeTransitioning) return') && player.includes('unlockedPlaySiblingEpisode'),
   pausedAutoHide: app.includes("if(!settingsOpen())controlsTimer=setTimeout") && !app.includes("if(!$('#video').paused&&!settingsOpen())"),
   mouseReveal: player.includes('if (!playerLocked) showPlayerControls();'),
-  keyboardReveal: player.includes('if (!event.ctrlKey && !event.altKey && !event.metaKey) showPlayerControls();'),
+  keyboardReveal: player.includes('typingTarget') && player.includes("document.body.classList.contains('player-mode')") && player.includes('!event.ctrlKey && !event.altKey && !event.metaKey') && player.includes('showPlayerControls();'),
   pipHidden: player.includes("tagName === 'LILAC-MPV-VIDEO'") && player.includes("$('#miniPlayer').classList.add('hidden')"),
   subtitleDirectPosition: entry.includes('position.toFixed(3)') && !entry.includes('bottomInset.toFixed(3)'),
   subtitleMetrics: entry.includes('line-height:1.2') && !entry.includes('gap:.08em'),
@@ -28,4 +28,4 @@ if (failed.length) {
   console.error(JSON.stringify(checks));
   process.exit(1);
 }
-console.log('LIBMPV_R2L_UI_PASS generation=bound ended=edge episode=locked controls=transient pip=hidden subtitles=calibrated identity=in-place');
+console.log('LIBMPV_R2L_UI_PASS generation=bound ended=edge episode=locked controls=transient mouse=1 keyboard=1 pip=hidden subtitles=calibrated identity=in-place');
