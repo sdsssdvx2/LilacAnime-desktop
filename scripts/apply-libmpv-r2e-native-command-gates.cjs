@@ -37,13 +37,13 @@ main = replaceOnce(
 );
 
 // The shared-texture source transform intentionally writes old prototype package
-// metadata. R2K runs after it, so restore the actual 0.5.49 custom-line identity here.
-// Keep the R2J installed-app/profile identity for this first handoff so the user's
-// already-good R2J settings/localStorage are retained when R2K is installed over it.
+// metadata. Restore the actual custom-line identity here. R2K r1 and R2L/r2 use
+// the same installed-app/profile identity so settings/localStorage survive in-place.
 const pkgPath = file('package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 if (/^libmpv-r2k-/i.test(String(pkg.lilacCustomTag || ''))) {
-  pkg.version = '0.5.49-libmpv-r2k.rc1';
+  const isR2L = pkg.lilacCustomTag === 'libmpv-r2k-v0.5.49-r2';
+  pkg.version = isR2L ? '0.5.49-libmpv-r2l.rc1' : '0.5.49-libmpv-r2k.rc1';
   pkg.devDependencies ||= {};
   pkg.devDependencies.electron = '44.9.3';
   pkg.build ||= {};
@@ -51,7 +51,7 @@ if (/^libmpv-r2k-/i.test(String(pkg.lilacCustomTag || ''))) {
   pkg.build.productName = 'LilacAnime Libmpv R2J Subtitle Fix';
   pkg.build.win ||= {};
   pkg.build.win.executableName = 'LilacAnime-Libmpv-R2J-SubtitleFix';
-  pkg.build.win.artifactName = 'LilacAnime-Libmpv-R2K-Setup.${ext}';
+  pkg.build.win.artifactName = isR2L ? 'LilacAnime-Libmpv-R2L-Setup.${ext}' : 'LilacAnime-Libmpv-R2K-Setup.${ext}';
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   main = main.replace(
     "app.setAppUserModelId('com.lilac.anime.desktop.libmpvsharedprototype');",
@@ -76,12 +76,15 @@ if (!/sandbox:\s*true/.test(transformedMain)) throw new Error('sandbox=true miss
 if (/sandbox:\s*false/.test(transformedMain)) throw new Error('sandbox=false leaked into transformed main window');
 const finalPackage = JSON.parse(read('package.json'));
 if (/^libmpv-r2k-/i.test(String(finalPackage.lilacCustomTag || ''))) {
-  if (finalPackage.version !== '0.5.49-libmpv-r2k.rc1') throw new Error(`R2K version was not restored: ${finalPackage.version}`);
-  if (finalPackage.devDependencies?.electron !== '44.9.3') throw new Error(`R2K Electron pin was not restored: ${finalPackage.devDependencies?.electron}`);
+  const expectedVersion = finalPackage.lilacCustomTag === 'libmpv-r2k-v0.5.49-r2' ? '0.5.49-libmpv-r2l.rc1' : '0.5.49-libmpv-r2k.rc1';
+  if (finalPackage.version !== expectedVersion) throw new Error(`custom-line version was not restored: ${finalPackage.version}`);
+  if (finalPackage.devDependencies?.electron !== '44.9.3') throw new Error(`custom-line Electron pin was not restored: ${finalPackage.devDependencies?.electron}`);
   if (finalPackage.build.appId !== 'com.lilac.anime.desktop.libmpvr2jcandidate' || finalPackage.build.productName !== 'LilacAnime Libmpv R2J Subtitle Fix') {
-    throw new Error('R2K did not preserve R2J installed-app/profile identity');
+    throw new Error('custom-line did not preserve R2J installed-app/profile identity');
   }
-  if (!transformedMain.includes("app.setAppUserModelId('com.lilac.anime.desktop.libmpvr2jcandidate')")) throw new Error('R2K AppUserModelId not restored');
+  const expectedArtifact = finalPackage.lilacCustomTag === 'libmpv-r2k-v0.5.49-r2' ? 'LilacAnime-Libmpv-R2L-Setup.${ext}' : 'LilacAnime-Libmpv-R2K-Setup.${ext}';
+  if (finalPackage.build.win?.artifactName !== expectedArtifact) throw new Error(`custom-line artifact name mismatch: ${finalPackage.build.win?.artifactName}`);
+  if (!transformedMain.includes("app.setAppUserModelId('com.lilac.anime.desktop.libmpvr2jcandidate')")) throw new Error('custom-line AppUserModelId not restored');
 }
 
 console.log('LIBMPV_R2E_NATIVE_COMMAND_SANDBOX_OK');
