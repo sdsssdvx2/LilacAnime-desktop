@@ -1,0 +1,422 @@
+name: Libmpv R2I exact-qualified final candidate
+
+on:
+  push:
+    branches: [libmpv-r2i-final-candidate]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2i-final-qualified
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_ID: LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM
+  QUALIFICATION_RUN_ID: '39983791568'
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  HARDWARE_REPORT_SHA256: 62c3d214655f4156156abeb0e9bc0d6d7a09fd8ff0d66e84e8bc7f154126734b
+  LIBMPV_ARCHIVE_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  ELECTRON_VERSION: 44.9.3
+
+jobs:
+  build-final-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Prove post-qualification source changes are release metadata only
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git cat-file -e "$env:QUALIFIED_SOURCE_COMMIT^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'qualified source commit is unavailable' }
+          $allowed = @(
+            '.github/workflows/libmpv-r2i-final-qualified.yml',
+            'release-attestations/libmpv-r2i-hardware-pass-78e643838b16.json'
+          )
+          $changed = @(git diff --name-only "$env:QUALIFIED_SOURCE_COMMIT..HEAD")
+          $unexpected = @($changed | Where-Object { $_ -and ($_ -notin $allowed) })
+          Write-Host "QUALIFIED_SOURCE_COMMIT=$env:QUALIFIED_SOURCE_COMMIT"
+          Write-Host "POST_QUALIFICATION_FILES=$($changed -join ',')"
+          if ($unexpected.Count -gt 0) { throw "runtime source changed after hardware qualification: $($unexpected -join ', ')" }
+
+      - name: Validate real-hardware PASS attestation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $a = Get-Content release-attestations/libmpv-r2i-hardware-pass-78e643838b16.json -Raw | ConvertFrom-Json
+          if ($a.qualificationId -ne $env:QUALIFICATION_ID) { throw 'qualification ID mismatch' }
+          if ($a.qualifiedSourceCommit -ne $env:QUALIFIED_SOURCE_COMMIT) { throw 'qualified source mismatch' }
+          if ([string]$a.qualificationWorkflowRunId -ne $env:QUALIFICATION_RUN_ID) { throw 'qualification run mismatch' }
+          if ($a.electronVersion -ne $env:ELECTRON_VERSION -or $a.libmpvArchiveSha256 -ne $env:LIBMPV_ARCHIVE_SHA256) { throw 'qualified toolchain mismatch' }
+          if ($a.qualificationExeSha256 -ne $env:QUALIFICATION_EXE_SHA256 -or $a.qualificationManifestSha256 -ne $env:QUALIFICATION_MANIFEST_SHA256 -or $a.hardwareReportSha256 -ne $env:HARDWARE_REPORT_SHA256) { throw 'qualification/report digest mismatch' }
+          if ($a.result.status -ne 'pass' -or $a.result.stage -ne 'complete' -or $a.result.payloadVerified -ne $true -or $a.result.classification -ne 'HARDWARE_SHARED_TEXTURE_RELEASE_GATE_PASS') { throw 'hardware qualification is not a complete verified PASS' }
+          if ([double]$a.throughput.measuredPresentedFps -lt 20 -or [double]$a.throughput.measuredSentFps -lt 20 -or [double]$a.throughput.measuredBackpressureRatio -gt 0.20) { throw 'hardware throughput gate failed' }
+          if ([int]$a.throughput.texturePoolSlots -ne 24 -or [int]$a.throughput.maxPendingFrames -gt 12 -or [double]$a.throughput.avgReleasePipelineFrames -gt 8 -or [double]$a.throughput.maxReleasePipelineFrames -gt 12) { throw 'hardware pool/pipeline headroom gate failed' }
+          foreach ($field in @('importFailures','sendFailures','drawFailures','videoFrameCloseFailures','textureReleaseFailures','gpuCopyFailures')) { if ([int]$a.throughput.$field -ne 0) { throw "hardware failure counter nonzero: $field" } }
+          if ($a.media.videoCodec -ne 'h264' -or $a.media.audioCodec -ne 'aac' -or $a.media.hwdecCurrent -ne 'd3d11va' -or $a.media.audioSelected -ne $true) { throw 'hardware media gate failed' }
+          if ([double]$a.input.clickLatencyMs -gt 500 -or [double]$a.input.keyLatencyMs -gt 500) { throw 'hardware input gate failed' }
+          if ([int]$a.commands.commandFailures -ne 0 -or $a.commands.pause -ne $true -or [double]$a.commands.playAdvanceSec -lt 0.45) { throw 'hardware command roundtrip gate failed' }
+          foreach ($field in @('runtimeRevisionR2','pacedPump','commandNormalization','safeDiagnostics','immediateFrameRelease','drawDiagnostics','lifetimeDiagnostics','gpuCopyRenderer','lilacOnlySubtitles','nonInterceptingVideoSurface','nativeSubtitleRendererLockedOut')) { if ($a.architecture.$field -ne $true) { throw "hardware architecture marker missing: $field" } }
+          Write-Host "REAL_HARDWARE_PASS_BOUND presented=$($a.throughput.measuredPresentedFps) sent=$($a.throughput.measuredSentFps) pending=$($a.throughput.maxPendingFrames)/24 pipeline=$($a.throughput.avgReleasePipelineFrames)/$($a.throughput.maxReleasePipelineFrames)"
+
+      - name: Download and re-verify exact qualification portable and manifest
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $q = Join-Path $env:RUNNER_TEMP 'qualified-r2i'
+          New-Item -ItemType Directory -Force -Path $q | Out-Null
+          & gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if ($LASTEXITCODE -ne 0) { throw 'qualification release download failed' }
+          $exe = Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe'
+          $manifest = Join-Path $q 'qualification-manifest.json'
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestHash = (Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($exeHash -ne $env:QUALIFICATION_EXE_SHA256) { throw "qualification EXE SHA mismatch: $exeHash" }
+          if ($manifestHash -ne $env:QUALIFICATION_MANIFEST_SHA256) { throw "qualification manifest SHA mismatch: $manifestHash" }
+          $m = Get-Content $manifest -Raw | ConvertFrom-Json
+          if ($m.qualificationId -ne $env:QUALIFICATION_ID -or $m.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $m.electronVersion -ne $env:ELECTRON_VERSION -or $m.libmpvArchiveSha256 -ne $env:LIBMPV_ARCHIVE_SHA256) { throw 'qualification manifest provenance mismatch' }
+          if ([double]$m.acceptance.minPresentedFps -ne 20 -or [double]$m.acceptance.maxBackpressureRatio -ne 0.20 -or [int]$m.acceptance.texturePoolSlots -ne 24 -or [int]$m.acceptance.maxPendingFrames -ne 12 -or [int]$m.acceptance.maxAvgReleasePipelineFrames -ne 8 -or [int]$m.acceptance.maxPeakReleasePipelineFrames -ne 12 -or [int]$m.acceptance.absolutePeakReleaseLatencyMaxMs -ne 500) { throw 'qualification acceptance policy mismatch' }
+          $resultPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\LilacLibmpvHardwareQualification-result.json'
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--verify-only') -Wait -PassThru
+          if ($proc.ExitCode -ne 0 -or -not (Test-Path $resultPath)) { throw 'qualification portable self-check failed' }
+          $verify = Get-Content $resultPath -Raw | ConvertFrom-Json
+          if ($verify.pass -ne $true -or $verify.payloadVerified -ne $true -or $verify.classification -ne 'PACKAGED_PAYLOAD_VERIFIED' -or $verify.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT) { throw 'qualification portable exact payload self-check failed' }
+          "QUALIFICATION_EXE_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QUALIFIED_MANIFEST_PATH=$manifest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "QUALIFICATION_PORTABLE_REVERIFIED exe=$exeHash manifest=$manifestHash"
+
+      - name: Fetch pinned libmpv SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z'
+          $archive = Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract = Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $url
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv download failed' }
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:LIBMPV_ARCHIVE_SHA256) { throw "libmpv archive SHA mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & 7z.exe x $archive "-o$extract" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv extraction failed' }
+          $client = Get-ChildItem $extract -Recurse -File -Filter client.h | Where-Object { $_.FullName -match '[\\/]mpv[\\/]client\.h$' } | Select-Object -First 1
+          if (-not $client) { throw 'mpv/client.h not found' }
+          $vendor = Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv'
+          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
+          Copy-Item (Join-Path (Split-Path $client.FullName -Parent) '*') $vendor -Recurse -Force
+          $dll = Get-ChildItem $extract -Recurse -File | Where-Object { $_.Name -in @('libmpv-2.dll','mpv-2.dll') } | Select-Object -First 1
+          if (-not $dll) { throw 'libmpv DLL not found' }
+          New-Item -ItemType Directory -Force -Path native/libmpv-d3d11-bridge/runtime | Out-Null
+          Copy-Item $dll.FullName native/libmpv-d3d11-bridge/runtime/libmpv-2.dll -Force
+
+      - name: Install dependencies and reproduce exact R2I transforms
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --no-audit --no-fund
+          $scripts = @(
+            'scripts/apply-libmpv-d2-diagnostics.cjs',
+            'scripts/apply-libmpv-r2-runtime-fixes.cjs',
+            'scripts/apply-libmpv-r2b-command-import-diagnostics.cjs',
+            'scripts/apply-libmpv-r2c-texture-pool.cjs',
+            'scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs',
+            'scripts/apply-libmpv-r2g-electron44-releasefix.cjs',
+            'scripts/apply-libmpv-r2h-webgpu-copy.cjs',
+            'scripts/apply-libmpv-r2i-pipeline-headroom.cjs',
+            'scripts/apply-libmpv-r2h-bundle-marker-fix.cjs',
+            'scripts/apply-libmpv-shared-texture.cjs',
+            'scripts/apply-libmpv-r2e-native-command-gates.cjs'
+          )
+          foreach ($s in $scripts) {
+            node --check $s
+            if ($LASTEXITCODE -ne 0) { throw "syntax check failed: $s" }
+            node $s
+            if ($LASTEXITCODE -ne 0) { throw "transform failed: $s" }
+          }
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund node-gyp@12.2.0 @electron/asar@3.2.18
+          $installed = node -p "require('electron/package.json').version"
+          if ($installed -ne $env:ELECTRON_VERSION) { throw "installed Electron mismatch: $installed" }
+          Write-Host 'R2I_TRANSFORMS_REPRODUCED'
+
+      - name: Build Electron 44 native smoke bridge
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
+          & $nodeGyp rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item native/libmpv-d3d11-bridge/runtime/libmpv-2.dll electron/libmpv-2.dll -Force
+
+      - name: Extract exact hardware-qualified runtime from qualification portable
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = Join-Path $env:RUNNER_TEMP 'qualified-portable-extract'
+          $nested = Join-Path $env:RUNNER_TEMP 'qualified-portable-nested'
+          $asarOut = Join-Path $env:RUNNER_TEMP 'qualified-portable-asar'
+          Remove-Item $raw,$nested,$asarOut -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $raw,$nested,$asarOut | Out-Null
+          & 7z.exe x $env:QUALIFICATION_EXE_PATH "-o$raw" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw '7-Zip could not extract qualification portable' }
+
+          function Find-PayloadFile([string]$name) {
+            $hit = Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            return $hit
+          }
+
+          $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'
+          $dll = Find-PayloadFile 'libmpv-2.dll'
+          $asar = Find-PayloadFile 'app.asar'
+
+          if (-not $addon -or -not $dll -or -not $asar) {
+            $archives = @(Get-ChildItem $raw -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)(app.*\.7z$|\.7z$|\.zip$)' })
+            $i = 0
+            foreach ($archive in $archives) {
+              $i += 1
+              $out = Join-Path $nested ("a$i")
+              New-Item -ItemType Directory -Force -Path $out | Out-Null
+              & 7z.exe x $archive.FullName "-o$out" -y | Out-Null
+              $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'
+              $dll = Find-PayloadFile 'libmpv-2.dll'
+              $asar = Find-PayloadFile 'app.asar'
+              if ($addon -and $dll -and $asar) { break }
+            }
+          }
+          if (-not $addon) { throw 'exact qualified player addon was not recoverable from portable' }
+          if (-not $dll) { throw 'exact qualified libmpv DLL was not recoverable from portable' }
+          if (-not $asar) { throw 'qualification app.asar was not recoverable from portable' }
+
+          node -e "require('@electron/asar').extractAll(process.argv[1], process.argv[2])" $asar.FullName $asarOut
+          if ($LASTEXITCODE -ne 0) { throw 'qualification app.asar extraction failed' }
+
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          $sources = [ordered]@{
+            'electron/lilac-libmpv-player-bridge.node' = $addon.FullName
+            'electron/libmpv-2.dll' = $dll.FullName
+            'electron/libmpv-shared-main.cjs' = (Join-Path $asarOut 'electron\libmpv-shared-main.cjs')
+            'electron/preload-libmpv-shared.generated.cjs' = (Join-Path $asarOut 'electron\preload-libmpv-shared.generated.cjs')
+            'src/libmpv-shared-entry.js' = (Join-Path $asarOut 'src\libmpv-shared-entry.js')
+            'src/libmpv-shared.generated.js' = (Join-Path $asarOut 'src\libmpv-shared.generated.js')
+            'electron/libmpv-hardware-qualification.cjs' = (Join-Path $asarOut 'electron\libmpv-hardware-qualification.cjs')
+          }
+          foreach ($relative in $sources.Keys) {
+            $source = $sources[$relative]
+            if (-not (Test-Path $source)) { throw "qualified portable payload missing: $relative" }
+            $expected = [string]$m.payloadSha256.PSObject.Properties[$relative].Value
+            $actual = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "EXTRACTED_QUALIFIED_HASH $relative $actual"
+            if ($actual -ne $expected) { throw "extracted qualification payload hash mismatch for $relative expected=$expected actual=$actual" }
+            Copy-Item $source $relative -Force
+          }
+          Copy-Item electron/lilac-libmpv-player-bridge.node native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node -Force
+          Copy-Item electron/libmpv-2.dll native/libmpv-d3d11-bridge/runtime/libmpv-2.dll -Force
+          Write-Host 'EXACT_HARDWARE_QUALIFIED_RUNTIME_REUSED_OK'
+
+      - name: Prove working runtime is byte-identical to qualification manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          foreach ($relative in @('electron/lilac-libmpv-player-bridge.node','electron/libmpv-2.dll','electron/libmpv-shared-main.cjs','electron/preload-libmpv-shared.generated.cjs','src/libmpv-shared-entry.js','src/libmpv-shared.generated.js','electron/libmpv-hardware-qualification.cjs')) {
+            $expected = [string]$m.payloadSha256.PSObject.Properties[$relative].Value
+            $actual = (Get-FileHash $relative -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "working qualified payload mismatch: $relative" }
+          }
+          Write-Host 'WORKING_QUALIFIED_RUNTIME_BYTE_IDENTITY_OK'
+
+      - name: Run native and application regression gates using exact qualified player addon
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+          $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
+          $env:LILAC_LIBMPV_BRIDGE_ADDON = (Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_d3d11_bridge.node').Path
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          foreach ($s in @('scripts/libmpv-d3d11-smoke.cjs','scripts/libmpv-d3d11-stream-smoke.cjs','scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-r2-pump-sim.cjs','scripts/smoke-libmpv-relay-av.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs')) {
+            & npx.cmd electron $s
+            if ($LASTEXITCODE -ne 0) { throw "runtime regression gate failed: $s" }
+          }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'renderer input stress failed' }
+          node --test tests/player-interactions.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'player interaction regression failed' }
+          node scripts/smoke-flix-proxy-fixture.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Flix fixture regression failed' }
+          Write-Host 'EXACT_QUALIFIED_RUNTIME_REGRESSION_GATES_OK'
+
+      - name: Verify final security and R2I architecture
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $main = Get-Content electron/main.cjs -Raw
+          $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $preload = Get-Content electron/preload-libmpv-shared.generated.cjs -Raw
+          $qualification = Get-Content electron/libmpv-hardware-qualification.cjs -Raw
+          $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($main -notmatch 'contextIsolation:\s*true' -or $main -notmatch 'nodeIntegration:\s*false' -or $main -notmatch 'sandbox:\s*true') { throw 'renderer security settings regressed' }
+          if ($main -match "require\('./mpv-native-main\.cjs'\)") { throw 'legacy HWND main path returned' }
+          if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)' -or $bridge -notmatch "originalName === 'set_property'") { throw 'R2 bridge/command architecture regressed' }
+          foreach ($forbidden in @('nextCompositorTurn','setSharedTextureReceiver(async','await nextFrame()','.drawImage(')) { if ($preload.Contains($forbidden)) { throw "forbidden renderer marker survived: $forbidden" } }
+          foreach ($required in @('webgpu-copy','copyExternalImageToTexture','onSubmittedWorkDone','videoFramesCreated','videoFramesClosed','textureReleaseCalls','textureReleaseFailures')) { if (-not $preload.Contains($required)) { throw "WebGPU lifetime marker missing: $required" } }
+          if ($entry -match "\['sub-add'" -or $entry -notmatch 'pointer-events:none') { throw 'subtitle/input architecture regressed' }
+          if ($player -notmatch 'kSharedTextureSlots = 24' -or $player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'native pool/subtitle lockout regressed' }
+          if ($qualification -notmatch 'LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM' -or $qualification -notmatch 'MAX_PENDING_FRAMES = 12' -or $qualification -notmatch 'MAX_AVG_RELEASE_PIPELINE_FRAMES = 8' -or $qualification -notmatch 'MAX_PEAK_RELEASE_PIPELINE_FRAMES = 12') { throw 'R2I pipeline policy missing' }
+          if ($qualification -match 'throughput\.avgReleaseLatencyMs > 100' -or $qualification -match 'throughput\.releaseLatencyMaxMs > 300') { throw 'obsolete fixed release latency proxy returned' }
+          if ($pkg.devDependencies.electron -ne $env:ELECTRON_VERSION) { throw 'Electron pin regressed' }
+          if ($pkg.build.asarUnpack -notcontains 'electron/lilac-libmpv-player-bridge.node' -or $pkg.build.asarUnpack -notcontains 'electron/libmpv-2.dll') { throw 'native unpack rules missing' }
+          Write-Host 'FINAL_SECURITY_R2I_ARCHITECTURE_OK'
+
+      - name: Label isolated hardware-qualified prerelease
+        shell: powershell
+        run: |
+          @'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+          p.version = '0.5.37-libmpv-r2i.rc1';
+          p.build.appId = 'com.lilac.anime.desktop.libmpvr2icandidate';
+          p.build.productName = 'LilacAnime Libmpv R2I Hardware Qualified';
+          p.build.win.executableName = 'LilacAnime-Libmpv-R2I-HardwareQualified';
+          p.build.win.artifactName = 'LilacAnime-Libmpv-R2I-HardwareQualified-Setup.${ext}';
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          if (p.build.win.artifactName !== 'LilacAnime-Libmpv-R2I-HardwareQualified-Setup.${ext}') throw new Error('artifact metadata mismatch');
+          '@ | node
+          if ($LASTEXITCODE -ne 0) { throw 'candidate metadata update failed' }
+
+      - name: Build Windows hardware-qualified candidate installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Verify packaged runtime is still exact qualified payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          $unpacked = Get-ChildItem dist -Directory | Where-Object { $_.Name -match 'win.*unpacked' } | Select-Object -First 1
+          if (-not $unpacked) { throw 'win-unpacked output missing' }
+          foreach ($relative in @('electron/lilac-libmpv-player-bridge.node','electron/libmpv-2.dll')) {
+            $path = Join-Path $unpacked.FullName ('resources\app.asar.unpacked\' + ($relative -replace '/', '\'))
+            if (-not (Test-Path $path)) { throw "packaged native payload missing: $relative" }
+            $expected = [string]$m.payloadSha256.PSObject.Properties[$relative].Value
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "packaged native payload mismatch: $relative" }
+          }
+          $asarPath = Join-Path $unpacked.FullName 'resources\app.asar'
+          $asarOut = Join-Path $env:RUNNER_TEMP 'final-app-asar'
+          Remove-Item $asarOut -Recurse -Force -ErrorAction SilentlyContinue
+          node -e "require('@electron/asar').extractAll(process.argv[1], process.argv[2])" $asarPath $asarOut
+          if ($LASTEXITCODE -ne 0) { throw 'final app.asar extraction failed' }
+          foreach ($relative in @('electron/libmpv-shared-main.cjs','electron/preload-libmpv-shared.generated.cjs','src/libmpv-shared-entry.js','src/libmpv-shared.generated.js','electron/libmpv-hardware-qualification.cjs')) {
+            $path = Join-Path $asarOut ($relative -replace '/', '\')
+            if (-not (Test-Path $path)) { throw "packaged qualified source missing: $relative" }
+            $expected = [string]$m.payloadSha256.PSObject.Properties[$relative].Value
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "packaged qualified source mismatch: $relative" }
+          }
+          Write-Host 'PACKAGED_EXACT_QUALIFIED_RUNTIME_OK'
+
+      - name: Create installer checksum and provenance attestation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-Item 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.exe'
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.sha256.txt' "$hash  $($exe.Name)" -Encoding ascii
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          $attestation = [ordered]@{
+            schema = 2
+            releaseType = 'hardware-qualified-prerelease'
+            qualifiedSourceCommit = $env:QUALIFIED_SOURCE_COMMIT
+            workflowCommit = $env:GITHUB_SHA
+            workflowRunId = [long]$env:GITHUB_RUN_ID
+            qualificationId = $env:QUALIFICATION_ID
+            qualificationRunId = [long]$env:QUALIFICATION_RUN_ID
+            qualificationReleaseTag = $env:QUALIFICATION_RELEASE_TAG
+            qualificationExeSha256 = $env:QUALIFICATION_EXE_SHA256
+            qualificationManifestSha256 = $env:QUALIFICATION_MANIFEST_SHA256
+            hardwareReportSha256 = $env:HARDWARE_REPORT_SHA256
+            electronVersion = $env:ELECTRON_VERSION
+            libmpvArchiveSha256 = $env:LIBMPV_ARCHIVE_SHA256
+            exactHardwareQualifiedRuntimeExtractedFromQualificationPortable = $true
+            exactQualifiedRuntimeHashesVerifiedBeforePackaging = $true
+            exactQualifiedRuntimeHashesVerifiedAfterPackaging = $true
+            installer = [ordered]@{ name = $exe.Name; bytes = [long]$exe.Length; sha256 = $hash }
+            qualifiedPayloadSha256 = $m.payloadSha256
+          }
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-attestation.json'), ($attestation | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "FINAL_INSTALLER_BYTES=$($exe.Length)"
+          Write-Host "FINAL_INSTALLER_SHA256=$hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-R2I-HardwareQualified-${{ github.sha }}
+          path: |
+            dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.exe
+            dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.sha256.txt
+            dist/LilacAnime-Libmpv-R2I-HardwareQualified-attestation.json
+            release-attestations/libmpv-r2i-hardware-pass-78e643838b16.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish isolated hardware-qualified prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'libmpv-r2i-hardware-qualified-78e643838b16'
+          $exe = 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.exe'
+          $sha = 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-Setup.sha256.txt'
+          $finalAttestation = 'dist/LilacAnime-Libmpv-R2I-HardwareQualified-attestation.json'
+          $hardwareAttestation = 'release-attestations/libmpv-r2i-hardware-pass-78e643838b16.json'
+          $qualifiedManifest = $env:QUALIFIED_MANIFEST_PATH
+          $saved = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $saved
+          if ($exists) {
+            & gh release upload $tag $exe $sha $finalAttestation $hardwareAttestation "$qualifiedManifest#qualification-manifest.json" --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'prerelease upload failed' }
+          } else {
+            $notes = @"
+          Hardware-qualified LilacAnime libmpv R2I candidate.
+
+          Qualified source: $env:QUALIFIED_SOURCE_COMMIT
+          Real-hardware qualification run: $env:QUALIFICATION_RUN_ID
+          Qualification: $env:QUALIFICATION_ID
+          Electron: $env:ELECTRON_VERSION
+
+          The sharedTexture runtime and native player addon are extracted from the exact qualification portable that passed on real hardware, verified against its manifest before packaging, and verified again from the packaged app. This prerelease is isolated and does not replace the stable LilacAnime build.
+          "@
+            & gh release create $tag $exe $sha $finalAttestation $hardwareAttestation "$qualifiedManifest#qualification-manifest.json" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'LilacAnime libmpv R2I hardware-qualified candidate' --notes $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'prerelease creation failed' }
+          }
+          $url = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json url --jq .url
+          if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'prerelease URL lookup failed' }
+          Write-Host "FINAL_RELEASE_TAG=$tag"
+          Write-Host "FINAL_RELEASE_URL=$url"
