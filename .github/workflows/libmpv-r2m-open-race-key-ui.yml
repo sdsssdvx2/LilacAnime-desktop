@@ -169,12 +169,14 @@ jobs:
           if($player.Contains('typingTarget')){throw 'broad keyboard reveal survived'}
           $keyStart=$player.IndexOf('function handlePlayerKey(event) {');$keyEnd=$player.IndexOf('// 스크린샷',$keyStart);if($keyStart -lt 0 -or $keyEnd -le $keyStart){throw 'keyboard handler markers missing'};if($player.Substring($keyStart,$keyEnd-$keyStart).Contains('showPlayerControls')){throw 'keyboard handler still reveals full controls'}
           $spaceStart=$player.IndexOf('function finishSpaceHold(toggle = false) {');$spaceEnd=$player.IndexOf("window.addEventListener('keyup'",$spaceStart);if($spaceStart -lt 0 -or $spaceEnd -le $spaceStart){throw 'Space release markers missing'};if($player.Substring($spaceStart,$spaceEnd-$spaceStart).Contains('showPlayerControls')){throw 'Space release still reveals full controls'}
-          if(-not $player.Contains('if (!playerLocked) showPlayerControls();')){throw 'mouse reveal marker missing'}
+          if(-not $player.Contains("if (!playerLocked) showPlayerControls('mouse');")){throw 'mouse-only reveal marker missing'}
+          if(-not $player.Contains("showPlayerControls('settings')")){throw 'settings pin reveal marker missing'}
+          if(-not $app.Contains("if(source!=='mouse'&&!settingsOpen())return")){throw 'controls source guard missing'}
           if(-not $app.Contains('if(!settingsOpen())controlsTimer=setTimeout')){throw 'transient controls marker missing'}
           foreach($required in @('episodeTransitioning',"letter === 'c'", "tagName === 'LILAC-MPV-VIDEO'")){if(-not $player.Contains($required)){throw "R2M player marker missing: $required"}}
           if((Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256){throw 'addon identity changed'}
           if((Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'DLL identity changed'}
-          Write-Host 'R2M_ARCHITECTURE_IDENTITY_OK keyReveal=none mouseReveal=1 native=exact'
+          Write-Host 'R2M_ARCHITECTURE_IDENTITY_OK keyReveal=none controlsPolicy=mouse-or-settings native=exact'
 
       - name: Build Windows R2M installer
         run: npx electron-builder --win nsis --publish never
@@ -195,10 +197,12 @@ jobs:
           if($player.Contains('typingTarget')){throw 'packaged broad key reveal survived'}
           $keyStart=$player.IndexOf('function handlePlayerKey(event) {');$keyEnd=$player.IndexOf('// 스크린샷',$keyStart);if($keyStart -lt 0 -or $keyEnd -le $keyStart){throw 'packaged keyboard handler markers missing'};if($player.Substring($keyStart,$keyEnd-$keyStart).Contains('showPlayerControls')){throw 'packaged keyboard reveal survived'}
           $spaceStart=$player.IndexOf('function finishSpaceHold(toggle = false) {');$spaceEnd=$player.IndexOf("window.addEventListener('keyup'",$spaceStart);if($spaceStart -lt 0 -or $spaceEnd -le $spaceStart){throw 'packaged Space markers missing'};if($player.Substring($spaceStart,$spaceEnd-$spaceStart).Contains('showPlayerControls')){throw 'packaged Space reveal survived'}
-          if(-not $player.Contains('if (!playerLocked) showPlayerControls();')){throw 'packaged mouse reveal missing'}
+          if(-not $player.Contains("if (!playerLocked) showPlayerControls('mouse');")){throw 'packaged mouse-only reveal missing'}
+          if(-not $player.Contains("showPlayerControls('settings')")){throw 'packaged settings pin reveal missing'}
+          if(-not $app.Contains("if(source!=='mouse'&&!settingsOpen())return")){throw 'packaged controls source guard missing'}
           if(-not $app.Contains('if(!settingsOpen())controlsTimer=setTimeout')){throw 'packaged transient controls marker missing'}
           $hash=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant();"R2M_INSTALLER_PATH=$($installer.FullName)"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"R2M_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "R2M_PACKAGED_VERIFY_OK bytes=$($installer.Length) sha=$hash keyReveal=none"
+          Write-Host "R2M_PACKAGED_VERIFY_OK bytes=$($installer.Length) sha=$hash keyReveal=none controlsPolicy=mouse-or-settings"
 
       - name: Create checksum and attestation
         shell: powershell
