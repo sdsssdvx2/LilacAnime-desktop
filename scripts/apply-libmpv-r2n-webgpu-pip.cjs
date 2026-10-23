@@ -81,7 +81,7 @@ async function togglePictureInPicture() {
     $('#miniPlayer').classList.add('active');
   } catch (error) {
     stopPictureInPicture();
-    toast(`PIP를 열지 못했습니다: ${error.message}`);
+    toast('PIP를 열지 못했습니다: ' + error.message);
     if (usingLibmpvSurface) syncLibmpvPipButton();
   }
 }
