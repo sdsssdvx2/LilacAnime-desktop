@@ -52,8 +52,12 @@ if (!libmpv.includes('surface.captureStream(30)')) throw new Error('libmpv PiP d
 if (!toggle.includes("pip.canvas ||= document.createElement('canvas')")) throw new Error('normal video PiP fallback/compositor path was removed');
 if (!toggle.includes('setInterval(drawPipFrame, 1000 / 30)')) throw new Error('normal video PiP subtitle compositor path was removed');
 
-if (pkg.version !== '0.5.49-libmpv-r2p.rc1') throw new Error(`unexpected R2P version: ${pkg.version}`);
-if (pkg.lilacCustomTag !== 'libmpv-r2k-v0.5.49-r6') throw new Error(`unexpected R2P tag: ${pkg.lilacCustomTag}`);
-if (pkg.build?.win?.artifactName !== 'LilacAnime-Libmpv-R2P-Setup.${ext}') throw new Error(`unexpected installer name: ${pkg.build?.win?.artifactName}`);
+const expected = {
+  '0.5.49-libmpv-r2p.rc1': { tag: 'libmpv-r2k-v0.5.49-r6', installer: 'LilacAnime-Libmpv-R2P-Setup.${ext}' },
+  '0.5.49-libmpv-r2q.rc1': { tag: 'libmpv-r2k-v0.5.49-r7', installer: 'LilacAnime-Libmpv-R2Q-Setup.${ext}' }
+}[pkg.version];
+if (!expected) throw new Error(`unexpected R2P-compatible version: ${pkg.version}`);
+if (pkg.lilacCustomTag !== expected.tag) throw new Error(`unexpected R2P-compatible tag: ${pkg.lilacCustomTag}`);
+if (pkg.build?.win?.artifactName !== expected.installer) throw new Error(`unexpected installer name: ${pkg.build?.win?.artifactName}`);
 
-console.log('LIBMPV_R2P_PIP_POLICY_PASS surface=webgpu-canvas captureStream=direct cpuReadback=0 legacyVideoPath=preserved button=capability-gated');
+console.log(`LIBMPV_R2P_PIP_POLICY_PASS version=${pkg.version} surface=webgpu-canvas captureStream=direct cpuReadback=0 legacyVideoPath=preserved button=capability-gated`);
