@@ -1,0 +1,274 @@
+name: Libmpv R2H WebGPU copy qualification
+
+on:
+  push:
+    branches: [libmpv-r2h-gpu-copy-qualification]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-hwq-r2h-webgpu
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-r2h-webgpu-qualification:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable MSVC developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch pinned libmpv SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z'
+          $expected = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
+          $archive = Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract = Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $url
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv download failed' }
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "LIBMPV_ARCHIVE_SHA256=$actual"
+          if ($actual -ne $expected) { throw "libmpv SHA mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & 7z.exe x $archive "-o$extract" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv extraction failed' }
+          $client = Get-ChildItem $extract -Recurse -File -Filter client.h | Where-Object { $_.FullName -match '[\\/]mpv[\\/]client\.h$' } | Select-Object -First 1
+          if (-not $client) { throw 'mpv/client.h not found' }
+          $headerDir = Split-Path $client.FullName -Parent
+          $vendor = Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv'
+          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
+          Copy-Item (Join-Path $headerDir '*') $vendor -Recurse -Force
+          if (-not (Test-Path (Join-Path $vendor 'render_d3d11.h'))) { throw 'pinned render_d3d11.h missing' }
+          $dll = Get-ChildItem $extract -Recurse -File | Where-Object { $_.Name -in @('libmpv-2.dll','mpv-2.dll') } | Select-Object -First 1
+          if (-not $dll) { throw 'libmpv DLL not found' }
+          $runtimeDir = Join-Path $PWD 'native\libmpv-d3d11-bridge\runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          $runtimeDll = Join-Path $runtimeDir 'libmpv-2.dll'
+          Copy-Item $dll.FullName $runtimeDll -Force
+          "LILAC_LIBMPV_DLL=$runtimeDll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install baseline dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Apply production transforms and isolated R2H WebGPU copy
+        run: |
+          node --check scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
+          node --check scripts/apply-libmpv-r2g-electron44-releasefix.cjs
+          node --check scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node scripts/apply-libmpv-d2-diagnostics.cjs
+          node scripts/apply-libmpv-r2-runtime-fixes.cjs
+          node --check scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+          node scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
+          node scripts/apply-libmpv-r2c-texture-pool.cjs
+          node scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
+          node scripts/apply-libmpv-r2g-electron44-releasefix.cjs
+          node scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node scripts/apply-libmpv-shared-texture.cjs
+          node scripts/apply-libmpv-r2e-native-command-gates.cjs
+
+      - name: Install exact Electron 44.9.3 build dependencies
+        shell: powershell
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund node-gyp@12.2.0
+          node -e "const v=require('electron/package.json').version;if(v!=='44.9.3')throw new Error('unexpected Electron '+v);console.log('HWQ_R2H_ELECTRON='+v)"
+
+      - name: Build exact Electron 44.9.3 ABI libmpv payload
+        shell: powershell
+        run: |
+          $electronVersion = node -p "require('electron/package.json').version"
+          $nodeGyp = Join-Path $PWD 'node_modules\.bin\node-gyp.cmd'
+          & $nodeGyp rebuild --directory native/libmpv-d3d11-bridge --target=$electronVersion --dist-url=https://electronjs.org/headers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $smokeAddon = Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_d3d11_bridge.node'
+          $playerAddon = Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node'
+          "LILAC_LIBMPV_BRIDGE_ADDON=$($smokeAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LILAC_LIBMPV_PLAYER_ADDON=$($playerAddon.Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Copy-Item $playerAddon.Path electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item native/libmpv-d3d11-bridge/runtime/libmpv-2.dll electron/libmpv-2.dll -Force
+
+      - name: Exercise D3D11 bridge and 24-slot pool
+        shell: powershell
+        run: |
+          node --check scripts/libmpv-d3d11-smoke.cjs
+          node --check scripts/libmpv-d3d11-stream-smoke.cjs
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & npx.cmd electron scripts/libmpv-d3d11-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify strict R2H architecture
+        shell: powershell
+        run: |
+          node --check electron/libmpv-hardware-qualification.cjs
+          $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $preload = Get-Content electron/preload-libmpv-shared.generated.cjs -Raw
+          $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.devDependencies.electron -ne '44.9.3') { throw 'Electron 44.9.3 package pin missing' }
+          if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)') { throw 'R2 paced bridge missing' }
+          if ($bridge -notmatch "originalName === 'set_property'" -or $bridge -notmatch 'lastCommandError') { throw 'R2B command gate missing' }
+          foreach ($forbidden in @("getContext\('2d'", 'nextCompositorTurn', 'setSharedTextureReceiver\(async', 'await nextFrame\(\)')) {
+            if ($preload -match $forbidden) { throw "forbidden old renderer/lifetime marker survived: $forbidden" }
+          }
+          foreach ($marker in @("rendererMode = 'webgpu-copy'", "getContext\('webgpu'", 'copyExternalImageToTexture', 'onSubmittedWorkDone', 'videoFramesCreated','videoFramesClosed','textureReleaseCalls','textureReleaseFailures')) {
+            if ($preload -notmatch $marker) { throw "R2H marker missing: $marker" }
+          }
+          if ($entry -match "\['sub-add'" -or $entry -notmatch 'pointer-events:none') { throw 'single subtitle/input architecture regressed' }
+          if ($player -notmatch 'kSharedTextureSlots = 24') { throw '24-slot native pool missing' }
+          if ($player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'native subtitle lockout missing' }
+          if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive track metadata leaked' }
+          Write-Host 'LILAC_HWQ_R2H_ARCHITECTURE_OK electron=44.9.3 renderer=webgpu-copy'
+
+      - name: Build deterministic 1080p H264 AAC fixture and manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = Join-Path $PWD 'release-probe'
+          New-Item -ItemType Directory -Force -Path $probe | Out-Null
+          $fixture = Join-Path $probe 'fullhd-av.mp4'
+          $ffmpeg = (& node -p "require('ffmpeg-static')").Trim()
+          if (-not (Test-Path $ffmpeg)) { throw 'ffmpeg-static binary missing' }
+          & $ffmpeg -hide_banner -loglevel error -y `
+            -f lavfi -i 'testsrc2=size=1920x1080:rate=24000/1001:duration=14' `
+            -f lavfi -i 'sine=frequency=660:sample_rate=48000:duration=14' `
+            -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p `
+            -c:a aac -b:a 96k -shortest -movflags +faststart $fixture
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $fixture)) { throw 'H264/AAC qualification fixture encode failed' }
+          $payloadFiles = [ordered]@{
+            'electron/lilac-libmpv-player-bridge.node' = 'electron/lilac-libmpv-player-bridge.node'
+            'electron/libmpv-2.dll' = 'electron/libmpv-2.dll'
+            'electron/libmpv-shared-main.cjs' = 'electron/libmpv-shared-main.cjs'
+            'electron/preload-libmpv-shared.generated.cjs' = 'electron/preload-libmpv-shared.generated.cjs'
+            'src/libmpv-shared-entry.js' = 'src/libmpv-shared-entry.js'
+            'src/libmpv-shared.generated.js' = 'src/libmpv-shared.generated.js'
+            'electron/libmpv-hardware-qualification.cjs' = 'electron/libmpv-hardware-qualification.cjs'
+            'release-probe/fullhd-av.mp4' = 'release-probe/fullhd-av.mp4'
+          }
+          $hashes = [ordered]@{}
+          foreach ($item in $payloadFiles.GetEnumerator()) { $hashes[$item.Key] = (Get-FileHash $item.Value -Algorithm SHA256).Hash.ToLowerInvariant() }
+          $manifest = [ordered]@{
+            schema = 1
+            qualificationId = 'LILAC-LIBMPV-HWQ-R2H-WEBGPU-COPY'
+            commitSha = $env:GITHUB_SHA
+            electronVersion = '44.9.3'
+            libmpvArchiveSha256 = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
+            acceptance = [ordered]@{
+              minPresentedFps = 20
+              maxBackpressureRatio = 0.20
+              avgReleaseLatencyMaxMs = 100
+              peakReleaseLatencyMaxMs = 300
+              maxInputLatencyMs = 500
+              video = '1920x1080 H264 24000/1001'
+              audio = 'AAC 48kHz'
+            }
+            ciAttestation = [ordered]@{
+              appWorkflowRunId = [long]$env:GITHUB_RUN_ID
+              appWorkflowConclusion = 'success'
+              bridgeWorkflowRunId = [long]$env:GITHUB_RUN_ID
+              bridgeWorkflowConclusion = 'success'
+              productionTransformsRebuilt = $true
+              r2dObservedThenRemoved = $true
+              immediateFrameLifetime = $true
+              electron44SharedTextureReleaseFix = $true
+              webgpuCopyRenderer = $true
+              nativeSubtitleRendererLockedOut = $true
+              sensitiveMetadataGatePassed = $true
+            }
+            payloadSha256 = $hashes
+          }
+          $manifestPath = Join-Path $probe 'qualification-manifest.json'
+          $manifestJson = $manifest | ConvertTo-Json -Depth 8
+          [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding($false)))
+          & node -e "const fs=require('fs');const p=process.argv[1];const s=fs.readFileSync(p,'utf8');JSON.parse(s);if(s.charCodeAt(0)===0xFEFF)throw new Error('manifest contains BOM');console.log('HWQ_R2H_MANIFEST_OK')" $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw 'qualification manifest verification failed' }
+          Write-Host "HWQ_R2H_FIXTURE_BYTES=$((Get-Item $fixture).Length)"
+          Write-Host "HWQ_R2H_MANIFEST_SHA256=$((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Build portable R2H qualification EXE
+        run: npx electron-builder --config electron-builder.libmpv-hardware-qualification-r2h-webgpu.yml --publish never
+
+      - name: Verify packaged R2H payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe'
+          $resultPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\LilacLibmpvHardwareQualification-result.json'
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru
+          if (-not (Test-Path $resultPath)) { throw "R2H self-check produced no result file; exit=$($proc.ExitCode)" }
+          $report = Get-Content $resultPath -Raw | ConvertFrom-Json
+          Write-Host "LILAC_HWQ_R2H_VERIFY_REPORT=$($report | ConvertTo-Json -Depth 8 -Compress)"
+          if ($proc.ExitCode -ne 0) { throw "R2H self-check failed: $($report.error)" }
+          if ($report.pass -ne $true -or $report.classification -ne 'PACKAGED_PAYLOAD_VERIFIED') { throw "R2H payload did not verify: $($report.classification)" }
+          if ($report.electronVersion -ne '44.9.3') { throw "Packaged Electron mismatch: $($report.electronVersion)" }
+          if ($report.qualificationId -ne 'LILAC-LIBMPV-HWQ-R2H-WEBGPU-COPY') { throw "Qualification ID mismatch: $($report.qualificationId)" }
+          if ($report.architecture.immediateFrameRelease -ne $true -or $report.architecture.lifetimeDiagnostics -ne $true -or $report.architecture.gpuCopyRenderer -ne $true) { throw 'Packaged R2H architecture marker missing' }
+          Write-Host 'LILAC_HWQ_R2H_PORTABLE_PAYLOAD_OK'
+
+      - name: Qualification checksum
+        shell: powershell
+        run: |
+          $exe = Get-Item dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $shaFile = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt'
+          Set-Content $shaFile "$hash  $($exe.Name)" -Encoding ascii
+          Write-Host "HWQ_R2H_EXE_BYTES=$($exe.Length)"
+          Write-Host "HWQ_R2H_EXE_SHA256=$hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacLibmpvHardwareQualification-WebGPUCopy-${{ github.sha }}
+          path: |
+            dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe
+            dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt
+            release-probe/qualification-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish R2H qualification prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $short = $env:GITHUB_SHA.Substring(0, 12)
+          $tag = "libmpv-hwq-r2h-webgpu-$short"
+          $exe = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe'
+          $sha = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt'
+          $manifest = 'release-probe/qualification-manifest.json'
+          $saved = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $saved
+          if ($exists) {
+            & gh release upload $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'R2H qualification release upload failed' }
+          } else {
+            $notes = @"
+Isolated R2H WebGPU GPU-copy sharedTexture qualification for commit $env:GITHUB_SHA.
+
+This is NOT a LilacAnime installer. It replaces the direct Canvas2D VideoFrame draw with an explicit WebGPU GPU-to-GPU copy while preserving R2F immediate source release. Final installer generation remains blocked until the real hardware gate passes.
+"@
+            & gh release create $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Lilac libmpv R2H WebGPU qualification $short" --notes $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'R2H qualification prerelease creation failed' }
+          }
+          $url = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json url --jq .url
+          if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'R2H prerelease URL lookup failed' }
+          Write-Host "LILAC_HWQ_R2H_RELEASE_TAG=$tag"
+          Write-Host "LILAC_HWQ_R2H_RELEASE_URL=$url"
