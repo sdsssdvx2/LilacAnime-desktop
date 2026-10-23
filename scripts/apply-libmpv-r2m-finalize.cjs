@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const p=path.resolve(__dirname,'..','package.json');
+const pkg=JSON.parse(fs.readFileSync(p,'utf8'));
+pkg.version='0.5.49-libmpv-r2m.rc1';
+pkg.lilacCustomTag='libmpv-r2k-v0.5.49-r3';
+pkg.build.win.artifactName='LilacAnime-Libmpv-R2M-Setup.${ext}';
+fs.writeFileSync(p,JSON.stringify(pkg,null,2)+'\n');
+console.log('LIBMPV_R2M_FINALIZE_OK version='+pkg.version+' tag='+pkg.lilacCustomTag);
