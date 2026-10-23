@@ -56,10 +56,13 @@ for (const marker of ['this._generation = Number(result?.generation) || 0','Numb
 write('src/libmpv-shared-entry.js', entry);
 
 let player = read('src/player.js');
-// Wrap the live episode function at stable button wiring instead of rewriting its transform-sensitive body.
+// Wrap the live episode function after the stable previous/next wiring. Those handlers (and autoplay/media-key
+// closures) resolve the live playSiblingEpisode binding when invoked, so they still go through the lock. Keeping
+// the wrapper after both button lines also stays outside upstream's partial-eval test slice, which ends at the
+// previousEpisode wiring marker.
 player = replaceOnce(player,
-  "$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
-  "const unlockedPlaySiblingEpisode = playSiblingEpisode;\nlet episodeTransitioning = false;\nplaySiblingEpisode = async episode => {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;\n  try { return await unlockedPlaySiblingEpisode(episode); }\n  finally { episodeTransitioning = false; }\n};\n$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
+  "$('#nextEpisode').onclick = () => playSiblingEpisode(siblingEpisode(1));",
+  "$('#nextEpisode').onclick = () => playSiblingEpisode(siblingEpisode(1));\nconst unlockedPlaySiblingEpisode = playSiblingEpisode;\nlet episodeTransitioning = false;\nplaySiblingEpisode = async episode => {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;\n  try { return await unlockedPlaySiblingEpisode(episode); }\n  finally { episodeTransitioning = false; }\n};",
   'episode transition wrapper');
 
 // Any actual mouse movement reveals controls. Use the stable capture key listener to reveal them for every
