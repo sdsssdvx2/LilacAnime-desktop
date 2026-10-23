@@ -20,7 +20,7 @@ function fail(message, detail) { failed = true; console.error(`LIBMPV_R2L_VTT_PO
       window.lilac={
         libmpvSharedOpen:async()=>({ok:true,playerId:1,generation:1}),
         libmpvSharedCommand:async()=>({ok:true}),
-        libmpvSharedState:async()=>({active:true,generation:1,time:window.__time,duration:10,width:1920,height:1080,paused:false,eof:false,metrics:{sentFrames:1}}),
+        libmpvSharedState:async()=>({active:true,generation:1,fileLoaded:true,time:window.__time,duration:10,width:1920,height:1080,paused:false,eof:false,metrics:{sentFrames:1}}),
         libmpvSharedResize:async()=>({ok:true}),libmpvSharedClose:async()=>({ok:true})
       }; true;
     `);
