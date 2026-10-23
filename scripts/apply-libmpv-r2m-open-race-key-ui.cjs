@@ -12,6 +12,11 @@ function replaceOnce(source, needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   return source.replace(needle, replacement);
 }
+function replaceOptional(source, needle, replacement, label) {
+  const count = source.split(needle).length - 1;
+  if (count > 1) throw new Error(`${label}: expected at most one anchor, found ${count}`);
+  return count ? source.replace(needle, replacement) : source;
+}
 function rewriteSection(source, startMarker, endMarker, transform, label) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start + startMarker.length);
@@ -22,10 +27,7 @@ function rewriteSection(source, startMarker, endMarker, transform, label) {
   return source.slice(0, start) + after + source.slice(end);
 }
 
-// R2M closes the real-world reopen race that R2L's generation-only guard missed:
-// mpv can briefly surface the previous file's END_FILE/time/duration after loadfile(replace)
-// but before the new file emits FILE_LOADED. Ignore all media state until FILE_LOADED for
-// the current generation has actually been observed, and clear stale timing immediately.
+// R2M closes the real-world reopen race that R2L's generation-only guard missed.
 let entry = read('src/libmpv-shared-entry.js');
 if (!entry.includes('this._generation = 0;')) throw new Error('R2M requires R2L generation guard');
 if (!entry.includes('this._ended && !previousEnded')) throw new Error('R2M requires R2L ended edge trigger');
@@ -64,7 +66,6 @@ player = rewriteSection(player, 'function setPlayerLocked(locked) {', '\nfunctio
   if (count !== 1) throw new Error(`lock section: expected one reveal, found ${count}`);
   return section.replace(/\s*else showPlayerControls\(\);/, '');
 }, 'unlock reveal');
-
 player = rewriteSection(player, 'function openPlayerSettings(open, focusSection = null) {', '\n// Mirrors the settings page', section => {
   const count = (section.match(/showPlayerControls\(\);/g) || []).length;
   if (count !== 1) throw new Error(`settings section: expected one reveal, found ${count}`);
@@ -93,16 +94,18 @@ const r2lControls = "function showPlayerControls(){const player=$('#immersivePla
 const guardedControls = "function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
 app = replaceOnce(app, r2lControls, guardedControls, 'controls source guard');
 
-// Remove known non-mouse callers as well, so the source itself expresses the policy instead of relying only on the guard.
-app = replaceOnce(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
-app = replaceOnce(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
-app = replaceOnce(app, "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};", "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};", 'screenshot click timer extension');
-app = replaceOnce(app, "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};", "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};", 'volume input reveal');
-app = replaceOnce(app, "['mousedown','touchstart'].forEach(type=>$('#immersivePlayer').addEventListener(type,event=>{if(event.target!==$('#video'))showPlayerControls()},{passive:true}));\n", '', 'pointer press reveal');
-app = replaceOnce(app, "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}else showPlayerControls()", "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}", 'video click reveal');
-app = replaceOnce(app, "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});", "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});", 'playing event reveal');
-app = replaceOnce(app, "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});", "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});", 'pause event reveal');
-app = replaceOnce(app, "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});", "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});", 'ended event reveal');
+// Clean every known legacy reveal if it is still present after the earlier transforms. Some prior
+// libmpv transforms already remove individual handlers, so absence here is acceptable; the exhaustive
+// call-site gate below is authoritative.
+app = replaceOptional(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
+app = replaceOptional(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
+app = replaceOptional(app, "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};", "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};", 'screenshot click timer extension');
+app = replaceOptional(app, "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};", "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};", 'volume input reveal');
+app = replaceOptional(app, "['mousedown','touchstart'].forEach(type=>$('#immersivePlayer').addEventListener(type,event=>{if(event.target!==$('#video'))showPlayerControls()},{passive:true}));\n", '', 'pointer press reveal');
+app = replaceOptional(app, "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}else showPlayerControls()", "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}", 'video click reveal');
+app = replaceOptional(app, "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});", "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});", 'playing event reveal');
+app = replaceOptional(app, "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});", "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});", 'pause event reveal');
+app = replaceOptional(app, "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});", "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});", 'ended event reveal');
 
 const playerCalls = [...player.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
 const appCalls = [...app.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
