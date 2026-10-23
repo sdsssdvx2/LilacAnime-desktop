@@ -26,6 +26,32 @@ function rewriteSection(source, startMarker, endMarker, transform, label) {
   if (after === before) throw new Error(`${label}: section was not changed`);
   return source.slice(0, start) + after + source.slice(end);
 }
+function controlsSites(source) {
+  const needle = 'showPlayerControls(';
+  const sites = [];
+  let i = 0, state = 'code', quote = '';
+  while (i < source.length) {
+    const ch = source[i], next = source[i + 1];
+    if (state === 'line') { if (ch === '\n') state = 'code'; i++; continue; }
+    if (state === 'block') { if (ch === '*' && next === '/') { state = 'code'; i += 2; } else i++; continue; }
+    if (state === 'string') {
+      if (ch === '\\') { i += 2; continue; }
+      if (ch === quote) { state = 'code'; quote = ''; }
+      i++; continue;
+    }
+    if (ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
+    if (ch === '/' && next === '*') { state = 'block'; i += 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { state = 'string'; quote = ch; i++; continue; }
+    if (source.startsWith(needle, i) && (i === 0 || !/[A-Za-z0-9_$]/.test(source[i - 1]))) {
+      const close = source.indexOf(')', i + needle.length);
+      if (close < 0) throw new Error('unterminated showPlayerControls call');
+      sites.push(source.slice(i + needle.length, close).trim());
+      i = close + 1; continue;
+    }
+    i++;
+  }
+  return sites;
+}
 
 // R2M closes the real-world reopen race that R2L's generation-only guard missed.
 let entry = read('src/libmpv-shared-entry.js');
@@ -95,7 +121,7 @@ const guardedControls = "function showPlayerControls(source=''){const player=$('
 app = replaceOnce(app, r2lControls, guardedControls, 'controls source guard');
 
 // Clean every known legacy reveal if it is still present after the earlier transforms. Some prior
-// libmpv transforms already remove individual handlers, so absence here is acceptable; the exhaustive
+// libmpv transforms already remove individual handlers, so absence here is acceptable; the executable
 // call-site gate below is authoritative.
 app = replaceOptional(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
 app = replaceOptional(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
@@ -107,8 +133,8 @@ app = replaceOptional(app, "$('#video').addEventListener('playing',()=>{$('#imme
 app = replaceOptional(app, "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});", "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});", 'pause event reveal');
 app = replaceOptional(app, "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});", "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});", 'ended event reveal');
 
-const playerCalls = [...player.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
-const appCalls = [...app.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
+const playerCalls = controlsSites(player);
+const appCalls = controlsSites(app);
 if (playerCalls.length !== 2 || !playerCalls.includes("'mouse'") || !playerCalls.includes("'settings'")) throw new Error(`unexpected player controls call sites: ${playerCalls.join('|')}`);
 if (appCalls.length !== 1 || appCalls[0] !== "source=''" ) throw new Error(`unexpected app controls call sites: ${appCalls.join('|')}`);
 if (!app.includes("if(source!=='mouse'&&!settingsOpen())return")) throw new Error('controls source guard missing');
