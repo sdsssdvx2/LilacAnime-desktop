@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "attestationType": "lilac-libmpv-r2i-real-hardware-pass",
+  "qualificationId": "LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM",
+  "qualifiedSourceCommit": "78e643838b168ac961dd9631d1225b5ac8fc8ec6",
+  "qualificationWorkflowRunId": 39983791568,
+  "electronVersion": "44.9.3",
+  "libmpvArchiveSha256": "efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633",
+  "qualificationReleaseTag": "libmpv-hwq-r2i-pipeline-78e643838b16",
+  "qualificationExeSha256": "6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395",
+  "qualificationManifestSha256": "c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e",
+  "hardwareReportSha256": "62c3d214655f4156156abeb0e9bc0d6d7a09fd8ff0d66e84e8bc7f154126734b",
+  "result": {
+    "status": "pass",
+    "classification": "HARDWARE_SHARED_TEXTURE_RELEASE_GATE_PASS",
+    "stage": "complete",
+    "payloadVerified": true
+  },
+  "geometry": {
+    "host": [1920, 1080],
+    "canvas": [1920, 1080]
+  },
+  "throughput": {
+    "measuredWindowMs": 4001,
+    "measuredSentFps": 23.994,
+    "measuredPresentedFps": 24.994,
+    "measuredBackpressureRatio": 0,
+    "texturePoolSlots": 24,
+    "maxPendingFrames": 6,
+    "endPendingFrames": 4,
+    "releaseHeadroomSlots": 18,
+    "avgReleaseLatencyMs": 122.992,
+    "releaseLatencyMaxMs": 151,
+    "avgReleasePipelineFrames": 2.951,
+    "maxReleasePipelineFrames": 3.623,
+    "importFailures": 0,
+    "sendFailures": 0,
+    "drawFailures": 0,
+    "videoFrameCloseFailures": 0,
+    "textureReleaseFailures": 0,
+    "gpuCopyFailures": 0
+  },
+  "media": {
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "hwdecCurrent": "d3d11va",
+    "audioSelected": true
+  },
+  "input": {
+    "clickLatencyMs": 8,
+    "keyLatencyMs": 7
+  },
+  "commands": {
+    "pause": true,
+    "volume": 37,
+    "speed": 1.5,
+    "seekTime": 4,
+    "playAdvanceSec": 0.796,
+    "commandFailures": 0
+  },
+  "architecture": {
+    "runtimeRevisionR2": true,
+    "pacedPump": true,
+    "commandNormalization": true,
+    "safeDiagnostics": true,
+    "immediateFrameRelease": true,
+    "drawDiagnostics": true,
+    "lifetimeDiagnostics": true,
+    "gpuCopyRenderer": true,
+    "lilacOnlySubtitles": true,
+    "nonInterceptingVideoSurface": true,
+    "nativeSubtitleRendererLockedOut": true
+  }
+}
