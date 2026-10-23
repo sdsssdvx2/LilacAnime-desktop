@@ -46,7 +46,7 @@ jobs:
       - name: Syntax-check R2P additions
         shell: powershell
         run: |
-          foreach($s in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs','scripts/smoke-libmpv-r2p-pip-policy.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
+          foreach($s in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs','scripts/smoke-libmpv-r2p-pip-policy.cjs','scripts/smoke-libmpv-r2p-pipeline-untouched.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
       - name: Apply qualified R2I through R2P transforms
         shell: powershell
         run: |
@@ -93,13 +93,4 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'R2P preserved PiP policy regression failed'}
           Write-Host 'R2P_BEHAVIOR_PROBE_OK'
       - name: Prove playback pipeline sources were not edited by R2P transform
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $transform=Get-Content scripts/apply-libmpv-r2p-subtitle-ui.cjs -Raw
-          foreach($forbidden in @('electron/libmpv-shared-main.cjs','electron/libmpv-shared-preload.cjs','electron/lilac-libmpv-player-bridge.node','electron/libmpv-2.dll','copyExternalImageToTexture(')){
-            if($transform.Contains("write('$forbidden'") -or $transform.Contains("write(\"$forbidden\"")){throw "R2P transform writes playback pipeline: $forbidden"}
-          }
-          $entry=Get-Content src/libmpv-shared-entry.js -Raw
-          if(-not $entry.Contains('copyExternalImageToTexture')){throw 'qualified WebGPU copy marker missing'}
-          Write-Host 'R2P_PLAYBACK_PIPELINE_UNTOUCHED_OK'
+        run: node scripts/smoke-libmpv-r2p-pipeline-untouched.cjs
