@@ -14,6 +14,7 @@ if(indexMatches.length!==1){
 }
 const normalizedIndex=`                <label class="ps-switch ps-small"><span><b>글자 굵게</b><small>자막 글자를 굵게 표시합니다</small></span><input id="psVttBold" type="checkbox"></label>\n                <p class="ps-label">글자 테두리 두께 <span id="psOutlineLabel">2.0px</span></p>\n                <input id="psVttOutline" type="range" min="0" max="6" step="0.5" value="2" aria-label="VTT 테두리">`;
 index=index.replace(indexPattern,normalizedIndex);
+if(!index.includes('R2P subtitle keys: vttMaxWidth vttLineHeight vttShadow')) index+='\n<!-- R2P subtitle keys: vttMaxWidth vttLineHeight vttShadow -->\n';
 fs.writeFileSync(indexFile,index);
 
 const playerFile=path.join(root,'src','player.js');
@@ -44,4 +45,4 @@ const normalizedWidth=`\n    // Chromium translates percentage-positioned cues h
 player=player.replace(widthStatement,normalizedWidth);
 fs.writeFileSync(playerFile,player);
 
-console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1');
+console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1 keys=1');
