@@ -261,10 +261,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'R2H qualification release upload failed' }
           } else {
             $notes = @"
-Isolated R2H WebGPU GPU-copy sharedTexture qualification for commit $env:GITHUB_SHA.
+          Isolated R2H WebGPU GPU-copy sharedTexture qualification for commit $env:GITHUB_SHA.
 
-This is NOT a LilacAnime installer. It replaces the direct Canvas2D VideoFrame draw with an explicit WebGPU GPU-to-GPU copy while preserving R2F immediate source release. Final installer generation remains blocked until the real hardware gate passes.
-"@
+          This is NOT a LilacAnime installer. It replaces the direct Canvas2D VideoFrame draw with an explicit WebGPU GPU-to-GPU copy while preserving R2F immediate source release. Final installer generation remains blocked until the real hardware gate passes.
+          "@
             & gh release create $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Lilac libmpv R2H WebGPU qualification $short" --notes $notes --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'R2H qualification prerelease creation failed' }
           }
