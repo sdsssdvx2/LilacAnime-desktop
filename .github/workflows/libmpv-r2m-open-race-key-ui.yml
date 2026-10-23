@@ -226,8 +226,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
-          gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
-          if($LASTEXITCODE -eq 0){gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes;git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null}
+          cmd.exe /d /c "gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY >nul 2>nul"
+          $releaseExists=($LASTEXITCODE -eq 0)
+          if($releaseExists){
+            gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes
+            if($LASTEXITCODE -ne 0){throw 'existing R2M release delete failed'}
+            git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null
+          }
           gh release create $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'LilacAnime libmpv R2M r4 · keyboard UI policy fix' --notes 'Keeps the verified R2M stale-EOF reopen-race fix and exact hardware-qualified playback payload. Keyboard shortcuts no longer reveal or extend the full player controls/gradients; actual mouse movement still reveals them transiently, and the settings panel pins them visible.' dist/LilacAnime-Libmpv-R2M-Setup.exe dist/LilacAnime-Libmpv-R2M-Setup.sha256.txt dist/LilacAnime-Libmpv-R2M-attestation.json
           if($LASTEXITCODE -ne 0){throw 'R2M r4 release publish failed'}
           Write-Host 'R2M_R4_RELEASE_PUBLISHED'
