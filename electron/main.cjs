@@ -2663,7 +2663,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('whisper:remove',(_,id)=>whisper.removeModel(String(id||'')));
   ipcMain.handle('whisper:transcribe',async(event,request={})=>{
     const id=Number(request.id)||0;
-    try{return await whisper.transcribe({key:String(request.key||''),videoUrl:String(request.videoUrl||''),headers:request.headers||{},startAt:Number(request.startAt)||0,duration:Number(request.duration)||0},value=>whisperEvent(event,{kind:'run',id,...value}))}
+    try{return await whisper.transcribe({key:String(request.key||''),videoUrl:String(request.videoUrl||''),headers:request.headers||{},startAt:Number(request.startAt)||0,duration:Number(request.duration)||0,background:request.background===true},value=>whisperEvent(event,{kind:'run',id,...value}))}
     catch(error){if(error.canceled)return {canceled:true};throw error}
   });
   ipcMain.handle('whisper:cancel',()=>whisper.cancel());

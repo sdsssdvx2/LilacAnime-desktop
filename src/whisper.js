@@ -4,7 +4,8 @@
 // translated into Korean by the existing translation (자막 자동 번역).
 // Loaded after app.js and player.js and shares their globals.
 let whisperState = null, whisperRunId = 0;
-const whisperAuto = () => localStorage.getItem('whisperAuto') === 'true';
+// On unless turned off: an episode with no subtitle to show or translate gets one from its speech.
+const whisperAuto = () => localStorage.getItem('whisperAuto') !== 'false';
 
 // The settings pane: the runtime, the models and the automatic switch.
 const whisperModelProgress = {};
@@ -151,7 +152,7 @@ async function startWhisper(manual = false) {
   // The episode's saved Whisper subtitle (or its translation) is put on instead of recognizing it again.
   const saved = (await window.lilac.savedSubtitles(key).catch(() => [])).find(item => item.source === 'whisper');
   if (requestId !== playbackRequestId) return false;
-  if (saved) { applySavedSubtitle(saved); translateWhisper(saved.path, manual); return true; }
+  if (saved) { applySavedSubtitle(saved); translateWhisper(saved.path, manual); prepareWhisperNext(); return true; }
   const run = whisperRun = { id: ++whisperRunId, requestId, key, manual, lines: [], translated: new Map(), yielded: !manual && Boolean(currentSubtitle) };
   pressSubtitleSource('whisper'); renderSubtitleSheet(); showWhisperProgress('음성 인식 준비 중…');
   // The live translation's side: 자막 자동 번역's, or (pressed by hand) whichever is set up; none: Japanese only.
@@ -167,6 +168,7 @@ async function startWhisper(manual = false) {
     if (!currentSubtitle || currentSubtitle.whisperLive) { currentSubtitlePath = result.path; attachSubtitle(result.url, 'Whisper 일본어 자막', { path: result.path, source: 'whisper', notice: `Whisper가 대사 ${result.lines}줄을 인식했어요.` }); }
     else window.lilac.saveSubtitle(key, { source: 'whisper', label: 'Whisper 일본어 자막', path: result.path }).catch(() => {});
     translateWhisper(result.path, manual);
+    prepareWhisperNext();
     return true;
   } catch (error) {
     if (run === whisperRun && requestId === playbackRequestId) { $('#subtitleState').textContent = 'Whisper 음성 인식에 실패했습니다.'; toast(`Whisper 실패: ${ipcMessage(error)}`); }
@@ -179,6 +181,34 @@ async function translateWhisper(path, manual) {
   const provider = autoTranslateProvider() || (manual ? autoProvider() : null);
   if (!provider || currentSubtitle?.source !== 'whisper') return;
   runTranslation({ file: async () => ({ path }), name: 'Whisper', button: provider === 'local' ? $('#translateNowLocal') : $('#translateNow'), provider, manual, linesKey: path });
+}
+// 다음 화 미리 준비 > Whisper 자막: while a series is watched with Whisper's subtitles, the next episode is recognized in
+// the background once this one's is done (and translated, with AI 번역 on), and saved with it, so it opens with its
+// subtitle at once. It gives way to the episode on screen (whisper.cjs runs one at a time); an episode that has a
+// subtitle of its own already is left alone.
+let whisperNextRef = '';
+async function prepareWhisperNext() {
+  const next = typeof siblingEpisode === 'function' ? siblingEpisode(1) : null, context = currentPlaybackContext;
+  if (!playerFlag('prepareNextWhisper') || !next) return;
+  const ref = episodeRef(next); if (whisperNextRef === ref) return; whisperNextRef = ref;
+  const saved = await window.lilac.savedSubtitles(ref).catch(() => []);
+  if (saved.some(item => ['whisper', 'gemini', 'kairan', 'csora', 'anissia', 'linkkf'].includes(item.source))) return;
+  let stream = preparedStreams.get(ref);
+  try {
+    if (!stream && jobByRef(ref)?.status === 'completed') stream = await window.lilac.playDownload(jobByRef(ref).id);
+    if (!stream) stream = ['animenosub', 'miruro'].includes(next.provider) ? await resolveWithVideoServer(next, Promise.resolve(null), context.anime, [], episode => window.lilac.prepareEpisodeStream(episode))
+      : await window.lilac.prepareEpisodeStream(context.resolveKind === 'linkkf' ? { ...next, resolveKind: 'linkkf' } : next);
+  } catch { whisperNextRef = ''; return; }
+  if (!stream?.url) return;
+  const result = await window.lilac.whisperTranscribe({ id: ++whisperLiveId, key: ref, videoUrl: stream.url, headers: stream.headers || {}, background: true }).catch(() => null);
+  // Given way to the episode on screen (or stopped): tried again after that one's run.
+  if (!result?.path || !result.lines) { if (result?.busy || !result) whisperNextRef = ''; return; }
+  await window.lilac.saveSubtitle(ref, { source: 'whisper', label: 'Whisper 일본어 자막', path: result.path }).catch(() => {});
+  if (!playerFlag('prepareNextTranslation')) return;
+  translationSettings = await window.lilac.geminiSettings().catch(() => translationSettings);
+  const provider = autoTranslateProvider() || autoProvider(); if (!provider) return;
+  const translated = await window.lilac.translateSubtitle({ path: result.path, title: context.subtitleTitle || '', id: ++whisperLiveId, provider, anime: subtitleSearchAnime(), linesKey: result.path, anySide: true }).catch(() => null);
+  if (translated?.path) window.lilac.saveSubtitle(ref, { source: 'gemini', label: translatedLabel(translated, 'Whisper'), path: translated.path, from: result.path, fromName: 'Whisper' }).catch(() => {});
 }
 // No subtitle anywhere and 자막이 없으면 자동으로 만들기 on.
 async function whisperWhenNoSubtitle() { return whisperAuto() && startWhisper(false); }

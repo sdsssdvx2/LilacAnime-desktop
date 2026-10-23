@@ -350,7 +350,10 @@ function createWhisper({ userData, ffmpegPath, subtitleRoot, proxy = url => Prom
   // live translation), {status}. A finished episode is given back at once; one run at a time (a new episode stops the
   // one before). jump(seconds): the player moved to a part not transcribed yet: it is done from there next (as a
   // translation follows the player), the parts left behind afterwards.
-  async function transcribe({ key, videoUrl, headers = {}, startAt = 0, duration = 0 }, events = () => {}) {
+  // background: the next episode made ready (다음 화 미리 준비): it waits for nothing and gives way to the episode on
+  // screen ({busy: true} while that one runs; a run for it stops this one).
+  async function transcribe({ key, videoUrl, headers = {}, startAt = 0, duration = 0, background = false }, events = () => {}) {
+    if (background && current && !current.background) return { busy: true };
     if (!runtimeInstalled()) throw new Error('Whisper가 아직 설치되지 않았습니다. 설정 > 자막 > Whisper AI 자막에서 설치해 주세요.');
     const model = status().model;
     if (!modelInstalled(model)) throw new Error(`Whisper ${MODELS.find(item => item.id === model).label} 모델을 먼저 받아 주세요 (설정 > 자막 > Whisper AI 자막).`);
@@ -359,7 +362,7 @@ function createWhisper({ userData, ffmpegPath, subtitleRoot, proxy = url => Prom
     if (fs.existsSync(file) && fs.existsSync(doneFile)) return result(file, JSON.parse(fs.readFileSync(doneFile, 'utf8')).lines || 0, true);
     cancel();
     fs.mkdirSync(root, { recursive: true }); if (!NATIVE) fs.writeFileSync(worker, WORKER);
-    const controller = new AbortController(), run = { key, controller }; current = run;
+    const controller = new AbortController(), run = { key, controller, background }; current = run;
     const lines = [], add = line => { lines.push(line); events({ lines: [line] }); };
     const done = spans();
     // The subtitle so far, written where the finished one goes (the folder only now: the subtitle cleanup run a minute
