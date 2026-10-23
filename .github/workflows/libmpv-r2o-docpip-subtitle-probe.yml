@@ -1,0 +1,36 @@
+name: Libmpv R2O Document PiP subtitle probe
+
+on:
+  push:
+    branches: [libmpv-r2o-docpip-subtitle-probe]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2o-docpip-subtitle-probe
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe-r2o-docpip:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+      - name: Syntax-check probe
+        run: node --check scripts/smoke-libmpv-r2o-docpip-subtitle.cjs
+      - name: Prove Document PiP can overlay event-driven subtitles without frame compositing
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2o-docpip-subtitle.cjs
+          if($LASTEXITCODE -ne 0){throw 'Document PiP subtitle overlay probe failed'}
