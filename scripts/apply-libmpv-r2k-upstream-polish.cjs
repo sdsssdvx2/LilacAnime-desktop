@@ -29,7 +29,7 @@ entry = replaceOnce(
 entry = replaceOnce(
   entry,
   '        .lilac-vtt-stack{position:absolute;left:2%;right:2%;bottom:12%;display:flex;flex-direction:column;align-items:center;gap:.08em;text-align:center;white-space:pre-line;line-height:1.22;color:#fff;overflow-wrap:anywhere}',
-  '        .lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;gap:.08em;text-align:center;white-space:pre-line;line-height:1.22;color:#fff;overflow-wrap:anywhere}\\n        .lilac-vtt-stack{bottom:15.06%}.lilac-vtt-top{top:5%}',
+  '        .lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;gap:.08em;text-align:center;white-space:pre-line;line-height:1.22;color:#fff;overflow-wrap:anywhere}\n        .lilac-vtt-stack{bottom:15.06%}.lilac-vtt-top{top:5%}',
   'subtitle stack CSS'
 );
 entry = replaceOnce(
@@ -71,7 +71,7 @@ entry = entry.replace(refreshPattern, `  refreshSubtitleOverlay() {
     const ring = outline
       ? [...Array(16)].map((_, index) => {
           const angle = index * Math.PI / 8;
-          return \`${'${'}(Math.cos(angle) * outline).toFixed(2)}px ${'${'}(Math.sin(angle) * outline).toFixed(2)}px 0 #000\`;
+          return `${(Math.cos(angle) * outline).toFixed(2)}px ${(Math.sin(angle) * outline).toFixed(2)}px 0 #000`;
         }).join(',')
       : 'none';
     // Match official Lilac/Android placement: sub-pos = 100-position, clamped 55..97,
@@ -79,7 +79,7 @@ entry = entry.replace(refreshPattern, `  refreshSubtitleOverlay() {
     const baseline = Math.min(97, Math.max(55, Math.round(100 - position))) - 22 / 720 * 100;
     const bottomInset = 100 - baseline;
 
-    const signature = [...top.map(cue => \`T|${'${'}cue.startTime}|${'${'}cue.endTime}|${'${'}cue.text}\`), ...bottom.map(cue => \`B|${'${'}cue.startTime}|${'${'}cue.endTime}|${'${'}cue.text}\`)].join('\\u241e');
+    const signature = [...top.map(cue => `T|${cue.startTime}|${cue.endTime}|${cue.text}`), ...bottom.map(cue => `B|${cue.startTime}|${cue.endTime}|${cue.text}`)].join('\u241e');
     const render = (container, cues) => {
       const fragment = document.createDocumentFragment();
       for (const cue of cues) {
@@ -104,14 +104,14 @@ entry = entry.replace(refreshPattern, `  refreshSubtitleOverlay() {
       this._subtitleOverlayText = signature;
     }
     for (const stack of [topStack, bottomStack]) {
-      stack.style.fontFamily = \`LilacSubtitle,'Malgun Gothic',sans-serif\`;
-      stack.style.fontSize = \`${'${'}fontSize.toFixed(2)}px\`;
+      stack.style.fontFamily = `LilacSubtitle,'Malgun Gothic',sans-serif`;
+      stack.style.fontSize = `${fontSize.toFixed(2)}px`;
       stack.style.fontWeight = bold ? '700' : '400';
       stack.style.textShadow = ring;
     }
     topStack.style.display = top.length ? 'flex' : 'none';
     bottomStack.style.display = bottom.length ? 'flex' : 'none';
-    bottomStack.style.bottom = \`${'${'}bottomInset.toFixed(3)}%\`;
+    bottomStack.style.bottom = `${bottomInset.toFixed(3)}%`;
     layer.style.display = 'block';
   }
 
@@ -124,7 +124,17 @@ entry = replaceOnce(
   'diagnostic button follows controls'
 );
 
-for (const marker of ['lilac-vtt-top', 'bottomInset.toFixed(3)', 'controlsVisible', "localStorage.getItem('vttStyle')"]) {
+// The GPU copy itself lives in the isolated preload receiver. Expose its API name as
+// read-only renderer architecture metadata too, so static/package checks can assert
+// that the renderer and receiver were built from the same R2H WebGPU architecture.
+entry = replaceOnce(
+  entry,
+  "window.LilacNativeMpv = { enabled: true, kind: 'libmpv-d3d11-shared-texture', zeroCopy: true };",
+  "window.LilacNativeMpv = { enabled: true, kind: 'libmpv-d3d11-shared-texture', zeroCopy: true, gpuCopyApi: 'copyExternalImageToTexture' };",
+  'renderer WebGPU architecture metadata'
+);
+
+for (const marker of ['lilac-vtt-top', 'bottomInset.toFixed(3)', 'controlsVisible', "localStorage.getItem('vttStyle')", 'copyExternalImageToTexture']) {
   if (!entry.includes(marker)) throw new Error(`R2K renderer marker missing: ${marker}`);
 }
 write('src/libmpv-shared-entry.js', entry);
