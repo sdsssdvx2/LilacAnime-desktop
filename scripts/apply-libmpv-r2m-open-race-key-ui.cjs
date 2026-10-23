@@ -29,46 +29,13 @@ function rewriteSection(source, startMarker, endMarker, transform, label) {
 let entry = read('src/libmpv-shared-entry.js');
 if (!entry.includes('this._generation = 0;')) throw new Error('R2M requires R2L generation guard');
 if (!entry.includes('this._ended && !previousEnded')) throw new Error('R2M requires R2L ended edge trigger');
-
-entry = replaceOnce(
-  entry,
-  '    this._generation = 0;\n    this._lastState = null;',
-  '    this._generation = 0;\n    this._loadConfirmed = false;\n    this._lastState = null;',
-  'load-confirmed constructor state'
-);
-entry = replaceOnce(
-  entry,
-  '    this._generation = 0;\n    this._openPromise = null;',
-  '    this._generation = 0;\n    this._loadConfirmed = false;\n    this._openPromise = null;',
-  'load-confirmed reset state'
-);
-entry = replaceOnce(
-  entry,
-  '    this._readyState = 0;\n    this._metadataSent = false;\n    this._ended = false;\n    this.dispatchEvent(new Event(\'waiting\'));',
-  '    this._time = 0;\n    this._duration = 0;\n    this._readyState = 0;\n    this._metadataSent = false;\n    this._ended = false;\n    this._loadConfirmed = false;\n    this._lastState = null;\n    this.dispatchEvent(new Event(\'waiting\'));',
-  'clear stale media state on open'
-);
-entry = replaceOnce(
-  entry,
-  '      this._generation = Number(result?.generation) || 0;\n      if (result?.playerId) this.dataset.libmpvPlayerId = String(result.playerId);',
-  '      this._generation = Number(result?.generation) || 0;\n      this._loadConfirmed = false;\n      if (result?.playerId) this.dataset.libmpvPlayerId = String(result.playerId);',
-  'reset confirmation after open result'
-);
-entry = replaceOnce(
-  entry,
-  '      if (this._generation && Number(state.generation) !== this._generation) return;\n      const previousTime = this._time;',
-  '      if (this._generation && Number(state.generation) !== this._generation) return;\n      if (state.fileLoaded !== true) { this._lastState = state; return; }\n      this._loadConfirmed = true;\n      const previousTime = this._time;',
-  'ignore pre-FILE_LOADED state'
-);
-entry = replaceOnce(
-  entry,
-  '      this._ended = Boolean(state.eof) || (this._duration > 0 && this._time >= this._duration - 0.15 && this._paused);',
-  '      this._ended = this._loadConfirmed && (Boolean(state.eof) || (this._duration > 0 && this._time >= this._duration - 0.15 && this._paused));',
-  'end requires confirmed load'
-);
-for (const marker of ['this._loadConfirmed = false','state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&','this._time = 0;\n    this._duration = 0;']) {
-  if (!entry.includes(marker)) throw new Error(`R2M entry marker missing: ${marker}`);
-}
+entry = replaceOnce(entry, '    this._generation = 0;\n    this._lastState = null;', '    this._generation = 0;\n    this._loadConfirmed = false;\n    this._lastState = null;', 'load-confirmed constructor state');
+entry = replaceOnce(entry, '    this._generation = 0;\n    this._openPromise = null;', '    this._generation = 0;\n    this._loadConfirmed = false;\n    this._openPromise = null;', 'load-confirmed reset state');
+entry = replaceOnce(entry, '    this._readyState = 0;\n    this._metadataSent = false;\n    this._ended = false;\n    this.dispatchEvent(new Event(\'waiting\'));', '    this._time = 0;\n    this._duration = 0;\n    this._readyState = 0;\n    this._metadataSent = false;\n    this._ended = false;\n    this._loadConfirmed = false;\n    this._lastState = null;\n    this.dispatchEvent(new Event(\'waiting\'));', 'clear stale media state on open');
+entry = replaceOnce(entry, '      this._generation = Number(result?.generation) || 0;\n      if (result?.playerId) this.dataset.libmpvPlayerId = String(result.playerId);', '      this._generation = Number(result?.generation) || 0;\n      this._loadConfirmed = false;\n      if (result?.playerId) this.dataset.libmpvPlayerId = String(result.playerId);', 'reset confirmation after open result');
+entry = replaceOnce(entry, '      if (this._generation && Number(state.generation) !== this._generation) return;\n      const previousTime = this._time;', '      if (this._generation && Number(state.generation) !== this._generation) return;\n      if (state.fileLoaded !== true) { this._lastState = state; return; }\n      this._loadConfirmed = true;\n      const previousTime = this._time;', 'ignore pre-FILE_LOADED state');
+entry = replaceOnce(entry, '      this._ended = Boolean(state.eof) || (this._duration > 0 && this._time >= this._duration - 0.15 && this._paused);', '      this._ended = this._loadConfirmed && (Boolean(state.eof) || (this._duration > 0 && this._time >= this._duration - 0.15 && this._paused));', 'end requires confirmed load');
+for (const marker of ['this._loadConfirmed = false','state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&','this._time = 0;\n    this._duration = 0;']) if (!entry.includes(marker)) throw new Error(`R2M entry marker missing: ${marker}`);
 write('src/libmpv-shared-entry.js', entry);
 
 // Final controls policy: only genuine mouse movement may reveal the full controls/gradients,
@@ -92,32 +59,28 @@ player = rewriteSection(player, 'function handlePlayerKey(event) {', '\n// 스�
   return section.replaceAll('showPlayerControls();', '');
 }, 'player keyboard reveals');
 
-player = replaceOnce(
-  player,
-  "  if (locked) { openPlayerSettings(false); $('#immersivePlayer').classList.remove('controls-visible'); $('#video').focus?.(); }\n  else showPlayerControls();",
-  "  if (locked) { openPlayerSettings(false); $('#immersivePlayer').classList.remove('controls-visible'); $('#video').focus?.(); }",
-  'unlock must not reveal controls'
-);
-player = replaceOnce(
-  player,
-  "  }\n  showPlayerControls();\n}\n\n// Mirrors the settings page",
-  "  }\n  if (open) showPlayerControls('settings');\n  else { clearTimeout(controlsTimer); $('#immersivePlayer').classList.remove('controls-visible'); }\n}\n\n// Mirrors the settings page",
-  'settings are the only pin-open path'
-);
-player = replaceOnce(
-  player,
-  '  if (!playerLocked) showPlayerControls();',
-  "  if (!playerLocked) showPlayerControls('mouse');",
-  'mousemove source tagging'
-);
+player = rewriteSection(player, 'function setPlayerLocked(locked) {', '\nfunction flashUnlockButton', section => {
+  const count = (section.match(/showPlayerControls\(\);/g) || []).length;
+  if (count !== 1) throw new Error(`lock section: expected one reveal, found ${count}`);
+  return section.replace(/\s*else showPlayerControls\(\);/, '');
+}, 'unlock reveal');
+
+player = rewriteSection(player, 'function openPlayerSettings(open, focusSection = null) {', '\n// Mirrors the settings page', section => {
+  const count = (section.match(/showPlayerControls\(\);/g) || []).length;
+  if (count !== 1) throw new Error(`settings section: expected one reveal, found ${count}`);
+  return section.replace('  showPlayerControls();', "  if (open) showPlayerControls('settings');\n  else { clearTimeout(controlsTimer); $('#immersivePlayer').classList.remove('controls-visible'); }");
+}, 'settings pin policy');
+player = replaceOnce(player, '  if (!playerLocked) showPlayerControls();', "  if (!playerLocked) showPlayerControls('mouse');", 'mousemove source tagging');
 
 const finishBlock = player.slice(player.indexOf('function finishSpaceHold(toggle = false) {'), player.indexOf("\nwindow.addEventListener('keyup'", player.indexOf('function finishSpaceHold(toggle = false) {')));
 const keyBlock = player.slice(player.indexOf('function handlePlayerKey(event) {'), player.indexOf('\n// 스크린샷', player.indexOf('function handlePlayerKey(event) {')));
+const lockBlock = player.slice(player.indexOf('function setPlayerLocked(locked) {'), player.indexOf('\nfunction flashUnlockButton', player.indexOf('function setPlayerLocked(locked) {')));
 const mouseBlock = player.slice(player.indexOf("$('#immersivePlayer').addEventListener('mousemove', event => {"), player.indexOf('\n// --- Picture-in-picture', player.indexOf("$('#immersivePlayer').addEventListener('mousemove', event => {")));
 const settingsBlock = player.slice(player.indexOf('function openPlayerSettings(open, focusSection = null) {'), player.indexOf('\n// Mirrors the settings page', player.indexOf('function openPlayerSettings(open, focusSection = null) {')));
 if (player.includes('typingTarget')) throw new Error('R2L broad keyboard reveal survived');
 if (finishBlock.includes('showPlayerControls')) throw new Error('Space release still reveals full controls');
 if (keyBlock.includes('showPlayerControls')) throw new Error('keyboard handler still reveals full controls');
+if (lockBlock.includes('showPlayerControls')) throw new Error('unlock still reveals full controls');
 if (!mouseBlock.includes("showPlayerControls('mouse')")) throw new Error('real mouse movement reveal missing');
 if (!settingsBlock.includes("showPlayerControls('settings')")) throw new Error('settings panel pin-open reveal missing');
 if (!settingsBlock.includes("classList.remove('controls-visible')")) throw new Error('settings close does not hide controls');
@@ -130,38 +93,16 @@ const r2lControls = "function showPlayerControls(){const player=$('#immersivePla
 const guardedControls = "function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
 app = replaceOnce(app, r2lControls, guardedControls, 'controls source guard');
 
-// Remove known non-mouse callers as well, so the source itself expresses the policy instead of
-// relying only on the guard.
+// Remove known non-mouse callers as well, so the source itself expresses the policy instead of relying only on the guard.
 app = replaceOnce(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
 app = replaceOnce(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
-app = replaceOnce(app,
-  "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};",
-  "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};",
-  'screenshot click timer extension');
-app = replaceOnce(app,
-  "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};",
-  "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};",
-  'volume input reveal');
-app = replaceOnce(app,
-  "['mousedown','touchstart'].forEach(type=>$('#immersivePlayer').addEventListener(type,event=>{if(event.target!==$('#video'))showPlayerControls()},{passive:true}));\n",
-  '',
-  'pointer press reveal');
-app = replaceOnce(app,
-  "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}else showPlayerControls()",
-  "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}",
-  'video click reveal');
-app = replaceOnce(app,
-  "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});",
-  "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});",
-  'playing event reveal');
-app = replaceOnce(app,
-  "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});",
-  "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});",
-  'pause event reveal');
-app = replaceOnce(app,
-  "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});",
-  "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});",
-  'ended event reveal');
+app = replaceOnce(app, "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};", "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};", 'screenshot click timer extension');
+app = replaceOnce(app, "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};", "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};", 'volume input reveal');
+app = replaceOnce(app, "['mousedown','touchstart'].forEach(type=>$('#immersivePlayer').addEventListener(type,event=>{if(event.target!==$('#video'))showPlayerControls()},{passive:true}));\n", '', 'pointer press reveal');
+app = replaceOnce(app, "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}else showPlayerControls()", "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}", 'video click reveal');
+app = replaceOnce(app, "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});", "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});", 'playing event reveal');
+app = replaceOnce(app, "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});", "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});", 'pause event reveal');
+app = replaceOnce(app, "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});", "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});", 'ended event reveal');
 
 const playerCalls = [...player.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
 const appCalls = [...app.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
