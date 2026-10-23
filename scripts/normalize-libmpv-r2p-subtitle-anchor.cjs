@@ -45,4 +45,20 @@ const normalizedWidth=`\n    // Chromium translates percentage-positioned cues h
 player=player.replace(widthStatement,normalizedWidth);
 fs.writeFileSync(playerFile,player);
 
-console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1 keys=1');
+// R2P intentionally replaces the old fixed 100% VTT cue width with a configurable
+// readable-width default. Keep the upstream interaction regression, but update the
+// expected default box and Chromium centering compensation instead of deleting it.
+const interactionsFile=path.join(root,'tests','player-interactions.test.cjs');
+if(fs.existsSync(interactionsFile)){
+  let tests=fs.readFileSync(interactionsFile,'utf8');
+  const oldTitle="test('VTT dialogue uses a full-width centered box and retains sync and top placement', () => {";
+  const newTitle="test('VTT dialogue uses the readable-width centered box and retains sync and top placement', () => {";
+  const oldAssert="  for (const cue of cues) { assert.equal(cue.size, 100); assert.equal(cue.position, 50); assert.equal(cue.positionAlign, 'center'); assert.equal(cue.align, 'center'); }";
+  const newAssert="  for (const cue of cues) { assert.equal(cue.size, 82); assert.equal(cue.position, 59); assert.equal(cue.positionAlign, 'center'); assert.equal(cue.align, 'center'); }";
+  if((tests.split(oldTitle).length-1)!==1)throw new Error('R2P upstream VTT test title anchor missing');
+  if((tests.split(oldAssert).length-1)!==1)throw new Error('R2P upstream VTT test assertion anchor missing');
+  tests=tests.replace(oldTitle,newTitle).replace(oldAssert,newAssert);
+  fs.writeFileSync(interactionsFile,tests);
+}
+
+console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1 keys=1 upstreamVttTest=82/59');
