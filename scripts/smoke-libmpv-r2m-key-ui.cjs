@@ -1,0 +1,27 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const source=fs.readFileSync(path.resolve(__dirname,'..','src','player.js'),'utf8');
+function block(start,end){const a=source.indexOf(start);if(a<0)throw new Error('missing '+start);const b=source.indexOf(end,a+start.length);if(b<0)throw new Error('missing end '+end);return source.slice(a,b);}
+const capture="window.addEventListener('keydown', () => { usingKeyboard = true; }, true);";
+if(!source.includes(capture))throw new Error('upstream selective key capture not restored');
+if(source.includes('typingTarget'))throw new Error('broad R2L keyboard reveal survived');
+const leftRight=block("  if (arrow === 'left' || arrow === 'right') {","  // Up / down:");
+if(!leftRight.includes('showPlayerControls();'))throw new Error('left/right no longer reveal controls');
+const volume=block("  if (arrow && playerFlag('arrowVolume')) {","  if (arrow) {");
+if(volume.includes('showPlayerControls'))throw new Error('volume keys unexpectedly reveal controls');
+const space=block("  if (event.code === 'Space' || key === ' ') {","  if (key === 'MediaPlayPause'");
+if(space.includes('showPlayerControls'))throw new Error('space unexpectedly reveals controls');
+const c=block("  if (letter === 'c') {","  if (letter === 'z' || letter === 'x')");
+if(!c.includes('showPlayerControls();'))throw new Error('C must reveal controls');
+const zx=block("  if (letter === 'z' || letter === 'x') {","  if (letter === 'p')");
+if(zx.includes('showPlayerControls'))throw new Error('Z/X unexpectedly reveal controls');
+const ps=block("  if (letter === 'p') {","  if (/^[0-9]$/.test(letter)");
+if(ps.includes('showPlayerControls'))throw new Error('P/S unexpectedly reveal controls');
+const digits=block("  if (/^[0-9]$/.test(letter)","  if (letter === '[' || letter === ']')");
+if(!digits.includes('showPlayerControls();'))throw new Error('digit seek must reveal controls');
+const brackets=block("  if (letter === '[' || letter === ']') {","  if (key === 'MediaTrackNext'");
+if(brackets.includes('showPlayerControls'))throw new Error('brackets unexpectedly reveal controls');
+const page=block("  if (key === 'MediaTrackNext' || key === 'PageDown')","  showPlayerControls();");
+if(page.includes('showPlayerControls'))throw new Error('episode/page keys unexpectedly reveal controls');
+console.log('LIBMPV_R2M_KEY_UI_PASS reveal=left-right,digits,c quiet=space,volume,brackets,zx,ps,page');
