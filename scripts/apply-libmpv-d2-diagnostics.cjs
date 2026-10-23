@@ -5,6 +5,7 @@ const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const scripts = [
+  'normalize-libmpv-r2k-upstream.cjs',
   'apply-flix-proxy-diagnostics.cjs',
   'apply-libmpv-flix-diagnostics-wiring.cjs',
   'apply-libmpv-player-diagnostics.cjs',
