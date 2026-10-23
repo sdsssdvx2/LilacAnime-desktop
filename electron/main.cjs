@@ -1359,16 +1359,83 @@ async function wikidataKoreanTitles(malId,anilistId){
 }
 // Order: TMDB (needs the user's key), then AniList, then Wikidata; each is only asked when the previous
 // one found nothing.
+// --- Anissia's catalog as a source of Korean titles ---
+// Without a TMDB key most of a season's shows had no Korean title (AniList hardly has any, Wikidata has no page for a
+// new season yet), and Kairan, Csora and Anissia were searched with the English title: of 40 shows airing in October
+// 2026, Kairan found 0, Csora 2 and Anissia 8, though Anissia listed subtitles for most of them. Anissia names every
+// show it lists in Korean beside its Japanese title and start date, so a show is matched to it by its Japanese title
+// (its season and start date choosing between entries), and that Korean name is searched first. The whole catalog
+// (about 3,600 shows, 30 a page) is kept on disk and read again daily.
+let anissiaCatalogData=null,anissiaCatalogLoad=null;
+async function anissiaCatalog(){
+  const file=path.join(app.getPath('userData'),'anissia-catalog.json');
+  if(!anissiaCatalogData){try{anissiaCatalogData=JSON.parse(fs.readFileSync(file,'utf8'))}catch{anissiaCatalogData=null}}
+  if(anissiaCatalogData?.items?.length&&Date.now()-anissiaCatalogData.time<24*60*60*1000)return anissiaCatalogData.items;
+  anissiaCatalogLoad||=(async()=>{
+    const first=await anissiaFetch('/anime/list/0'),pages=Number(first?.totalPages)||1,all=[...(first?.content||[])];let next=1;
+    await Promise.all(Array.from({length:6},async()=>{while(next<pages){const page=next++;all.push(...((await anissiaFetch(`/anime/list/${page}`))?.content||[]))}}));
+    const items=[...new Map(all.map(item=>[item.animeNo,{no:item.animeNo,subject:String(item.subject||''),original:String(item.originalSubject||''),start:String(item.startDate||'')}])).values()];
+    if(!items.length)throw new Error('Anissia 작품 목록이 비어 있습니다.');
+    anissiaCatalogData={time:Date.now(),items};try{fs.writeFileSync(file,JSON.stringify(anissiaCatalogData))}catch{/* kept in memory */}
+    return items;
+  })().catch(error=>{if(anissiaCatalogData?.items?.length)return anissiaCatalogData.items;throw error}).finally(()=>{anissiaCatalogLoad=null});
+  return anissiaCatalogLoad;
+}
+// A work's Japanese title, start (ms) and format: from its card when it has the Japanese title, else its provider
+// (Re:Anime, Miruro), else AniList by id.
+const nativeInfoCache=new Map();
+function nativeInfo(anime={}){
+  const key=`${anime.provider||''}:${anime.id||anime.anilistId||anime.title||''}`;if(nativeInfoCache.has(key))return nativeInfoCache.get(key);
+  const day=date=>date?.year?Date.UTC(date.year,(date.month||1)-1,date.day||1):NaN;
+  const work=(async()=>{
+    if(anime.title_japanese)return {native:String(anime.title_japanese),start:Date.parse(String(anime.aired||'').split(' ')[0])||NaN,format:String(anime.type||'')};
+    if(anime.provider==='reanime'&&anime.id){const root=await providerFetch(`${REANIME_WEB}/api/v1/anime/${encodeURIComponent(anime.id)}`,{json:true,referer:`${REANIME_WEB}/`}),media=root?.data||root;return {native:String(media?.title?.native||''),start:day(media?.startDate),format:String(media?.format||'')}}
+    if(anime.provider==='miruro'&&anime.id){const media=await miruroApi(`anime/${anime.id}`);return {native:String(media?.title?.native||''),start:Date.parse(media?.started_on||'')||NaN,format:String(media?.format||'')}}
+    if(Number(anime.anilistId)){
+      const response=await fetch('https://graphql.anilist.co',{signal:AbortSignal.timeout(25000),method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','User-Agent':'LilacAnime Android'},body:JSON.stringify({query:'query($id:Int){Media(id:$id,type:ANIME){format startDate{year month day} title{native}}}',variables:{id:Number(anime.anilistId)}})});
+      const media=response.ok?(await response.json())?.data?.Media:null;return {native:String(media?.title?.native||''),start:day(media?.startDate),format:String(media?.format||'')};
+    }
+    return {native:'',start:NaN,format:''};
+  })().catch(()=>({native:'',start:NaN,format:''}));
+  nativeInfoCache.set(key,work);if(nativeInfoCache.size>500)nativeInfoCache.delete(nativeInfoCache.keys().next().value);
+  return work;
+}
+// A Japanese title's season ("第3期", "3期", "2nd Season", "Season 2", a closing roman numeral), and the title without it,
+// spaces and punctuation ("薬屋のひとりごと 第3期" → "薬屋のひとりごと").
+const JAPANESE_SEASON=/第\s*([0-9一二三四五六七八九]+)\s*(?:期|シーズン|クール)|([0-9]+)\s*期|([0-9]+)(?:st|nd|rd|th)\s*season|season\s*([0-9]+)/i;
+function japaneseSeason(text=''){
+  const value=String(text).normalize('NFKC'),match=value.match(JAPANESE_SEASON);
+  if(match){const n=match[1]||match[2]||match[3]||match[4];return Number(n)||'一二三四五六七八九'.indexOf(n)+1||null}
+  const roman=value.match(/(?:^|\s)(II|III|IV|V)\s*$/);return roman?{II:2,III:3,IV:4,V:5}[roman[1]]:null;
+}
+const japaneseKey=(text='')=>String(text).normalize('NFKC').toLowerCase().replace(new RegExp(JAPANESE_SEASON.source,'gi'),'').replace(/(?:^|\s)(?:ii|iii|iv|v)\s*$/,'').replace(/[\s\p{P}\p{S}]/gu,'');
+async function anissiaKoreanTitle(anime={},title=''){
+  const info=await nativeInfo(anime),key=japaneseKey(info.native);if(key.length<2)return '';
+  const items=await anissiaCatalog();
+  const hits=items.filter(item=>{const other=japaneseKey(item.original);return other&&(other===key||Math.min(other.length,key.length)>=5&&(other.startsWith(key)||key.startsWith(other)))});
+  if(!hits.length)return '';
+  const movie=/MOVIE/i.test(info.format)||/劇場版/.test(info.native),season=japaneseSeason(info.native)??titleSeason(title)??1;
+  const seasonOf=item=>communitySeason(item.subject)??japaneseSeason(item.original)??(Number(String(item.subject).match(/[가-힣]\s+([2-9])$/)?.[1])||1);
+  const pool=hits.filter(item=>/극장판|劇場版/.test(`${item.subject} ${item.original}`)===movie);
+  const away=item=>{const start=Date.parse(item.start);return Number.isFinite(start)&&Number.isFinite(info.start)?Math.abs(start-info.start):Infinity};
+  const nearest=list=>list.slice().sort((a,b)=>away(a)-away(b)||String(b.start).localeCompare(String(a.start)))[0]?.subject||'';
+  const same=pool.filter(item=>seasonOf(item)===season);if(same.length)return nearest(same);
+  // A later season named without its number on one side: the entry that started within a month of the show.
+  const close=pool.filter(item=>away(item)<35*24*60*60*1000);if(close.length)return nearest(close);
+  return season===1?nearest(pool):'';
+}
 async function koreanTitleCandidates(title,anime={}){
   const original=String(title||'').trim();if(!original||/[가-힣]/.test(original))return original?[original]:[];
-  const tmdb=Boolean(tmdbKey()),key=`${tmdb?'tmdb':'free'}:${anime.id||original}`;if(koreanTitleCache.has(key))return koreanTitleCache.get(key);
+  // v2: Anissia's name first (see anissiaCatalog); names kept from before it are looked up again once.
+  const tmdb=Boolean(tmdbKey()),key=`v2:${tmdb?'tmdb':'free'}:${anime.id||original}`;if(koreanTitleCache.has(key))return koreanTitleCache.get(key);
   const disk=readKoreanTitleCache();if(Array.isArray(disk[key])&&disk[key].length){koreanTitleCache.set(key,disk[key]);return disk[key]}
   const found=[],add=value=>{const clean=String(value||'').replace(/\((?:애니메이션|TV|애니)[^)]*\)/g,'').replace(/\s+/g,' ').trim();if(/[가-힣]{2}/.test(clean)&&!found.includes(clean))found.push(clean)};
+  const anissia=await anissiaKoreanTitle(anime,original).catch(()=>'');
+  // Anissia keeps a remake's year in its name ("란마 1/2 (2024) 3기"), which blog posts leave out.
+  if(anissia){add(anissia);add(anissia.replace(/\s*\((?:19|20)\d{2}\)\s*/g,' '));rememberKoreanDisplayTitle(anime,anissia)}
   if(tmdb){
     // Re:ANIME and Miruro also know the Japanese title, which TMDB matches as the original name.
-    let native='';
-    if(anime.id&&anime.provider==='reanime'){try{const media=await providerFetch(`${REANIME_WEB}/api/v1/anime/${encodeURIComponent(anime.id)}`,{json:true,referer:`${REANIME_WEB}/`});native=String(media?.title?.native||'')}catch{/* English only */}}
-    else if(anime.id&&anime.provider==='miruro')native=String(anime.title_japanese||'')||await miruroApi(`anime/${anime.id}`).then(media=>String(media?.title?.native||'')).catch(()=>'');
+    const native=(await nativeInfo(anime)).native;
     (await tmdbKoreanTitles([original,native]).catch(()=>[])).forEach(add);
   }
   let media=null;
@@ -1405,8 +1472,16 @@ async function englishTitleFor(anime){
   }
   return anime.title_japanese||'';
 }
+// A Korean name found for the subtitle search (Anissia's) is shown for the work too, when it had none.
+function rememberKoreanDisplayTitle(anime={},ko=''){
+  const key=`${anime.provider||'jikan'}:${anime.id??anime.mal_id}`,store=displayTitleStore();
+  if(!anime.id&&anime.mal_id==null||store[key]?.ko)return;
+  store[key]={...store[key],ko,src:'anissia',time:Date.now()};saveDisplayTitles();
+}
 async function displayKoreanTitle(title,anime){
   if(tmdbKey()){const found=(await tmdbKoreanTitles([title],{light:true}).catch(()=>[])).find(hasHangul);if(found)return found}
+  // Anissia's name (by the Japanese title) when the card has the Japanese title or comes from Re:Anime or Miruro.
+  if(anime.title_japanese||['reanime','miruro'].includes(anime.provider)){const found=await anissiaKoreanTitle(anime,title).catch(()=>'');if(found)return found}
   const clean=cleanKoreanTitle;
   const media=await anilistMedia(title,anime).catch(()=>null),synonym=(media?.synonyms||[]).map(clean).find(value=>/[가-힣]{2}/.test(value));if(synonym)return synonym;
   const malId=Number(anime.malId)||media?.idMal||null,anilistId=Number(anime.anilistId)||media?.id||null;
@@ -1417,12 +1492,13 @@ async function resolveDisplayTitle(anime={}){
   const title=String(anime.title||'').trim();
   // Names are shown cleaned and with their season (see withSeason). TMDB's name comes first: one filled in from Wikidata
   // by the catalog index, or kept from before names said where they came from, is looked up again once (with a TMDB key).
-  const stale=cached&&!hasHangul(title)&&tmdbKey()&&(!cached.src||cached.src==='wikidata');
+  // A work kept without a Korean name from before Anissia was asked is looked up again once.
+  const stale=cached&&!hasHangul(title)&&(tmdbKey()&&(!cached.src||cached.src==='wikidata')||!cached.ko&&!cached.anissia);
   if(cached&&!stale&&Date.now()-cached.time<DISPLAY_TITLE_TTL)return {key,ko:withSeason(cached.ko||'',title,anime.type),en:cached.en||''};
   const ko=hasHangul(title)?title:await displayKoreanTitle(title,anime).catch(()=>'');
   const en=await englishTitleFor(anime).catch(()=>'');
   const merged={ko:ko||cached?.ko||'',en:en||cached?.en||''};
-  store[key]={...merged,src:'lookup',time:Date.now()};saveDisplayTitles();
+  store[key]={...merged,src:'lookup',anissia:true,time:Date.now()};saveDisplayTitles();
   merged.ko=withSeason(merged.ko,title,anime.type);
   return {key,...merged};
 }
@@ -2222,6 +2298,12 @@ async function findAnissiaSubtitle(title,episode,{originalTitle='',offsets=[],ma
     if(/^(?:kairan03|csora556)\.blogspot\.com$/i.test(host))continue;
     try{
       let matches=[];
+      // A maker whose page is a Google Drive folder (수퍼소닉EX): the folder itself is the post, its files are picked by
+      // episode number (downloadCommunityMatch lists it). It was passed over before, as neither a blog nor Naver.
+      if(driveFolderId(caption.website)){
+        const match={post:{title:anime.subject,url:caption.website,html:''},links:[caption.website],linkInfo:[{href:caption.website,label:'',tier:0}],episode,strict:true,bundle:true,season:askedSeason??1,fileSeason:askedSeason};
+        try{const result=await downloadCommunityMatch(match,'anissia',anime.subject,episode);return {...result,maker:caption.name,anissiaTitle:anime.subject}}catch{continue}
+      }
       // The post Anissia links belongs to this anime even when the maker spells the title differently
       // ("후리렌 1기(完)" for 장송의 프리렌), so it is ranked under the Anissia title.
       const naver=naverBlogRef(caption.website);

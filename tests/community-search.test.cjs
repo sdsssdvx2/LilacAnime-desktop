@@ -18,7 +18,8 @@ function setup(extra = {}) {
   for (const [start, end] of [
     ['function simpleTitle(', '// Same as Android KairanSubtitleService'],
     ['function communitySeason(', 'const COMMUNITY_FILE='],
-    ['function rankCommunityPosts(', '// Episodes of the previous seasons']
+    ['function rankCommunityPosts(', '// Episodes of the previous seasons'],
+    ['function driveFolderId(', 'async function driveFolderEntries(']
   ]) vm.runInContext(section(start, end), context);
   return { context, load(start, end) { vm.runInContext(section(start, end), context); }, advance(ms) { now += ms; } };
 }
@@ -280,4 +281,44 @@ test('actual ZIP extraction picks the requested script and isolates sources and 
   assert.equal(new Set(results.map(result => path.dirname(result.path))).size, 4);
   for (const result of results) { assert.match(fs.readFileSync(result.path, 'utf8'), /first/); assert.equal(fs.existsSync(path.join(path.dirname(result.path), 'test.ttf')), true); }
   await assert.rejects(h.context.downloadCommunityMatch({ ...match, episode: 3 }, 'csora', '작품', 3), /이 회차/);
+});
+
+// Anissia's catalog as the Korean name of a show without a TMDB key: matched by the Japanese title, its season and its
+// start date choosing between the entries (a season named without its number, a movie of the same name).
+test('a show is named by the Anissia entry of its Japanese title, season and start date', async () => {
+  const items = [
+    { no: 1, subject: '약사의 혼잣말', original: '薬屋のひとりごと', start: '2023-10-22' },
+    { no: 2, subject: '약사의 혼잣말 2기', original: '薬屋のひとりごと 第2期', start: '2025-01-10' },
+    { no: 3, subject: '약사의 혼잣말 3기', original: '薬屋のひとりごと', start: '2026-10-02' },
+    { no: 4, subject: '극장판 약사의 혼잣말', original: '劇場版 薬屋のひとりごと', start: '2026-12-11' },
+    { no: 5, subject: '반딧불이의 혼례', original: 'ホタルの嫁入り', start: '2026-10-03' },
+    { no: 6, subject: '란마 1/2 (2024) 3기', original: 'らんま1/2 第3期', start: '2026-10-04' },
+  ];
+  let info = null;
+  const { context: c, load } = setup({ anissiaCatalog: async () => items, nativeInfo: async () => info });
+  load("const JAPANESE_SEASON=", 'async function koreanTitleCandidates(');
+  const name = async (native, start, format = 'TV', title = '') => { info = { native, start: Date.parse(start), format }; return c.anissiaKoreanTitle({}, title); };
+  assert.equal(await name('薬屋のひとりごと 第3期', '2026-10-02'), '약사의 혼잣말 3기');
+  assert.equal(await name('薬屋のひとりごと 第2期', '2025-01-10'), '약사의 혼잣말 2기');
+  assert.equal(await name('薬屋のひとりごと', '2023-10-22'), '약사의 혼잣말');
+  assert.equal(await name('劇場版 薬屋のひとりごと', '2026-12-11', 'MOVIE'), '극장판 약사의 혼잣말');
+  assert.equal(await name('ホタルの嫁入り', '2026-10-03'), '반딧불이의 혼례');
+  assert.equal(await name('らんま1/2 第3期', '2026-10-04'), '란마 1/2 (2024) 3기');
+  assert.equal(await name('進撃の巨人', '2013-04-07'), '', 'not in the catalog');
+  assert.equal(await name('薬屋のひとりごと 第4期', '2028-01-01'), '', 'a season Anissia does not have yet');
+});
+
+// A maker whose Anissia page is a Google Drive folder (수퍼소닉EX): the folder is downloaded as the episode's post (its
+// files picked by number), not passed over for being neither a blog nor Naver.
+test('an Anissia maker linking a Google Drive folder is searched in that folder', async () => {
+  const folder = 'https://drive.google.com/drive/folders/1p25lnE0v1SOXkwjMlJi5Iohp4ndKTxQI', asked = [];
+  const h = setup({
+    anissiaMakers: async () => ({ anime: { subject: '전생했더니 검이었습니다 2기' }, captions: [{ name: '수퍼소닉EX', website: folder }] }),
+    naverBlogRef: () => null, anissiaLinkedPost: async () => null, communityPosts: async () => [],
+    downloadCommunityMatch: async (match, source, title, episode) => { asked.push([match.links[0], match.episode, match.fileSeason, title, episode]); return { path: 'S02E04.vtt' }; }
+  });
+  h.load('async function findAnissiaSubtitle(', 'async function downloadHls(');
+  const result = await h.context.findAnissiaSubtitle('전생했더니 검이었습니다 2기', 4, {});
+  assert.equal(result.path, 'S02E04.vtt'); assert.equal(result.maker, '수퍼소닉EX');
+  assert.deepEqual(asked, [[folder, 4, 2, '전생했더니 검이었습니다 2기', 4]]);
 });
