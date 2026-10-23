@@ -46,7 +46,7 @@ jobs:
       - name: Syntax-check R2P additions
         shell: powershell
         run: |
-          foreach($s in @('scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
+          foreach($s in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
       - name: Apply qualified R2I through R2P transforms
         shell: powershell
         run: |
@@ -69,6 +69,7 @@ jobs:
             'scripts/apply-libmpv-r2e-native-command-gates.cjs',
             'scripts/apply-libmpv-r2m-finalize.cjs',
             'scripts/apply-libmpv-r2n-webgpu-pip.cjs',
+            'scripts/normalize-libmpv-r2p-subtitle-anchor.cjs',
             'scripts/apply-libmpv-r2p-subtitle-ui.cjs')
           foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
           node scripts/rebundle-libmpv-r2p.cjs
