@@ -1,0 +1,34 @@
+appId: com.lilac.anime.libmpvhardwarequalification.immediatelifetime.e44
+productName: LilacLibmpvHardwareQualificationImmediateLifetimeElectron44
+electronVersion: 44.9.3
+directories:
+  output: dist-libmpv-hardware-qualification-r2f-e44
+files:
+  - electron/libmpv-hardware-qualification.cjs
+  - electron/libmpv-shared-main.cjs
+  - electron/mpv-relay.cjs
+  - electron/flix-proxy.cjs
+  - electron/preload-libmpv-shared.generated.cjs
+  - electron/lilac-libmpv-player-bridge.node
+  - electron/libmpv-2.dll
+  - src/libmpv-shared-entry.js
+  - src/libmpv-shared.generated.js
+  - package.json
+  - build/icon.ico
+asarUnpack:
+  - electron/lilac-libmpv-player-bridge.node
+  - electron/libmpv-2.dll
+extraResources:
+  - from: release-probe
+    to: release-probe
+    filter:
+      - qualification-manifest.json
+      - fullhd-av.mp4
+extraMetadata:
+  main: electron/libmpv-hardware-qualification.cjs
+win:
+  icon: build/icon.ico
+  executableName: LilacLibmpvHardwareQualificationImmediateLifetimeElectron44
+  target:
+    - portable
+  artifactName: LilacLibmpvHardwareQualification-ImmediateLifetime-Electron44.exe
