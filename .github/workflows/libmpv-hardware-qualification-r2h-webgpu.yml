@@ -1,4 +1,4 @@
-name: Libmpv R2H WebGPU copy qualification
+name: Libmpv R2I WebGPU pipeline headroom qualification
 
 on:
   push:
@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: lilac-libmpv-hwq-r2h-webgpu
+  group: lilac-libmpv-hwq-r2i-pipeline
   cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
-  build-r2h-webgpu-qualification:
+  build-r2i-pipeline-qualification:
     runs-on: windows-latest
     timeout-minutes: 55
     steps:
@@ -62,11 +62,12 @@ jobs:
       - name: Install baseline dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Apply production transforms and isolated R2H WebGPU copy
+      - name: Apply production transforms and isolated R2I pipeline gate
         run: |
           node --check scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
           node --check scripts/apply-libmpv-r2g-electron44-releasefix.cjs
           node --check scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node --check scripts/apply-libmpv-r2i-pipeline-headroom.cjs
           node --check scripts/apply-libmpv-r2h-bundle-marker-fix.cjs
           node scripts/apply-libmpv-d2-diagnostics.cjs
           node scripts/apply-libmpv-r2-runtime-fixes.cjs
@@ -76,6 +77,7 @@ jobs:
           node scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
           node scripts/apply-libmpv-r2g-electron44-releasefix.cjs
           node scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node scripts/apply-libmpv-r2i-pipeline-headroom.cjs
           node scripts/apply-libmpv-r2h-bundle-marker-fix.cjs
           node scripts/apply-libmpv-shared-texture.cjs
           node scripts/apply-libmpv-r2e-native-command-gates.cjs
@@ -85,7 +87,7 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm install --no-save --no-audit --no-fund node-gyp@12.2.0
-          node -e "const v=require('electron/package.json').version;if(v!=='44.9.3')throw new Error('unexpected Electron '+v);console.log('HWQ_R2H_ELECTRON='+v)"
+          node -e "const v=require('electron/package.json').version;if(v!=='44.9.3')throw new Error('unexpected Electron '+v);console.log('HWQ_R2I_ELECTRON='+v)"
 
       - name: Build exact Electron 44.9.3 ABI libmpv payload
         shell: powershell
@@ -112,12 +114,13 @@ jobs:
           & npx.cmd electron scripts/libmpv-d3d11-stream-smoke.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify strict R2H architecture
+      - name: Verify strict R2I architecture and safety gate
         shell: powershell
         run: |
           node --check electron/libmpv-hardware-qualification.cjs
           $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
           $preload = Get-Content electron/preload-libmpv-shared.generated.cjs -Raw
+          $qualification = Get-Content electron/libmpv-hardware-qualification.cjs -Raw
           $entry = Get-Content src/libmpv-shared-entry.js -Raw
           $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
@@ -130,11 +133,15 @@ jobs:
           foreach ($marker in @('webgpu-copy', 'copyExternalImageToTexture', 'onSubmittedWorkDone', 'videoFramesCreated','videoFramesClosed','textureReleaseCalls','textureReleaseFailures')) {
             if ($preload -notmatch $marker) { throw "R2H semantic marker missing: $marker" }
           }
+          foreach ($marker in @('LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM','TEXTURE_POOL_SLOTS = 24','MAX_PENDING_FRAMES = 12','MAX_AVG_RELEASE_PIPELINE_FRAMES = 8','MAX_PEAK_RELEASE_PIPELINE_FRAMES = 12','avgReleasePipelineFrames','maxReleasePipelineFrames','releaseLatencySafetyLimitMs','throughput: throughputSnapshot')) {
+            if ($qualification -notmatch [regex]::Escape($marker)) { throw "R2I qualification marker missing: $marker" }
+          }
+          if ($qualification -match 'throughput\.avgReleaseLatencyMs > 100' -or $qualification -match 'throughput\.releaseLatencyMaxMs > 300') { throw 'obsolete fixed release latency proxy survived' }
           if ($entry -match "\['sub-add'" -or $entry -notmatch 'pointer-events:none') { throw 'single subtitle/input architecture regressed' }
           if ($player -notmatch 'kSharedTextureSlots = 24') { throw '24-slot native pool missing' }
           if ($player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'native subtitle lockout missing' }
           if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive track metadata leaked' }
-          Write-Host 'LILAC_HWQ_R2H_ARCHITECTURE_OK electron=44.9.3 renderer=webgpu-copy semanticMarkers=true'
+          Write-Host 'LILAC_HWQ_R2I_ARCHITECTURE_OK electron=44.9.3 renderer=webgpu-copy slots=24 maxPending=12 avgPipeline=8 peakPipeline=12'
 
       - name: Build deterministic 1080p H264 AAC fixture and manifest
         shell: powershell
@@ -165,15 +172,18 @@ jobs:
           foreach ($item in $payloadFiles.GetEnumerator()) { $hashes[$item.Key] = (Get-FileHash $item.Value -Algorithm SHA256).Hash.ToLowerInvariant() }
           $manifest = [ordered]@{
             schema = 1
-            qualificationId = 'LILAC-LIBMPV-HWQ-R2H-WEBGPU-COPY'
+            qualificationId = 'LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM'
             commitSha = $env:GITHUB_SHA
             electronVersion = '44.9.3'
             libmpvArchiveSha256 = 'efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633'
             acceptance = [ordered]@{
               minPresentedFps = 20
               maxBackpressureRatio = 0.20
-              avgReleaseLatencyMaxMs = 100
-              peakReleaseLatencyMaxMs = 300
+              texturePoolSlots = 24
+              maxPendingFrames = 12
+              maxAvgReleasePipelineFrames = 8
+              maxPeakReleasePipelineFrames = 12
+              absolutePeakReleaseLatencyMaxMs = 500
               maxInputLatencyMs = 500
               video = '1920x1080 H264 24000/1001'
               audio = 'AAC 48kHz'
@@ -188,6 +198,7 @@ jobs:
               immediateFrameLifetime = $true
               electron44SharedTextureReleaseFix = $true
               webgpuCopyRenderer = $true
+              pipelineHeadroomGate = $true
               nativeSubtitleRendererLockedOut = $true
               sensitiveMetadataGatePassed = $true
             }
@@ -196,62 +207,63 @@ jobs:
           $manifestPath = Join-Path $probe 'qualification-manifest.json'
           $manifestJson = $manifest | ConvertTo-Json -Depth 8
           [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding($false)))
-          & node -e "const fs=require('fs');const p=process.argv[1];const s=fs.readFileSync(p,'utf8');JSON.parse(s);if(s.charCodeAt(0)===0xFEFF)throw new Error('manifest contains BOM');console.log('HWQ_R2H_MANIFEST_OK')" $manifestPath
+          & node -e "const fs=require('fs');const p=process.argv[1];const s=fs.readFileSync(p,'utf8');JSON.parse(s);if(s.charCodeAt(0)===0xFEFF)throw new Error('manifest contains BOM');console.log('HWQ_R2I_MANIFEST_OK')" $manifestPath
           if ($LASTEXITCODE -ne 0) { throw 'qualification manifest verification failed' }
-          Write-Host "HWQ_R2H_FIXTURE_BYTES=$((Get-Item $fixture).Length)"
-          Write-Host "HWQ_R2H_MANIFEST_SHA256=$((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+          Write-Host "HWQ_R2I_FIXTURE_BYTES=$((Get-Item $fixture).Length)"
+          Write-Host "HWQ_R2I_MANIFEST_SHA256=$((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())"
 
-      - name: Build portable R2H qualification EXE
+      - name: Build portable R2I qualification EXE
         run: npx electron-builder --config electron-builder.libmpv-hardware-qualification-r2h-webgpu.yml --publish never
 
-      - name: Verify packaged R2H payload
+      - name: Verify packaged R2I payload
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = Resolve-Path 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe'
+          $exe = Resolve-Path 'dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe'
           $resultPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\LilacLibmpvHardwareQualification-result.json'
           Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
           $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--verify-only') -Wait -PassThru
-          if (-not (Test-Path $resultPath)) { throw "R2H self-check produced no result file; exit=$($proc.ExitCode)" }
+          if (-not (Test-Path $resultPath)) { throw "R2I self-check produced no result file; exit=$($proc.ExitCode)" }
           $report = Get-Content $resultPath -Raw | ConvertFrom-Json
-          Write-Host "LILAC_HWQ_R2H_VERIFY_REPORT=$($report | ConvertTo-Json -Depth 8 -Compress)"
-          if ($proc.ExitCode -ne 0) { throw "R2H self-check failed: $($report.error)" }
-          if ($report.pass -ne $true -or $report.classification -ne 'PACKAGED_PAYLOAD_VERIFIED') { throw "R2H payload did not verify: $($report.classification)" }
+          Write-Host "LILAC_HWQ_R2I_VERIFY_REPORT=$($report | ConvertTo-Json -Depth 8 -Compress)"
+          if ($proc.ExitCode -ne 0) { throw "R2I self-check failed: $($report.error)" }
+          if ($report.pass -ne $true -or $report.classification -ne 'PACKAGED_PAYLOAD_VERIFIED') { throw "R2I payload did not verify: $($report.classification)" }
           if ($report.electronVersion -ne '44.9.3') { throw "Packaged Electron mismatch: $($report.electronVersion)" }
-          if ($report.qualificationId -ne 'LILAC-LIBMPV-HWQ-R2H-WEBGPU-COPY') { throw "Qualification ID mismatch: $($report.qualificationId)" }
-          if ($report.architecture.immediateFrameRelease -ne $true -or $report.architecture.lifetimeDiagnostics -ne $true -or $report.architecture.gpuCopyRenderer -ne $true) { throw 'Packaged R2H architecture marker missing' }
-          Write-Host 'LILAC_HWQ_R2H_PORTABLE_PAYLOAD_OK'
+          if ($report.qualificationId -ne 'LILAC-LIBMPV-HWQ-R2I-PIPELINE-HEADROOM') { throw "Qualification ID mismatch: $($report.qualificationId)" }
+          if ($report.architecture.immediateFrameRelease -ne $true -or $report.architecture.lifetimeDiagnostics -ne $true -or $report.architecture.gpuCopyRenderer -ne $true) { throw 'Packaged R2I architecture marker missing' }
+          if ($report.acceptance.texturePoolSlots -ne 24 -or $report.acceptance.maxPendingFrames -ne 12 -or $report.acceptance.maxPeakReleasePipelineFrames -ne 12) { throw 'Packaged R2I headroom acceptance mismatch' }
+          Write-Host 'LILAC_HWQ_R2I_PORTABLE_PAYLOAD_OK'
 
       - name: Qualification checksum
         shell: powershell
         run: |
-          $exe = Get-Item dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe
+          $exe = Get-Item dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $shaFile = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt'
+          $shaFile = 'dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.sha256.txt'
           Set-Content $shaFile "$hash  $($exe.Name)" -Encoding ascii
-          Write-Host "HWQ_R2H_EXE_BYTES=$($exe.Length)"
-          Write-Host "HWQ_R2H_EXE_SHA256=$hash"
+          Write-Host "HWQ_R2I_EXE_BYTES=$($exe.Length)"
+          Write-Host "HWQ_R2I_EXE_SHA256=$hash"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LilacLibmpvHardwareQualification-WebGPUCopy-${{ github.sha }}
+          name: LilacLibmpvHardwareQualification-WebGPUPipeline-${{ github.sha }}
           path: |
-            dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe
-            dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt
+            dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe
+            dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.sha256.txt
             release-probe/qualification-manifest.json
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish R2H qualification prerelease
+      - name: Publish R2I qualification prerelease
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $short = $env:GITHUB_SHA.Substring(0, 12)
-          $tag = "libmpv-hwq-r2h-webgpu-$short"
-          $exe = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe'
-          $sha = 'dist-libmpv-hardware-qualification-r2h-webgpu/LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.sha256.txt'
+          $tag = "libmpv-hwq-r2i-pipeline-$short"
+          $exe = 'dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe'
+          $sha = 'dist-libmpv-hardware-qualification-r2i-pipeline/LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.sha256.txt'
           $manifest = 'release-probe/qualification-manifest.json'
           $saved = $ErrorActionPreference
           $ErrorActionPreference = 'Continue'
@@ -260,17 +272,17 @@ jobs:
           $ErrorActionPreference = $saved
           if ($exists) {
             & gh release upload $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'R2H qualification release upload failed' }
+            if ($LASTEXITCODE -ne 0) { throw 'R2I qualification release upload failed' }
           } else {
             $notes = @"
-          Isolated R2H WebGPU GPU-copy sharedTexture qualification for commit $env:GITHUB_SHA.
+          Isolated R2I WebGPU pipeline-headroom sharedTexture qualification for commit $env:GITHUB_SHA.
 
-          This is NOT a LilacAnime installer. It replaces the direct Canvas2D VideoFrame draw with an explicit WebGPU GPU-to-GPU copy while preserving R2F immediate source release. Final installer generation remains blocked until the real hardware gate passes.
+          This is NOT a LilacAnime installer. It keeps the R2H WebGPU GPU-copy renderer and all lifetime/throughput/failure gates. The obsolete fixed 100 ms average-release proxy is replaced by direct 24-slot pool safety: max pending 12, average release pipeline 8 frames, peak pipeline 12 frames, and a measured-throughput peak latency bound capped at 500 ms. Final installer generation remains blocked until the complete real-hardware gate passes.
           "@
-            & gh release create $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Lilac libmpv R2H WebGPU qualification $short" --notes $notes --prerelease
-            if ($LASTEXITCODE -ne 0) { throw 'R2H qualification prerelease creation failed' }
+            & gh release create $tag $exe $sha $manifest --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Lilac libmpv R2I pipeline qualification $short" --notes $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'R2I qualification prerelease creation failed' }
           }
           $url = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json url --jq .url
-          if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'R2H prerelease URL lookup failed' }
-          Write-Host "LILAC_HWQ_R2H_RELEASE_TAG=$tag"
-          Write-Host "LILAC_HWQ_R2H_RELEASE_URL=$url"
+          if ($LASTEXITCODE -ne 0 -or -not $url) { throw 'R2I prerelease URL lookup failed' }
+          Write-Host "LILAC_HWQ_R2I_RELEASE_TAG=$tag"
+          Write-Host "LILAC_HWQ_R2I_RELEASE_URL=$url"
