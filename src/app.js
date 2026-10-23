@@ -542,7 +542,7 @@ function escapeHtml(v=''){const d=document.createElement('div');d.textContent=v;
 // Subtitle currently applied. ASS subtitles render through libass (ass-renderer.js) while
 // "ASS 자막 효과" is on; the WebVTT copy is the simplified fallback, as on Android.
 let currentSubtitle=null,subtitleFontPromise=null;
-const SUBTITLE_SOURCE_LABELS={linkkf:'Linkkf',reanime:'Re:Anime',kairan:'Kairan',csora:'Csora',anissia:'Anissia',jimaku:'Jimaku',user:'사용자',provider:'제공',download:'다운로드',gemini:'AI 번역'};
+const SUBTITLE_SOURCE_LABELS={linkkf:'Linkkf',reanime:'Re:Anime',kairan:'Kairan',csora:'Csora',anissia:'Anissia',jimaku:'Jimaku',user:'사용자',provider:'제공',download:'다운로드',gemini:'AI 번역',whisper:'Whisper'};
 function assEffectsEnabled(){return localStorage.getItem('assEffects')!=='false'}
 // 기본 자막 폰트 (기본체 / 나눔고딕 / 명조체 or a font file) as {family, data}, shared by VTT and ASS.
 function subtitleFontData(){subtitleFontPromise ||= window.lilac.defaultSubtitleFont(localStorage.getItem('subtitleFont')||'기본체',localStorage.getItem('subtitleFontPath')||'').then(font=>font?.data?{family:font.family,data:new Uint8Array(font.data)}:null).catch(()=>null);return subtitleFontPromise}
@@ -605,7 +605,7 @@ function activeSubtitleSource(){const context=currentPlaybackContext;if(context.
   if(context.pressedSource==='ai'&&translatingNow())return 'ai';const source=currentSubtitle?.source||'';return source==='gemini'?'ai':source}
 function pressSubtitleSource(source){Object.assign(currentPlaybackContext,{pressedSource:source,pressedFor:currentSubtitle})}
 function openSheet(){const picked=currentPlaybackContext.sheetSource;return picked!==undefined?picked:['reanime','jimaku','anissia'].includes(currentSubtitle?.source)?currentSubtitle.source:null}
-function translatableSubtitle(){const source=currentSubtitle?.source;if(source==='jimaku')return currentPlaybackContext.jimakuSubtitle?'jimaku':null;if(source==='user')return currentSubtitle.korean?null:'user';if(source!=='reanime')return null;const track=(currentPlaybackContext.subtitleTracks||[]).find(item=>item.url===currentPlaybackContext.selectedSubtitleTrack);return track&&!isKoreanTrack(track)?'track':null}
+function translatableSubtitle(){const source=currentSubtitle?.source;if(source==='jimaku')return currentPlaybackContext.jimakuSubtitle?'jimaku':null;if(source==='user')return currentSubtitle.korean?null:'user';if(source==='whisper')return 'whisper';if(source!=='reanime')return null;const track=(currentPlaybackContext.subtitleTracks||[]).find(item=>item.url===currentPlaybackContext.selectedSubtitleTrack);return track&&!isKoreanTrack(track)?'track':null}
 // A machine translation on screen whose source file is still there can be made again (다시 번역): the saved one is
 // passed over and the new one takes its place, by the API or the local AI.
 function retranslatable(){return currentSubtitle?.source==='gemini'&&currentSubtitle.from?currentSubtitle:null}
@@ -743,6 +743,8 @@ async function runSubtitleSync(auto=false){
 // so it is not run again when that file was.
 let waitingSync=null;
 function checkSubtitleSync(subtitle){
+  // A Whisper subtitle has its times from this episode's own speech, and so has a translation made from it: not synced.
+  if(subtitle&&[subtitle.path,subtitle.from].some(file=>/[\\/]whisper[\\/][^\\/]+\.vtt$/i.test(file||'')))return;
   if(localStorage.getItem('subtitleSyncCheck')==='false'||!subtitle?.path||syncChecked.has(subtitle.path)||subtitle.from&&syncChecked.has(subtitle.from)||subtitle.label?.endsWith(SYNCED))return;
   const requestId=playbackRequestId,video=$('#video');
   const go=()=>{
@@ -798,6 +800,8 @@ async function ensureSubtitle(stream,title,episode,{skipSaved=false}={}){
   const before=currentSubtitle,superseded=()=>requestId!==playbackRequestId||Boolean(currentPlaybackContext.selectedSubtitleTrack)||currentSubtitle!==before;$('#subtitleState').textContent='온라인 자막을 찾는 중...';
   const found=await onlineSubtitleFor(title,episode,subtitleSearchAnime());if(superseded())return false;if(found){attachOnlineSubtitle(found);return true}
   if(await autoTranslate(superseded))return true;
+  // Nothing to show or translate: Whisper makes one from the speech (설정 > Whisper AI 자막 > 자동으로 만들기).
+  if(!superseded()&&typeof whisperWhenNoSubtitle==='function'&&await whisperWhenNoSubtitle())return true;
   if(superseded())return false;const needsTmdb=currentPlaybackContext.episode?.provider==='reanime'&&!(await window.lilac.tmdbKey().catch(()=>({})))?.key;if(superseded())return false;$('#subtitleState').textContent=needsTmdb?'Kairan/Csora 자막을 찾지 못했습니다. 설정 > 한국어 제목 검색에서 TMDB API 키를 넣으면 더 많은 작품을 찾을 수 있어요.':trackProvider()&&currentPlaybackContext.subtitleTracks?.length?`한국어 자막이 없습니다. 아래 ${trackSourceLabel()} 트랙에서 다른 언어를 고르거나 내 자막 파일을 열 수 있어요.`:'자동으로 찾은 자막이 없습니다. 내 자막 파일을 열 수 있어요.';return false;
 }
 // No Korean subtitle anywhere (no Korean track, nothing from Kairan / Csora / Anissia): the best source is put on and
@@ -1034,7 +1038,7 @@ async function prepareNext(){
 }
 function translateJimaku(provider='cloud',manual=false){const subtitle=currentPlaybackContext.jimakuSubtitle;if(subtitle)runTranslation({file:async()=>subtitle,name:'Jimaku',button:provider==='local'?$('#translateNowLocal'):$('#translateNow'),provider,manual})}
 // The one 번역 row translates the subtitle on screen: the picked Jimaku file, or the picked track.
-const translateShown=provider=>{const kind=translatableSubtitle(),button=provider==='local'?$('#translateNowLocal'):$('#translateNow'),again=retranslatable();if(again)return runTranslation({file:async()=>({path:again.from}),name:again.fromName||'자막',button,provider,manual:true,fresh:true});if(kind==='jimaku')return translateJimaku(provider,true);if(kind==='user'){const path=currentSubtitle.path;return runTranslation({file:async()=>({path}),name:'내 자막',button,provider,manual:true})}return translateSubtitleTrack(provider,true)};
+const translateShown=provider=>{const kind=translatableSubtitle(),button=provider==='local'?$('#translateNowLocal'):$('#translateNow'),again=retranslatable();if(again)return runTranslation({file:async()=>({path:again.from}),name:again.fromName||'자막',button,provider,manual:true,fresh:true});if(kind==='jimaku')return translateJimaku(provider,true);if(kind==='user'||kind==='whisper'){const path=currentSubtitle.path;return runTranslation({file:async()=>({path}),name:kind==='whisper'?'Whisper':'내 자막',button,provider,manual:true})}return translateSubtitleTrack(provider,true)};
 $('#translateNow').onclick=event=>cancelButtonRun(event.currentTarget)||translateShown('cloud');$('#translateNowLocal').onclick=event=>cancelButtonRun(event.currentTarget)||translateShown('local');
 // A jump while the subtitle on screen is translated: its run translates from there next.
 $('#video').addEventListener('seeked',()=>{if(translating?.path&&translatingNow())window.lilac.jumpTranslation(translating.run,$('#video').currentTime||0).catch(()=>{})});

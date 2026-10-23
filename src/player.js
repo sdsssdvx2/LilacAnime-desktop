@@ -29,7 +29,7 @@ function applyPlayerAspect() {
   $('#video').style.objectFit = aspect === 'original' ? 'contain' : 'fill';
   $$('#psAspects button').forEach(button => { const selected = button.dataset.aspect === aspect; button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected)); });
   window.LilacAss?.resize();
-  window.LilacAnime4K?.layout();
+  window.LilacAnime4K?.layout(); window.LilacCleanup?.layout();
 }
 new ResizeObserver(applyPlayerAspect).observe($('#immersivePlayer'));
 $('#video').addEventListener('loadedmetadata', applyPlayerAspect);
@@ -61,7 +61,7 @@ function openPlayerSettings(open, focusSection = null) {
 
 // Mirrors the settings page so both edit the same stored values.
 function syncPlayerSettingsUI() {
-  window.LilacAnime4K?.syncUI();
+  window.LilacAnime4K?.syncUI(); window.LilacCleanup?.syncUI();
   $('#psAutoPlay').checked = playerFlag('playerAutoPlay');
   $('#psSkipButton').checked = playerFlag('playerSkipButton');
   $('#psAutoSkip').checked = playerFlag('playerAutoSkip', false);
@@ -246,6 +246,8 @@ async function switchSubtitleSource(source) {
   ++subtitleSearchId;
   // Jimaku is picked by hand per episode (a list of files), so it is not kept as the default source.
   if (source === 'jimaku') { openJimaku(); return; }
+  // Whisper: the episode's speech recognized on this PC (src/whisper.js); pressed while it runs, it stops.
+  if (source === 'whisper') { currentPlaybackContext.sheetSource = null; startWhisper(true); return; }
   // AI 번역: the episode's machine translation, else one made now from the best source (Jimaku, then the site's Japanese
   // and English tracks), with the side 자막 자동 번역 picks or whichever is set up; the series goes on in it. Not kept as
   // the default source (each episode's translation is looked for first anyway).
@@ -541,7 +543,7 @@ function drawPipFrame() {
   const width = Math.min(sourceWidth, 1280), height = Math.max(1, Math.round(width / ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, width, height);
-  if (video.readyState >= 2) ctx.drawImage(window.LilacAnime4K?.frame() || video, 0, 0, width, height);
+  if (video.readyState >= 2) ctx.drawImage(window.LilacAnime4K?.frame() || window.LilacCleanup?.frame() || video, 0, 0, width, height);
   if (!$('#subtitleEnabled')?.checked) return;
   if (currentSubtitle?.assRendering) { const ass = window.LilacAss?.frame(video); if (ass?.width) ctx.drawImage(ass, 0, 0, width, height); }
   else drawPipCues(ctx, width, height, video);
@@ -773,7 +775,7 @@ async function takeScreenshot() {
   const name = `${($('#playerTitle').textContent || 'LilacAnime').trim()} ${time}`;
   let data = '';
   try {
-    const source = window.LilacAnime4K?.frame() || video;
+    const source = window.LilacAnime4K?.frame() || window.LilacCleanup?.frame() || video;
     const canvas = document.createElement('canvas'); canvas.width = source.width || video.videoWidth; canvas.height = source.height || video.videoHeight;
     canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height); data = canvas.toDataURL('image/png');
   } catch { /* a tainted canvas: taken from the window below */ }
@@ -870,6 +872,7 @@ $('#unlockPlayer').onclick = event => { event.stopPropagation(); setPlayerLocked
 // Settings stay open while the pointer is on them; a click on the video closes them (Android dropdown).
 $('#playerSettings').addEventListener('pointerdown', event => event.stopPropagation());
 $('#video').addEventListener('ratechange', () => { if (playerSettingsOpen()) syncPlayerSettingsUI(); });
+window.LilacCleanup?.init({ getAspect: playerAspect, notify: toast });
 window.LilacAnime4K?.init({ getAspect: playerAspect, notify: toast });
 syncPlayerSettingsUI();
 applyPlayerAspect();

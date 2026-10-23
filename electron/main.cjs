@@ -28,6 +28,7 @@ const { SubtitleStore } = require('./subtitle-store.cjs');
 const { DeviceSync } = require('./device-sync.cjs');
 const { createTranslator } = require('./subtitle-translator.cjs');
 const { createSubtitleSync } = require('./subtitle-sync.cjs');
+const { createWhisper } = require('./whisper.cjs');
 let subtitleTranslator = null;
 const translator = () => subtitleTranslator ||= createTranslator(app.getPath('userData'));
 
@@ -2639,7 +2640,9 @@ app.whenReady().then(async () => {
   // 자막 싱크 맞추기: sync() runs ffsubsync over the whole episode and gives a retimed copy of the subtitle (its ASS too),
   // for every subtitle put on (in the background) and for the button. ffsubsync is installed without asking (as the
   // OP/ED analysis works), its progress shown on the player.
-  subtitleSync=createSubtitleSync({userData:app.getPath('userData'),ffmpegPath:require('ffmpeg-static').replace('app.asar','app.asar.unpacked'),managedRoot:subtitleStore.managedRoot});
+  // Remote HLS is read through the local proxy (disguised segments), as Whisper reads it.
+  const ffmpegStream=(url,headers)=>createFlixProxyUrl(url,'',{...headers,'User-Agent':headers?.['User-Agent']||LINKKF_UA});
+  subtitleSync=createSubtitleSync({userData:app.getPath('userData'),ffmpegPath:require('ffmpeg-static').replace('app.asar','app.asar.unpacked'),managedRoot:subtitleStore.managedRoot,proxy:ffmpegStream});
   ipcMain.handle('subtitle-sync:run',async(event,request={})=>{
     const status=(message,progress=null)=>{if(!event.sender.isDestroyed())event.sender.send('subtitle-sync:status',{message,progress})};
     try{return await subtitleSync.sync({...request,status})}catch(error){if(error.canceled)return {canceled:true};throw error}
@@ -2649,6 +2652,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('subtitle-sync:prepare',()=>{if(!subtitleSync.installed())subtitleSync.install().catch(()=>{});return true});
   ipcMain.handle('subtitle-sync:retime',(_,request={})=>subtitleSync.retime({subtitlePath:String(request.subtitlePath||''),assPath:request.assPath?String(request.assPath):null,offset:Number(request.offset),scale:Number(request.scale)||1,segments:Array.isArray(request.segments)?request.segments.map(segment=>({from:Number(segment?.from),shift:Number(segment?.shift)})):null}));
   ipcMain.handle('subtitle-sync:cancel',()=>{subtitleSync.cancel();return true});
+  // Whisper AI 자막: the episode's Japanese speech made into a subtitle (see whisper.cjs). Lines and progress go to the
+  // window that asked, as they come.
+  const whisper=createWhisper({userData:app.getPath('userData'),ffmpegPath:require('ffmpeg-static').replace('app.asar','app.asar.unpacked'),subtitleRoot:subtitleStore.managedRoot,proxy:ffmpegStream});
+  const whisperEvent=(event,value)=>{if(!event.sender.isDestroyed())event.sender.send('whisper:progress',value)};
+  ipcMain.handle('whisper:status',()=>whisper.status());
+  ipcMain.handle('whisper:select',(_,id)=>whisper.select(String(id||'')));
+  ipcMain.handle('whisper:install',event=>whisper.install((message,progress)=>whisperEvent(event,{kind:'install',message,progress})));
+  ipcMain.handle('whisper:download',(event,id)=>whisper.downloadModel(String(id||''),progress=>whisperEvent(event,{kind:'model',id,progress})));
+  ipcMain.handle('whisper:remove',(_,id)=>whisper.removeModel(String(id||'')));
+  ipcMain.handle('whisper:transcribe',async(event,request={})=>{
+    const id=Number(request.id)||0;
+    try{return await whisper.transcribe({key:String(request.key||''),videoUrl:String(request.videoUrl||''),headers:request.headers||{},startAt:Number(request.startAt)||0,duration:Number(request.duration)||0},value=>whisperEvent(event,{kind:'run',id,...value}))}
+    catch(error){if(error.canceled)return {canceled:true};throw error}
+  });
+  ipcMain.handle('whisper:cancel',()=>whisper.cancel());
   // 설정 > 자막 캐시: the subtitle files no saved subtitle uses (translations, downloads, partial results), removed by
   // hand, and by themselves a minute after start once a month old.
   ipcMain.handle('subtitle-cache:usage',()=>subtitleStore.usage());

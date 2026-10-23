@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const SOURCES = ['linkkf', 'reanime', 'kairan', 'csora', 'anissia', 'jimaku', 'user', 'provider', 'download', 'gemini'];
+const SOURCES = ['linkkf', 'reanime', 'kairan', 'csora', 'anissia', 'jimaku', 'user', 'provider', 'download', 'gemini', 'whisper'];
 
 class SubtitleStore {
   // reconvert(vttPath): makes a converted VTT again from the SMI / SRT / ASS file beside it (false when there is none).

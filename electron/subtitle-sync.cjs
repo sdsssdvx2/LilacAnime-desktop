@@ -305,7 +305,10 @@ function parseResult(output) {
   return offset ? { offset: Number(offset[1]), scale: scale ? Number(scale[1]) : 1, score: score ? Number(score[1]) : null } : null;
 }
 
-function createSubtitleSync({ userData, ffmpegPath, managedRoot }) {
+// proxy(url, headers): a stream address FFmpeg can read. Some hosts (Miruro's) disguise the segments as pictures and
+// FFmpeg took the stream for one ("Stream map '0:a:0' matches no streams"): the app's local proxy cuts them at their
+// video data, as it does for Whisper.
+function createSubtitleSync({ userData, ffmpegPath, managedRoot, proxy = url => Promise.resolve(url) }) {
   const root = path.join(userData, 'tools', 'ffsubsync'), marker = path.join(root, 'installed.json');
   const venv = path.join(root, 'venv'), exe = path.join(venv, WIN ? 'Scripts' : 'bin', WIN ? 'ffsubsync.exe' : 'ffsubsync');
   const uvEnv = () => ({ ...process.env, UV_CACHE_DIR: path.join(root, 'cache'), UV_PYTHON_INSTALL_DIR: path.join(root, 'python'), UV_NO_PROGRESS: '1' });
@@ -382,7 +385,8 @@ function createSubtitleSync({ userData, ffmpegPath, managedRoot }) {
   // The episode's audio as 16 kHz stereo WAV (the centre is taken from it, see sync); progress from FFmpeg's time=
   // against the duration.
   async function extractAudio(videoUrl, headers, duration, target, status, signal) {
-    const { input, args } = ffmpegInput(videoUrl, headers);
+    const remoteHls = /^https?:\/\//i.test(videoUrl) && !/^https?:\/\/127\.0\.0\.1[:/]/i.test(videoUrl) && /\.m3u8(?:$|\?)/i.test(videoUrl);
+    const { input, args } = ffmpegInput(remoteHls ? await proxy(videoUrl, headers) : videoUrl, headers);
     await run(ffmpegPath, ['-hide_banner', '-nostdin', '-y', ...args, '-i', input, '-map', '0:a:0', '-vn', '-ac', '2', '-ar', '16000', '-c:a', 'pcm_s16le', target], {
       signal, quiet: 90000, onOutput: text => { const time = text.match(/time=(\d+:\d{2}:\d{2}(?:\.\d+)?)/g)?.pop(); if (time && duration > 0) status('영상 음성 읽는 중', Math.min(1, seconds(time.slice(5)) / duration)); },
     });
