@@ -1,11 +1,13 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 
 const root = path.resolve(__dirname, '..');
 const bundlePath = path.join(root, 'src', 'libmpv-shared.generated.js');
+const fixturePath = path.join(os.tmpdir(), `lilac-r2j-vtt-smoke-${process.pid}.html`);
 
 function fail(message, details = null) {
   console.error(`LIBMPV_R2J_VTT_OVERLAY_FAIL ${message}`);
@@ -17,6 +19,7 @@ function fail(message, details = null) {
   await app.whenReady();
   if (!fs.existsSync(bundlePath)) throw new Error('generated shared renderer bundle missing');
   const bundle = fs.readFileSync(bundlePath, 'utf8');
+  fs.writeFileSync(fixturePath, '<!doctype html><meta charset="utf-8"><style>html,body,#playerView{margin:0;width:100%;height:100%;background:#000} lilac-mpv-video{display:block;width:1280px;height:720px}</style><div id="playerView" class="active"></div>');
   const win = new BrowserWindow({
     show: false,
     width: 1280,
@@ -24,7 +27,7 @@ function fail(message, details = null) {
     webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: false, backgroundThrottling: false }
   });
   try {
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><meta charset="utf-8"><style>html,body,#playerView{margin:0;width:100%;height:100%;background:#000} lilac-mpv-video{display:block;width:1280px;height:720px}</style><div id="playerView" class="active"></div>`));
+    await win.loadFile(fixturePath);
     await win.webContents.executeJavaScript(`
       window.__testTime = 1.5;
       window.__commands = [];
@@ -38,6 +41,11 @@ function fail(message, details = null) {
     `);
     await win.webContents.executeJavaScript(bundle);
     const result = await win.webContents.executeJavaScript(`(async () => {
+      localStorage.clear();
+      localStorage.setItem('subtitleSize', '100');
+      localStorage.setItem('vttOutline', '2');
+      localStorage.setItem('vttBold', 'true');
+      localStorage.setItem('subtitlePosition', '12');
       const video = document.createElement('lilac-mpv-video');
       document.querySelector('#playerView').append(video);
       await video.openLilacSource('https://example.invalid/video.m3u8', { hls: true });
@@ -82,6 +90,7 @@ function fail(message, details = null) {
     fail(String(error?.stack || error));
   } finally {
     win.destroy();
+    try { fs.rmSync(fixturePath, { force: true }); } catch {}
     app.quit();
   }
-})().catch(error => { fail(String(error?.stack || error)); app.quit(); });
+})().catch(error => { fail(String(error?.stack || error)); try { fs.rmSync(fixturePath, { force: true }); } catch {} app.quit(); });
