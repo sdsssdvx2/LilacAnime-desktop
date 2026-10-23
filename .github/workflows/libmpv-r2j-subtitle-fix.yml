@@ -1,0 +1,317 @@
+name: Libmpv R2J subtitle fix candidate
+
+on:
+  push:
+    branches: [libmpv-r2j-subtitle-fix]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2j-subtitle-fix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+
+jobs:
+  build-r2j:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+
+      - name: Syntax-check transforms and tests before mutation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($s in @(
+            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
+            'scripts/smoke-libmpv-vtt-overlay.cjs',
+            'scripts/smoke-libmpv-updater-isolation.cjs'
+          )) {
+            node --check $s
+            if ($LASTEXITCODE -ne 0) { throw "syntax check failed: $s" }
+          }
+          Write-Host 'R2J_PATCH_SYNTAX_OK'
+
+      - name: Reproduce R2I runtime and apply R2J subtitle/updater fix
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scripts = @(
+            'scripts/apply-libmpv-d2-diagnostics.cjs',
+            'scripts/apply-libmpv-r2-runtime-fixes.cjs',
+            'scripts/apply-libmpv-r2b-command-import-diagnostics.cjs',
+            'scripts/apply-libmpv-r2c-texture-pool.cjs',
+            'scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs',
+            'scripts/apply-libmpv-r2g-electron44-releasefix.cjs',
+            'scripts/apply-libmpv-r2h-webgpu-copy.cjs',
+            'scripts/apply-libmpv-r2i-pipeline-headroom.cjs',
+            'scripts/apply-libmpv-r2h-bundle-marker-fix.cjs',
+            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
+            'scripts/apply-libmpv-shared-texture.cjs',
+            'scripts/apply-libmpv-r2e-native-command-gates.cjs'
+          )
+          foreach ($s in $scripts) {
+            node --check $s
+            if ($LASTEXITCODE -ne 0) { throw "syntax check failed: $s" }
+            node $s
+            if ($LASTEXITCODE -ne 0) { throw "transform failed: $s" }
+          }
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $installed = node -p "require('electron/package.json').version"
+          if ($installed -ne $env:ELECTRON_VERSION) { throw "Electron mismatch: $installed" }
+          node --check electron/updater.cjs
+          node --check src/libmpv-shared-entry.js
+          node --check src/libmpv-shared.generated.js
+          Write-Host 'R2J_TRANSFORMS_APPLIED_OK'
+
+      - name: Download exact real-hardware-qualified payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $q = Join-Path $env:RUNNER_TEMP 'qualified-r2i'
+          New-Item -ItemType Directory -Force -Path $q | Out-Null
+          & gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if ($LASTEXITCODE -ne 0) { throw 'qualification release download failed' }
+          $exe = Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe'
+          $manifest = Join-Path $q 'qualification-manifest.json'
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestHash = (Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($exeHash -ne $env:QUALIFICATION_EXE_SHA256) { throw "qualification EXE SHA mismatch: $exeHash" }
+          if ($manifestHash -ne $env:QUALIFICATION_MANIFEST_SHA256) { throw "qualification manifest SHA mismatch: $manifestHash" }
+          $m = Get-Content $manifest -Raw | ConvertFrom-Json
+          if ($m.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $m.electronVersion -ne $env:ELECTRON_VERSION) { throw 'qualification provenance mismatch' }
+          "QUALIFICATION_EXE_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QUALIFIED_MANIFEST_PATH=$manifest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "QUALIFICATION_PAYLOAD_BOUND exe=$exeHash manifest=$manifestHash"
+
+      - name: Extract exact qualified native player and libmpv DLL
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = Join-Path $env:RUNNER_TEMP 'r2j-qualified-extract'
+          $nested = Join-Path $env:RUNNER_TEMP 'r2j-qualified-nested'
+          Remove-Item $raw,$nested -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $raw,$nested | Out-Null
+          & 7z.exe x $env:QUALIFICATION_EXE_PATH "-o$raw" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'qualification portable extraction failed' }
+
+          function Find-PayloadFile([string]$name) {
+            return Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'
+          $dll = Find-PayloadFile 'libmpv-2.dll'
+          if (-not $addon -or -not $dll) {
+            $archives = @(Get-ChildItem $raw -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)(\.7z$|\.zip$)' })
+            $i = 0
+            foreach ($archive in $archives) {
+              $i += 1
+              $out = Join-Path $nested ("a$i")
+              New-Item -ItemType Directory -Force -Path $out | Out-Null
+              & 7z.exe x $archive.FullName "-o$out" -y | Out-Null
+              $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'
+              $dll = Find-PayloadFile 'libmpv-2.dll'
+              if ($addon -and $dll) { break }
+            }
+          }
+          if (-not $addon -or -not $dll) { throw 'exact qualified native payload not recoverable' }
+
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          $expectedAddon = [string]$m.payloadSha256.PSObject.Properties['electron/lilac-libmpv-player-bridge.node'].Value
+          $expectedDll = [string]$m.payloadSha256.PSObject.Properties['electron/libmpv-2.dll'].Value
+          $addonHash = (Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $dllHash = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($addonHash -ne $expectedAddon) { throw "qualified addon hash mismatch: $addonHash" }
+          if ($dllHash -ne $expectedDll) { throw "qualified DLL hash mismatch: $dllHash" }
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          "QUALIFIED_ADDON_SHA256=$addonHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QUALIFIED_DLL_SHA256=$dllHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "EXACT_QUALIFIED_NATIVE_REUSED addon=$addonHash dll=$dllHash"
+
+      - name: Prove VTT overlay in a real Electron renderer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & npx.cmd electron scripts/smoke-libmpv-vtt-overlay.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'R2J VTT overlay Electron smoke failed' }
+
+      - name: Prove candidate cannot install stable updates
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/smoke-libmpv-updater-isolation.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'R2J updater isolation smoke failed' }
+
+      - name: Run retained player regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+          $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          foreach ($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-r2-pump-sim.cjs','scripts/smoke-libmpv-relay-av.cjs')) {
+            & npx.cmd electron $s
+            if ($LASTEXITCODE -ne 0) { throw "retained runtime regression failed: $s" }
+          }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'renderer input regression failed' }
+          node --test tests/player-interactions.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'player interaction regression failed' }
+          node scripts/smoke-flix-proxy-fixture.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Flix fixture regression failed' }
+          Write-Host 'R2J_RETAINED_REGRESSIONS_OK'
+
+      - name: Verify R2J architecture and security
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $main = Get-Content electron/main.cjs -Raw
+          $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $renderer = Get-Content src/libmpv-shared-entry.js -Raw
+          $bundle = Get-Content src/libmpv-shared.generated.js -Raw
+          $updater = Get-Content electron/updater.cjs -Raw
+          $player = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          if ($main -notmatch 'contextIsolation:\s*true' -or $main -notmatch 'nodeIntegration:\s*false' -or $main -notmatch 'sandbox:\s*true') { throw 'renderer security settings regressed' }
+          if ($main -match "require\('./mpv-native-main\.cjs'\)") { throw 'legacy HWND path returned' }
+          if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)') { throw 'R2 bridge pacing regressed' }
+          foreach ($required in @('data-lilac-vtt-overlay','refreshSubtitleOverlay','getCueAsHTML','LilacSubtitle')) { if (-not $renderer.Contains($required) -or -not $bundle.Contains($required)) { throw "VTT overlay marker missing: $required" } }
+          if ($renderer -match "\['sub-add'" -or $bundle -match "\['sub-add'") { throw 'native mpv subtitle path returned and could double-render' }
+          foreach ($required in @('this.isolatedCandidate','isolatedChannel: true','if (this.isolatedCandidate) return false')) { if (-not $updater.Contains($required)) { throw "updater isolation marker missing: $required" } }
+          if ($player -notmatch 'kSharedTextureSlots = 24' -or $player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'qualified native subtitle/pool policy regressed' }
+          Write-Host 'R2J_SECURITY_ARCHITECTURE_OK'
+
+      - name: Label isolated R2J candidate
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+          p.version = '0.5.37-libmpv-r2j.rc1';
+          p.build.appId = 'com.lilac.anime.desktop.libmpvr2jcandidate';
+          p.build.productName = 'LilacAnime Libmpv R2J Subtitle Fix';
+          p.build.win.executableName = 'LilacAnime-Libmpv-R2J-SubtitleFix';
+          p.build.win.artifactName = 'LilacAnime-Libmpv-R2J-SubtitleFix-Setup.${ext}';
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          '@ | node
+          if ($LASTEXITCODE -ne 0) { throw 'R2J package metadata update failed' }
+
+      - name: Build Windows R2J installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Verify packaged native identity and subtitle/updater fix
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $unpacked = Get-ChildItem dist -Directory | Where-Object { $_.Name -match 'win.*unpacked' } | Select-Object -First 1
+          if (-not $unpacked) { throw 'win-unpacked output missing' }
+          $addon = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\lilac-libmpv-player-bridge.node'
+          $dll = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\libmpv-2.dll'
+          if (-not (Test-Path $addon) -or -not (Test-Path $dll)) { throw 'packaged native payload missing' }
+          $addonHash = (Get-FileHash $addon -Algorithm SHA256).Hash.ToLowerInvariant()
+          $dllHash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($addonHash -ne $env:QUALIFIED_ADDON_SHA256 -or $dllHash -ne $env:QUALIFIED_DLL_SHA256) { throw 'packaged native payload changed from real-hardware-qualified bytes' }
+          $asar = Join-Path $unpacked.FullName 'resources\app.asar'
+          $out = Join-Path $env:RUNNER_TEMP 'r2j-packaged-asar'
+          Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+          node -e "require('@electron/asar').extractAll(process.argv[1], process.argv[2])" $asar $out
+          if ($LASTEXITCODE -ne 0) { throw 'packaged app.asar extraction failed' }
+          $renderer = Get-Content (Join-Path $out 'src\libmpv-shared.generated.js') -Raw
+          $updater = Get-Content (Join-Path $out 'electron\updater.cjs') -Raw
+          foreach ($required in @('data-lilac-vtt-overlay','getCueAsHTML','LilacSubtitle')) { if (-not $renderer.Contains($required)) { throw "packaged VTT marker missing: $required" } }
+          if ($renderer -match "\['sub-add'") { throw 'packaged native subtitle double-render path returned' }
+          if (-not $updater.Contains('this.isolatedCandidate') -or -not $updater.Contains('isolatedChannel: true')) { throw 'packaged updater isolation missing' }
+          Write-Host "PACKAGED_R2J_VERIFIED addon=$addonHash dll=$dllHash"
+
+      - name: Create checksum and attestation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-Item 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.exe'
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.sha256.txt' "$hash  $($exe.Name)" -Encoding ascii
+          $attestation = [ordered]@{
+            schema = 1
+            releaseType = 'libmpv-r2j-subtitle-fix-prerelease'
+            workflowCommit = $env:GITHUB_SHA
+            baseQualifiedSourceCommit = $env:QUALIFIED_SOURCE_COMMIT
+            qualificationReleaseTag = $env:QUALIFICATION_RELEASE_TAG
+            qualificationExeSha256 = $env:QUALIFICATION_EXE_SHA256
+            qualificationManifestSha256 = $env:QUALIFICATION_MANIFEST_SHA256
+            exactQualifiedNativeAddonSha256 = $env:QUALIFIED_ADDON_SHA256
+            exactQualifiedLibmpvDllSha256 = $env:QUALIFIED_DLL_SHA256
+            changes = @('Lilac-owned WebVTT overlay for custom libmpv element','isolated candidate updater cannot install stable Lilac')
+            installer = [ordered]@{ name = $exe.Name; bytes = [long]$exe.Length; sha256 = $hash }
+          }
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-attestation.json'), ($attestation | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "R2J_INSTALLER_BYTES=$($exe.Length)"
+          Write-Host "R2J_INSTALLER_SHA256=$hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-R2J-SubtitleFix-${{ github.sha }}
+          path: |
+            dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.exe
+            dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.sha256.txt
+            dist/LilacAnime-Libmpv-R2J-SubtitleFix-attestation.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish isolated R2J prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $short = $env:GITHUB_SHA.Substring(0,12)
+          $tag = "libmpv-r2j-subtitle-fix-$short"
+          $exe = 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.exe'
+          $sha = 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-Setup.sha256.txt'
+          $att = 'dist/LilacAnime-Libmpv-R2J-SubtitleFix-attestation.json'
+          $notes = @"
+          R2J subtitle fix candidate based on the real-hardware-qualified R2I libmpv runtime.
+
+          Fixes:
+          - Restores Lilac-owned WebVTT subtitle rendering for the custom libmpv shared-texture element.
+          - Keeps mpv native subtitles disabled, preventing the old double-subtitle bug.
+          - Isolates this candidate from the stable Lilac updater so it cannot silently replace itself with the normal Lilac build.
+          - Reuses the exact real-hardware-qualified native player addon and libmpv DLL bytes.
+          "@
+          $saved = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $saved
+          if ($exists) {
+            & gh release upload $tag $exe $sha $att --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            & gh release create $tag $exe $sha $att --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'LilacAnime libmpv R2J subtitle fix candidate' --notes $notes --prerelease
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'R2J prerelease publish failed' }
+          Write-Host "R2J_RELEASE_TAG=$tag"
