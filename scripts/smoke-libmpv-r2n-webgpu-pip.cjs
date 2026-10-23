@@ -5,6 +5,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 
+// GitHub's Windows hosted runners have no usable physical WebGPU adapter. Chromium's
+// own WebGPU test configuration uses the unsafe WebGPU + SwiftShader adapter switches
+// for GPU-less bots. This tests the browser API path; production never enables them.
+app.commandLine.appendSwitch('enable-unsafe-webgpu');
+app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
+app.commandLine.appendSwitch('enable-dawn-features', 'allow_unsafe_apis');
+app.commandLine.appendSwitch('disable-dawn-features', 'use_dxc');
+app.commandLine.appendSwitch('use-gpu-in-tests');
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitFor(win, expression, timeoutMs, label) {
@@ -46,7 +55,7 @@ button.addEventListener('click',async()=>{probe.clicks++;try{await video.request
     if(typeof canvas.captureStream!=='function')throw new Error('canvas.captureStream unavailable');
     probe.captureStream=true;
     if(!navigator.gpu)throw new Error('WebGPU unavailable');
-    const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});if(!adapter)throw new Error('WebGPU adapter unavailable');
+    const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance',forceFallbackAdapter:true});if(!adapter)throw new Error('WebGPU SwiftShader adapter unavailable');
     const device=await adapter.requestDevice();
     const context=canvas.getContext('webgpu');if(!context)throw new Error('WebGPU canvas context unavailable');
     const format=navigator.gpu.getPreferredCanvasFormat();
@@ -97,8 +106,8 @@ window.__pipCleanup=async()=>{clearInterval(window.__renderTimer);if(document.pi
     if (entered.clicks !== 1) throw new Error(`trusted button click count mismatch: ${entered.clicks}`);
 
     const cleaned = await win.webContents.executeJavaScript('window.__pipCleanup()');
-    console.log(`LIBMPV_R2N_WEBGPU_PIP_REPORT=${JSON.stringify({gpu:entered.gpu,captureStream:entered.captureStream,videoTracks:entered.videoTracks,capturedFrames:entered.capturedFrames,renderedFrames:entered.renderedFrames,pipEntered:entered.entered,pipElement:entered.pipElement,clicks:entered.clicks,left:cleaned.left})}`);
-    console.log('LIBMPV_R2N_WEBGPU_PIP_PASS gpu=1 captureStream=1 frames=nonzero trustedPip=1 cpuReadback=0');
+    console.log(`LIBMPV_R2N_WEBGPU_PIP_REPORT=${JSON.stringify({gpu:entered.gpu,captureStream:entered.captureStream,videoTracks:entered.videoTracks,capturedFrames:entered.capturedFrames,renderedFrames:entered.renderedFrames,pipEntered:entered.entered,pipElement:entered.pipElement,clicks:entered.clicks,left:cleaned.left,adapter:'swiftshader-ci'})}`);
+    console.log('LIBMPV_R2N_WEBGPU_PIP_PASS gpu=1 captureStream=1 frames=nonzero trustedPip=1 cpuReadback=0 adapter=swiftshader-ci');
   } finally {
     try { await win.webContents.executeJavaScript('window.__pipCleanup?.()'); } catch {}
     if (!win.isDestroyed()) win.destroy();
