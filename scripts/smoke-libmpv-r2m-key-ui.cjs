@@ -15,6 +15,32 @@ function block(source, start, end) {
   if (first < 0 || last <= first) throw new Error(`missing section: ${start}`);
   return source.slice(first, last);
 }
+function controlsSites(source) {
+  const needle = 'showPlayerControls(';
+  const sites = [];
+  let i = 0, state = 'code', quote = '';
+  while (i < source.length) {
+    const ch = source[i], next = source[i + 1];
+    if (state === 'line') { if (ch === '\n') state = 'code'; i++; continue; }
+    if (state === 'block') { if (ch === '*' && next === '/') { state = 'code'; i += 2; } else i++; continue; }
+    if (state === 'string') {
+      if (ch === '\\') { i += 2; continue; }
+      if (ch === quote) { state = 'code'; quote = ''; }
+      i++; continue;
+    }
+    if (ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
+    if (ch === '/' && next === '*') { state = 'block'; i += 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { state = 'string'; quote = ch; i++; continue; }
+    if (source.startsWith(needle, i) && (i === 0 || !/[A-Za-z0-9_$]/.test(source[i - 1]))) {
+      const close = source.indexOf(')', i + needle.length);
+      if (close < 0) throw new Error('unterminated showPlayerControls call');
+      sites.push(source.slice(i + needle.length, close).trim());
+      i = close + 1; continue;
+    }
+    i++;
+  }
+  return sites;
+}
 function classList(...initial) {
   const values = new Set(initial);
   return {
@@ -35,10 +61,9 @@ const playingSource = block(appSource, "$('#video').addEventListener('playing'",
 const pauseSource = block(appSource, "$('#video').addEventListener('pause'", "\n$('#video').addEventListener('waiting'");
 const endedSource = block(appSource, "$('#video').addEventListener('ended'", "\n$('#video').addEventListener('loadedmetadata'");
 
-// Exhaustive static call-site gate: after R2M, player.js may invoke the full controls only
-// from the settings sheet and real mouse movement. app.js owns only the guarded definition.
-const playerCalls = [...playerSource.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
-const appCalls = [...appSource.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
+// Exhaustive executable call-site gate: comments and string literals do not count.
+const playerCalls = controlsSites(playerSource);
+const appCalls = controlsSites(appSource);
 assert.deepEqual(playerCalls.slice().sort(), ["'mouse'", "'settings'"].sort(), `unexpected player controls calls: ${playerCalls.join('|')}`);
 assert.deepEqual(appCalls, ["source=''"], `unexpected app controls calls: ${appCalls.join('|')}`);
 assert.equal(playerSource.includes('typingTarget'), false, 'broad key capture reveal survived');
@@ -54,7 +79,6 @@ assert.ok(settingsSource.includes("classList.remove('controls-visible')"), 'sett
 assert.ok(controlsSource.includes("if(source!=='mouse'&&!settingsOpen())return"), 'controls source guard missing');
 assert.ok(controlsSource.includes('if(!settingsOpen())controlsTimer=setTimeout'), '2-second mouse auto-hide missing');
 
-let revealCount = 0;
 let actionCount = 0;
 let timerId = 0;
 let scheduled = new Map();
@@ -151,7 +175,6 @@ function eventFor(key, code = key) {
   };
 }
 function reset() {
-  revealCount = 0;
   actionCount = 0;
   scheduled = new Map();
   context.controlsTimer = null;
