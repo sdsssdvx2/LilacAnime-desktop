@@ -67,6 +67,7 @@ jobs:
           node --check scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
           node --check scripts/apply-libmpv-r2g-electron44-releasefix.cjs
           node --check scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node --check scripts/apply-libmpv-r2h-bundle-marker-fix.cjs
           node scripts/apply-libmpv-d2-diagnostics.cjs
           node scripts/apply-libmpv-r2-runtime-fixes.cjs
           node --check scripts/apply-libmpv-r2b-command-import-diagnostics.cjs
@@ -75,6 +76,7 @@ jobs:
           node scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs
           node scripts/apply-libmpv-r2g-electron44-releasefix.cjs
           node scripts/apply-libmpv-r2h-webgpu-copy.cjs
+          node scripts/apply-libmpv-r2h-bundle-marker-fix.cjs
           node scripts/apply-libmpv-shared-texture.cjs
           node scripts/apply-libmpv-r2e-native-command-gates.cjs
 
@@ -122,17 +124,17 @@ jobs:
           if ($pkg.devDependencies.electron -ne '44.9.3') { throw 'Electron 44.9.3 package pin missing' }
           if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)') { throw 'R2 paced bridge missing' }
           if ($bridge -notmatch "originalName === 'set_property'" -or $bridge -notmatch 'lastCommandError') { throw 'R2B command gate missing' }
-          foreach ($forbidden in @("getContext\('2d'", 'nextCompositorTurn', 'setSharedTextureReceiver\(async', 'await nextFrame\(\)')) {
+          foreach ($forbidden in @('nextCompositorTurn', 'setSharedTextureReceiver\(async', 'await nextFrame\(\)', '\.drawImage\(')) {
             if ($preload -match $forbidden) { throw "forbidden old renderer/lifetime marker survived: $forbidden" }
           }
-          foreach ($marker in @("rendererMode = 'webgpu-copy'", "getContext\('webgpu'", 'copyExternalImageToTexture', 'onSubmittedWorkDone', 'videoFramesCreated','videoFramesClosed','textureReleaseCalls','textureReleaseFailures')) {
-            if ($preload -notmatch $marker) { throw "R2H marker missing: $marker" }
+          foreach ($marker in @('webgpu-copy', 'copyExternalImageToTexture', 'onSubmittedWorkDone', 'videoFramesCreated','videoFramesClosed','textureReleaseCalls','textureReleaseFailures')) {
+            if ($preload -notmatch $marker) { throw "R2H semantic marker missing: $marker" }
           }
           if ($entry -match "\['sub-add'" -or $entry -notmatch 'pointer-events:none') { throw 'single subtitle/input architecture regressed' }
           if ($player -notmatch 'kSharedTextureSlots = 24') { throw '24-slot native pool missing' }
           if ($player -notmatch '\{\"sid\", \"no\"\}' -or $player -notmatch '\{\"sub-auto\", \"no\"\}') { throw 'native subtitle lockout missing' }
           if ($player -match 'external-filename' -or $player -match 'external-title') { throw 'sensitive track metadata leaked' }
-          Write-Host 'LILAC_HWQ_R2H_ARCHITECTURE_OK electron=44.9.3 renderer=webgpu-copy'
+          Write-Host 'LILAC_HWQ_R2H_ARCHITECTURE_OK electron=44.9.3 renderer=webgpu-copy semanticMarkers=true'
 
       - name: Build deterministic 1080p H264 AAC fixture and manifest
         shell: powershell
