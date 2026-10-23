@@ -43,8 +43,9 @@ function fail(message, details = null) {
         libmpvSharedResize: async () => ({ ok: true }),
         libmpvSharedClose: async () => ({ ok: true })
       };
+      true;
     `);
-    await win.webContents.executeJavaScript(bundle);
+    await win.webContents.executeJavaScript(`${bundle}\n;true;`);
     const result = await win.webContents.executeJavaScript(`(async () => {
       localStorage.clear();
       localStorage.setItem('subtitleSize', '100');
@@ -63,8 +64,8 @@ function fail(message, details = null) {
       await new Promise(resolve => setTimeout(resolve, 350));
       const layer = video.shadowRoot.querySelector('[data-lilac-vtt-overlay]');
       const stack = video.shadowRoot.querySelector('.lilac-vtt-stack');
-      const showing = { display: layer.style.display, text: String(stack.textContent || '').trim(), cueCount: Number(video.textTracks[0]?.cues?.length || 0), mode: String(video.textTracks[0]?.mode || '') };
-      const computedBottom = getComputedStyle(stack).bottom;
+      const showing = { display: String(layer.style.display || ''), text: String(stack.textContent || '').trim(), cueCount: Number(video.textTracks[0]?.cues?.length || 0), mode: String(video.textTracks[0]?.mode || '') };
+      const computedBottom = String(getComputedStyle(stack).bottom || '');
       video.textTracks[0].mode = 'hidden';
       video.refreshSubtitleOverlay();
       const hiddenDisplay = String(layer.style.display || '');
@@ -75,8 +76,8 @@ function fail(message, details = null) {
       window.__testTime = 1.5;
       await new Promise(resolve => setTimeout(resolve, 350));
       const restored = { display: String(layer.style.display || ''), text: String(stack.textContent || '').trim() };
-      const badNativeSub = window.__commands.some(command => Array.isArray(command) && command[0] === 'sub-add');
-      return { showing, hiddenDisplay, afterCueDisplay, restored, badNativeSub, commandCount: window.__commands.length, computedBottom };
+      const badNativeSub = Boolean(window.__commands.some(command => Array.isArray(command) && command[0] === 'sub-add'));
+      return { showing, hiddenDisplay, afterCueDisplay, restored, badNativeSub, commandCount: Number(window.__commands.length), computedBottom };
     })()`);
 
     const ok = result.showing.display === 'block'
