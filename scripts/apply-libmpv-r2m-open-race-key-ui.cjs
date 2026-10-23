@@ -66,55 +66,49 @@ entry = replaceOnce(
   '      this._ended = this._loadConfirmed && (Boolean(state.eof) || (this._duration > 0 && this._time >= this._duration - 0.15 && this._paused));',
   'end requires confirmed load'
 );
-
-for (const marker of [
-  'this._loadConfirmed = false',
-  'state.fileLoaded !== true',
-  'this._loadConfirmed = true',
-  'this._ended = this._loadConfirmed &&',
-  'this._time = 0;\n    this._duration = 0;'
-]) {
+for (const marker of ['this._loadConfirmed = false','state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&','this._time = 0;\n    this._duration = 0;']) {
   if (!entry.includes(marker)) throw new Error(`R2M entry marker missing: ${marker}`);
 }
 write('src/libmpv-shared-entry.js', entry);
 
-// R2L temporarily broadened keyboard input into a controls reveal. R2M's final policy is
-// deliberately stricter: keyboard shortcuts may perform their action/toast, but must never
-// make the full controls/gradients visible or extend their mouse-triggered visibility timer.
-// Only real mouse movement reveals the controls; an open settings panel remains the pin-open state.
+// Final controls policy: only genuine mouse movement may reveal the full controls/gradients,
+// and an open player-settings sheet may pin them visible. Keyboard shortcuts, media-state
+// events, episode transitions, clicks and slider input must not reveal or extend that UI.
 let player = read('src/player.js');
 const broadCapture = `window.addEventListener('keydown', event => {\n  usingKeyboard = true;\n  const typingTarget = event.target instanceof Element && event.target.matches('input,textarea,select,[contenteditable=\\"true\\"]');\n  if (!typingTarget && !event.ctrlKey && !event.altKey && !event.metaKey && document.body.classList.contains('player-mode')) showPlayerControls();\n}, true);`;
-player = replaceOnce(
-  player,
-  broadCapture,
-  "window.addEventListener('keydown', () => { usingKeyboard = true; }, true);",
-  'remove broad keyboard reveal'
-);
+player = replaceOnce(player, broadCapture, "window.addEventListener('keydown', () => { usingKeyboard = true; }, true);", 'remove broad keyboard reveal');
 
 let spaceRevealCount = 0;
-player = rewriteSection(
-  player,
-  'function finishSpaceHold(toggle = false) {',
-  "\nwindow.addEventListener('keyup'",
-  section => {
-    spaceRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
-    if (spaceRevealCount < 1) throw new Error('Space release reveal anchor missing');
-    return section.replaceAll('showPlayerControls();', '');
-  },
-  'Space release keyboard reveal'
-);
+player = rewriteSection(player, 'function finishSpaceHold(toggle = false) {', "\nwindow.addEventListener('keyup'", section => {
+  spaceRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
+  if (spaceRevealCount < 1) throw new Error('Space release reveal anchor missing');
+  return section.replaceAll('showPlayerControls();', '');
+}, 'Space release keyboard reveal');
 
 let keyRevealCount = 0;
-player = rewriteSection(
+player = rewriteSection(player, 'function handlePlayerKey(event) {', '\n// 스크린샷', section => {
+  keyRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
+  if (keyRevealCount < 1) throw new Error('keyboard reveal anchors missing');
+  return section.replaceAll('showPlayerControls();', '');
+}, 'player keyboard reveals');
+
+player = replaceOnce(
   player,
-  'function handlePlayerKey(event) {',
-  '\n// 스크린샷',
-  section => {
-    keyRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
-    if (keyRevealCount < 1) throw new Error('keyboard reveal anchors missing');
-    return section.replaceAll('showPlayerControls();', '');
-  },
-  'player keyboard reveals'
+  "  if (locked) { openPlayerSettings(false); $('#immersivePlayer').classList.remove('controls-visible'); $('#video').focus?.(); }\n  else showPlayerControls();",
+  "  if (locked) { openPlayerSettings(false); $('#immersivePlayer').classList.remove('controls-visible'); $('#video').focus?.(); }",
+  'unlock must not reveal controls'
+);
+player = replaceOnce(
+  player,
+  "  }\n  showPlayerControls();\n}\n\n// Mirrors the settings page",
+  "  }\n  if (open) showPlayerControls('settings');\n  else { clearTimeout(controlsTimer); $('#immersivePlayer').classList.remove('controls-visible'); }\n}\n\n// Mirrors the settings page",
+  'settings are the only pin-open path'
+);
+player = replaceOnce(
+  player,
+  '  if (!playerLocked) showPlayerControls();',
+  "  if (!playerLocked) showPlayerControls('mouse');",
+  'mousemove source tagging'
 );
 
 const finishBlock = player.slice(player.indexOf('function finishSpaceHold(toggle = false) {'), player.indexOf("\nwindow.addEventListener('keyup'", player.indexOf('function finishSpaceHold(toggle = false) {')));
@@ -124,24 +118,57 @@ const settingsBlock = player.slice(player.indexOf('function openPlayerSettings(o
 if (player.includes('typingTarget')) throw new Error('R2L broad keyboard reveal survived');
 if (finishBlock.includes('showPlayerControls')) throw new Error('Space release still reveals full controls');
 if (keyBlock.includes('showPlayerControls')) throw new Error('keyboard handler still reveals full controls');
-if (!mouseBlock.includes('if (!playerLocked) showPlayerControls();')) throw new Error('real mouse movement reveal missing');
-if (!settingsBlock.includes('showPlayerControls();')) throw new Error('settings panel pin-open reveal missing');
+if (!mouseBlock.includes("showPlayerControls('mouse')")) throw new Error('real mouse movement reveal missing');
+if (!settingsBlock.includes("showPlayerControls('settings')")) throw new Error('settings panel pin-open reveal missing');
+if (!settingsBlock.includes("classList.remove('controls-visible')")) throw new Error('settings close does not hide controls');
 write('src/player.js', player);
 
-// Up/down volume shortcuts dispatch the slider's input event. Upstream's input handler also
-// revealed controls, so removing only direct key-handler calls was not sufficient. Keep the
-// same volume/mute persistence and UI sync, but do not let slider input reveal the full UI.
 let app = read('src/app.js');
-app = replaceOnce(
-  app,
+// Defense in depth: even if a future indirect path calls showPlayerControls() during play/pause/seek,
+// the reveal helper rejects every source except mouse movement or an actually-open settings panel.
+const r2lControls = "function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
+const guardedControls = "function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
+app = replaceOnce(app, r2lControls, guardedControls, 'controls source guard');
+
+// Remove known non-mouse callers as well, so the source itself expresses the policy instead of
+// relying only on the guard.
+app = replaceOnce(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
+app = replaceOnce(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
+app = replaceOnce(app,
+  "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};",
+  "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};",
+  'screenshot click timer extension');
+app = replaceOnce(app,
   "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};",
   "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};",
-  'volume input keyboard reveal'
-);
-const volumeStart = app.indexOf("$('#playerVolume').oninput=");
-const volumeEnd = app.indexOf("\n$('#video').addEventListener('volumechange'", volumeStart);
-if (volumeStart < 0 || volumeEnd <= volumeStart) throw new Error('volume input section missing');
-if (app.slice(volumeStart, volumeEnd).includes('showPlayerControls')) throw new Error('volume input still reveals full controls');
+  'volume input reveal');
+app = replaceOnce(app,
+  "['mousedown','touchstart'].forEach(type=>$('#immersivePlayer').addEventListener(type,event=>{if(event.target!==$('#video'))showPlayerControls()},{passive:true}));\n",
+  '',
+  'pointer press reveal');
+app = replaceOnce(app,
+  "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}else showPlayerControls()",
+  "if(player.classList.contains('controls-visible')){clearTimeout(controlsTimer);player.classList.remove('controls-visible')}",
+  'video click reveal');
+app = replaceOnce(app,
+  "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});",
+  "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});",
+  'playing event reveal');
+app = replaceOnce(app,
+  "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});",
+  "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});",
+  'pause event reveal');
+app = replaceOnce(app,
+  "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});",
+  "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});",
+  'ended event reveal');
+
+const playerCalls = [...player.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
+const appCalls = [...app.matchAll(/showPlayerControls\(([^)]*)\)/g)].map(match => match[1]);
+if (playerCalls.length !== 2 || !playerCalls.includes("'mouse'") || !playerCalls.includes("'settings'")) throw new Error(`unexpected player controls call sites: ${playerCalls.join('|')}`);
+if (appCalls.length !== 1 || appCalls[0] !== "source=''" ) throw new Error(`unexpected app controls call sites: ${appCalls.join('|')}`);
+if (!app.includes("if(source!=='mouse'&&!settingsOpen())return")) throw new Error('controls source guard missing');
+if (!app.includes("if(!settingsOpen())controlsTimer=setTimeout")) throw new Error('2-second transient controls timer missing');
 write('src/app.js', app);
 
-console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 keyReveal=none removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} volumeInputQuiet=1 mouseReveal=1 settingsPin=1`);
+console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} controlsPolicy=mouse-or-settings playerCalls=${playerCalls.length} appCalls=${appCalls.length}`);
