@@ -1,0 +1,289 @@
+name: Libmpv R2K upstream 0.5.49 candidate
+
+on:
+  push:
+    branches: [libmpv-r2k-upstream-0.5.49]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2k-upstream-0.5.49
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_TAG: v0.5.49
+  UPSTREAM_SHA: e67c86d40aa0d7fa84db06d9151f6a097b5099ad
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.49-r1
+
+jobs:
+  build-r2k:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Overlay exact upstream Lilac 0.5.49 source
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $up = Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.49'
+          Remove-Item $up -Recurse -Force -ErrorAction SilentlyContinue
+          git clone --depth 1 --branch $env:UPSTREAM_TAG https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if ($LASTEXITCODE -ne 0) { throw 'upstream clone failed' }
+          $sha = (git -C $up rev-parse HEAD).Trim()
+          if ($sha -ne $env:UPSTREAM_SHA) { throw "upstream tag moved: $sha" }
+          Copy-Item (Join-Path $up 'electron\*') 'electron' -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') 'src' -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') 'tests' -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') 'package.json' -Force
+          Copy-Item (Join-Path $up 'package-lock.json') 'package-lock.json' -Force
+          Copy-Item (Join-Path $up 'README.md') 'README.md' -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') 'scripts\anime4k-entry.mjs' -Force
+          $version = node -p "require('./package.json').version"
+          if ($version -ne '0.5.49') { throw "upstream package mismatch: $version" }
+          if (-not (Test-Path 'electron\whisper.cjs') -or -not (Test-Path 'src\whisper.js')) { throw '0.5.49 Whisper sources missing' }
+          Write-Host "R2K_UPSTREAM_OVERLAY_OK tag=$env:UPSTREAM_TAG sha=$sha version=$version"
+
+      - name: Install upstream dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+
+      - name: Syntax-check R2K transforms and tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($s in @(
+            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
+            'scripts/apply-libmpv-r2k-upstream-polish.cjs',
+            'scripts/smoke-libmpv-vtt-overlay.cjs',
+            'scripts/smoke-libmpv-r2k-updater.cjs'
+          )) {
+            node --check $s
+            if ($LASTEXITCODE -ne 0) { throw "syntax check failed: $s" }
+          }
+          Write-Host 'R2K_PATCH_SYNTAX_OK'
+
+      - name: Apply qualified libmpv R2I plus R2J/R2K compatibility
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scripts = @(
+            'scripts/apply-libmpv-d2-diagnostics.cjs',
+            'scripts/apply-libmpv-r2-runtime-fixes.cjs',
+            'scripts/apply-libmpv-r2b-command-import-diagnostics.cjs',
+            'scripts/apply-libmpv-r2c-texture-pool.cjs',
+            'scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs',
+            'scripts/apply-libmpv-r2g-electron44-releasefix.cjs',
+            'scripts/apply-libmpv-r2h-webgpu-copy.cjs',
+            'scripts/apply-libmpv-r2i-pipeline-headroom.cjs',
+            'scripts/apply-libmpv-r2h-bundle-marker-fix.cjs',
+            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
+            'scripts/apply-libmpv-r2k-upstream-polish.cjs',
+            'scripts/apply-libmpv-shared-texture.cjs',
+            'scripts/apply-libmpv-r2e-native-command-gates.cjs'
+          )
+          foreach ($s in $scripts) {
+            node --check $s
+            if ($LASTEXITCODE -ne 0) { throw "syntax check failed: $s" }
+            node $s
+            if ($LASTEXITCODE -ne 0) { throw "transform failed: $s" }
+          }
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $installed = node -p "require('electron/package.json').version"
+          if ($installed -ne $env:ELECTRON_VERSION) { throw "Electron mismatch: $installed" }
+          $version = node -p "require('./package.json').version"
+          $tag = node -p "require('./package.json').lilacCustomTag"
+          if ($version -ne '0.5.49-libmpv-r2k.rc1' -or $tag -ne $env:CUSTOM_RELEASE_TAG) { throw "R2K package metadata mismatch: $version / $tag" }
+          node --check electron/updater.cjs
+          node --check src/libmpv-shared-entry.js
+          node --check src/libmpv-shared.generated.js
+          Write-Host 'R2K_TRANSFORMS_APPLIED_OK'
+
+      - name: Download exact real-hardware-qualified payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $q = Join-Path $env:RUNNER_TEMP 'qualified-r2i'
+          New-Item -ItemType Directory -Force -Path $q | Out-Null
+          & gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if ($LASTEXITCODE -ne 0) { throw 'qualification release download failed' }
+          $exe = Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe'
+          $manifest = Join-Path $q 'qualification-manifest.json'
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestHash = (Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($exeHash -ne $env:QUALIFICATION_EXE_SHA256) { throw "qualification EXE SHA mismatch: $exeHash" }
+          if ($manifestHash -ne $env:QUALIFICATION_MANIFEST_SHA256) { throw "qualification manifest SHA mismatch: $manifestHash" }
+          $m = Get-Content $manifest -Raw | ConvertFrom-Json
+          if ($m.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $m.electronVersion -ne $env:ELECTRON_VERSION) { throw 'qualification provenance mismatch' }
+          "QUALIFICATION_EXE_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QUALIFIED_MANIFEST_PATH=$manifest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R2K_QUALIFICATION_BOUND exe=$exeHash manifest=$manifestHash"
+
+      - name: Reuse exact qualified native player and libmpv DLL
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = Join-Path $env:RUNNER_TEMP 'r2k-qualified-extract'
+          $nested = Join-Path $env:RUNNER_TEMP 'r2k-qualified-nested'
+          Remove-Item $raw,$nested -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $raw,$nested | Out-Null
+          & 7z.exe x $env:QUALIFICATION_EXE_PATH "-o$raw" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'qualification portable extraction failed' }
+          function Find-PayloadFile([string]$name) { return Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'; $dll = Find-PayloadFile 'libmpv-2.dll'
+          if (-not $addon -or -not $dll) {
+            $i = 0
+            foreach ($archive in @(Get-ChildItem $raw -Recurse -File | Where-Object { $_.Name -match '(?i)(\.7z$|\.zip$)' })) {
+              $i++; $out = Join-Path $nested "a$i"; New-Item -ItemType Directory -Force -Path $out | Out-Null
+              & 7z.exe x $archive.FullName "-o$out" -y | Out-Null
+              $addon = Find-PayloadFile 'lilac-libmpv-player-bridge.node'; $dll = Find-PayloadFile 'libmpv-2.dll'
+              if ($addon -and $dll) { break }
+            }
+          }
+          if (-not $addon -or -not $dll) { throw 'exact qualified native payload not recoverable' }
+          $m = Get-Content $env:QUALIFIED_MANIFEST_PATH -Raw | ConvertFrom-Json
+          $expectedAddon = [string]$m.payloadSha256.PSObject.Properties['electron/lilac-libmpv-player-bridge.node'].Value
+          $expectedDll = [string]$m.payloadSha256.PSObject.Properties['electron/libmpv-2.dll'].Value
+          $addonHash = (Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); $dllHash = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($addonHash -ne $expectedAddon -or $dllHash -ne $expectedDll) { throw 'qualified native hash mismatch' }
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force
+          Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          "QUALIFIED_ADDON_SHA256=$addonHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QUALIFIED_DLL_SHA256=$dllHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R2K_EXACT_NATIVE_REUSED addon=$addonHash dll=$dllHash"
+
+      - name: Prove subtitle overlay and R2K custom updater
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & npx.cmd electron scripts/smoke-libmpv-vtt-overlay.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'R2K VTT overlay smoke failed' }
+          node scripts/smoke-libmpv-r2k-updater.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'R2K updater smoke failed' }
+          $entry = Get-Content src/libmpv-shared-entry.js -Raw
+          if ($entry -notmatch 'bottomInset\.toFixed\(3\)' -or $entry -notmatch 'controlsVisible') { throw 'R2K subtitle/diagnostic polish missing' }
+          Write-Host 'R2K_UI_POLISH_SMOKE_OK'
+
+      - name: Run retained libmpv and upstream 0.5.49 regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+          $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          foreach ($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-r2-pump-sim.cjs','scripts/smoke-libmpv-relay-av.cjs')) {
+            & npx.cmd electron $s
+            if ($LASTEXITCODE -ne 0) { throw "retained runtime regression failed: $s" }
+          }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'renderer input regression failed' }
+          node --test tests/player-interactions.test.cjs tests/community-matching.test.cjs tests/community-search.test.cjs tests/reanime-audio.test.cjs tests/stream-ad-filter.test.cjs tests/subtitle-sync.test.cjs tests/subtitle-translator.test.cjs tests/whisper.test.cjs tests/watermark-learner.test.cjs tests/window-buttons.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw '0.5.49 regression suite failed' }
+          node scripts/smoke-flix-proxy-fixture.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Flix fixture regression failed' }
+          Write-Host 'R2K_RETAINED_AND_UPSTREAM_REGRESSIONS_OK'
+
+      - name: Verify R2K architecture and upstream feature retention
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $main = Get-Content electron/main.cjs -Raw; $bridge = Get-Content electron/libmpv-shared-main.cjs -Raw
+          $renderer = Get-Content src/libmpv-shared-entry.js -Raw; $bundle = Get-Content src/libmpv-shared.generated.js -Raw
+          $updater = Get-Content electron/updater.cjs -Raw; $player = Get-Content src/player.js -Raw
+          $native = Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          if ($main -notmatch 'contextIsolation:\s*true' -or $main -notmatch 'nodeIntegration:\s*false' -or $main -notmatch 'sandbox:\s*true') { throw 'renderer security settings regressed' }
+          if ($main -match "require\('./mpv-native-main\.cjs'\)") { throw 'legacy HWND path returned' }
+          if ($bridge -notmatch 'FRAME-INPUT-SUBTITLE-R2' -or $bridge -match 'schedulePump\(5\)') { throw 'R2 bridge pacing regressed' }
+          foreach ($required in @('data-lilac-vtt-overlay','lilac-vtt-top','bottomInset.toFixed(3)','controlsVisible','copyExternalImageToTexture')) { if (-not $renderer.Contains($required) -or -not $bundle.Contains($required)) { throw "R2K renderer marker missing: $required" } }
+          if ($renderer -match "\['sub-add'" -or $bundle -match "\['sub-add'") { throw 'native mpv subtitle path returned' }
+          foreach ($required in @('CUSTOM_RELEASES_API','checkCustom()','CUSTOM_CURRENT_TAG')) { if (-not $updater.Contains($required)) { throw "custom updater marker missing: $required" } }
+          if ($player -notmatch "playerFlag\('arrowVolume'\)" -or $player -notmatch "arrow === 'up' \? \.05 : -\.05") { throw '0.5.49 arrow volume behavior missing' }
+          if (-not (Test-Path 'electron\whisper.cjs') -or -not (Test-Path 'src\whisper.js')) { throw '0.5.49 Whisper feature missing' }
+          if ($native -notmatch 'kSharedTextureSlots = 24' -or $native -notmatch '\{\"sid\", \"no\"\}') { throw 'qualified native policy regressed' }
+          Write-Host 'R2K_ARCHITECTURE_UPSTREAM_FEATURES_OK'
+
+      - name: Build Windows R2K installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Verify packaged native identity and R2K features
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $unpacked = Get-ChildItem dist -Directory | Where-Object { $_.Name -match 'win.*unpacked' } | Select-Object -First 1
+          if (-not $unpacked) { throw 'win-unpacked output missing' }
+          $addon = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\lilac-libmpv-player-bridge.node'
+          $dll = Join-Path $unpacked.FullName 'resources\app.asar.unpacked\electron\libmpv-2.dll'
+          if ((Get-FileHash $addon -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256) { throw 'packaged addon identity changed' }
+          if ((Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256) { throw 'packaged DLL identity changed' }
+          $asar = Join-Path $unpacked.FullName 'resources\app.asar'; $out = Join-Path $env:RUNNER_TEMP 'r2k-packaged-asar'
+          Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+          node -e "require('@electron/asar').extractAll(process.argv[1], process.argv[2])" $asar $out
+          if ($LASTEXITCODE -ne 0) { throw 'packaged app.asar extraction failed' }
+          $entry = Get-Content (Join-Path $out 'src\libmpv-shared.generated.js') -Raw
+          $updater = Get-Content (Join-Path $out 'electron\updater.cjs') -Raw
+          $player = Get-Content (Join-Path $out 'src\player.js') -Raw
+          foreach ($m in @('lilac-vtt-top','bottomInset.toFixed(3)','controlsVisible','copyExternalImageToTexture')) { if (-not $entry.Contains($m)) { throw "packaged R2K renderer marker missing: $m" } }
+          if ($updater -notmatch 'CUSTOM_RELEASES_API' -or $player -notmatch "playerFlag\('arrowVolume'\)") { throw 'packaged R2K upstream/update feature missing' }
+          Write-Host 'R2K_PACKAGED_IDENTITY_FEATURES_OK'
+
+      - name: Create checksum and attestation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem dist -File -Filter 'LilacAnime-Libmpv-R2K-Setup.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'R2K installer missing' }
+          $sha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  $($exe.Name)" | Set-Content 'dist\LilacAnime-Libmpv-R2K-Setup.sha256.txt' -Encoding ascii
+          $att = [ordered]@{ schema=1; kind='LilacAnime-Libmpv-R2K'; upstreamTag=$env:UPSTREAM_TAG; upstreamSha=$env:UPSTREAM_SHA; customTag=$env:CUSTOM_RELEASE_TAG; electron=$env:ELECTRON_VERSION; qualifiedSource=$env:QUALIFIED_SOURCE_COMMIT; exactQualifiedNative=$true; subtitleOverlay='official-baseline'; diagnostics='controls-only'; updater='r2k-custom-channel'; installerSha256=$sha; installerBytes=$exe.Length }
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'dist\LilacAnime-Libmpv-R2K-attestation.json'), ($att | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+          "R2K_INSTALLER_SHA256=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "R2K_INSTALLER_BYTES=$($exe.Length)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R2K_INSTALLER_READY sha=$sha bytes=$($exe.Length)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-Libmpv-R2K-0.5.49
+          path: |
+            dist/LilacAnime-Libmpv-R2K-Setup.exe
+            dist/LilacAnime-Libmpv-R2K-Setup.sha256.txt
+            dist/LilacAnime-Libmpv-R2K-attestation.json
+          if-no-files-found: error
+
+      - name: Publish isolated R2K prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:CUSTOM_RELEASE_TAG
+          $exists = $false
+          $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $exists = ($LASTEXITCODE -eq 0); $ErrorActionPreference = $old
+          if (-not $exists) {
+            & gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'LilacAnime libmpv R2K · upstream 0.5.49' --notes 'Official LilacAnime v0.5.49 features on top of the real-hardware-qualified libmpv/WebGPU playback path. Restores Arrow Up/Down volume, aligns VTT subtitle placement with official Lilac, hides diagnostics with player controls, includes v0.5.49 subtitle-search/Whisper improvements, and uses the dedicated R2K custom update channel.'
+            if ($LASTEXITCODE -ne 0) { throw 'R2K release create failed' }
+          }
+          & gh release upload $tag 'dist\LilacAnime-Libmpv-R2K-Setup.exe' 'dist\LilacAnime-Libmpv-R2K-Setup.sha256.txt' 'dist\LilacAnime-Libmpv-R2K-attestation.json' --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'R2K release upload failed' }
+          Write-Host "R2K_RELEASE_PUBLISHED tag=$tag sha=$env:R2K_INSTALLER_SHA256 bytes=$env:R2K_INSTALLER_BYTES"
