@@ -46,7 +46,7 @@ jobs:
       - name: Syntax-check R2P additions
         shell: powershell
         run: |
-          foreach($s in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
+          foreach($s in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/rebundle-libmpv-r2p.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs','scripts/smoke-libmpv-r2p-pip-policy.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
       - name: Apply qualified R2I through R2P transforms
         shell: powershell
         run: |
@@ -89,8 +89,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'R2P subtitle UI smoke failed'}
           node scripts/smoke-libmpv-r2m-key-ui.cjs
           if($LASTEXITCODE -ne 0){throw 'R2M keyboard UI regression failed'}
-          node scripts/smoke-libmpv-r2n-pip-policy.cjs
-          if($LASTEXITCODE -ne 0){throw 'R2N PiP policy regression failed'}
+          node scripts/smoke-libmpv-r2p-pip-policy.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2P preserved PiP policy regression failed'}
           Write-Host 'R2P_BEHAVIOR_PROBE_OK'
       - name: Prove playback pipeline sources were not edited by R2P transform
         shell: powershell
