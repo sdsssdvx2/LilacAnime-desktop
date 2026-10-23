@@ -66,8 +66,8 @@ write('src/libmpv-shared-entry.js', entry);
 // hide them even while paused, and hide the currently non-functional PiP button for the libmpv custom element.
 let player = read('src/player.js');
 player = replaceOnce(player,
-  "function updateEpisodeButtons() { $('#previousEpisode').disabled = !siblingEpisode(-1); $('#nextEpisode').disabled = !siblingEpisode(1); }\nasync function playSiblingEpisode(episode) {\n  if (!episode) return;",
-  "function updateEpisodeButtons() { $('#previousEpisode').disabled = !siblingEpisode(-1); $('#nextEpisode').disabled = !siblingEpisode(1); }\nlet episodeTransitioning = false;\nasync function playSiblingEpisode(episode) {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;",
+  "async function playSiblingEpisode(episode) {\n  if (!episode) return;",
+  "let episodeTransitioning = false;\nasync function playSiblingEpisode(episode) {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;",
   'episode transition lock start');
 player = replaceOnce(player,
   "  await resolveIntoPlayer(() => context.resolveKind === 'linkkf' ? window.lilac.linkkfResolve(episode) : window.lilac.providerResolve(episode), `${title} · ${episodeTitle(episode)}`, context, title, episodeNumberOf(episode) || 1);\n}",
