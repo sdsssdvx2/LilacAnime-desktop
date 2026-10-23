@@ -1,0 +1,62 @@
+name: Patch R2M r4 release publisher
+
+on:
+  push:
+    branches: [libmpv-r2m-r4-maintenance]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: libmpv-r2m-open-race-key-ui
+          fetch-depth: 0
+
+      - name: Patch release existence probe
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/libmpv-r2m-open-race-key-ui.yml')
+          text = p.read_text(encoding='utf-8')
+          old = '''          $ErrorActionPreference='Stop'
+          gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if($LASTEXITCODE -eq 0){gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes;git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null}
+'''
+          new = '''          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY >nul 2>nul"
+          $releaseExists=($LASTEXITCODE -eq 0)
+          if($releaseExists){
+            gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes
+            if($LASTEXITCODE -ne 0){throw 'existing R2M release delete failed'}
+            git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null
+          }
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one release probe block, found {text.count(old)}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
+          git diff --check
+          git diff -- .github/workflows/libmpv-r2m-open-race-key-ui.yml
+
+      - name: Commit publisher fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/libmpv-r2m-open-race-key-ui.yml
+          git commit -m "ci: make R2M release probe nonfatal when absent"
+          git push origin HEAD:libmpv-r2m-open-race-key-ui
+
+      - name: Dispatch patched R2M workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh workflow run libmpv-r2m-open-race-key-ui.yml --repo "$GITHUB_REPOSITORY" --ref libmpv-r2m-open-race-key-ui
