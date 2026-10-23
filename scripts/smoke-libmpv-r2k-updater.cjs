@@ -1,5 +1,4 @@
 'use strict';
-
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
@@ -8,13 +7,13 @@ const path = require('node:path');
   const previousFetch = global.fetch;
   const calls = [];
   const current = {
-    tag_name: 'libmpv-r2k-v0.5.49-r3', draft: false, prerelease: true,
+    tag_name: 'libmpv-r2k-v0.5.49-r4', draft: false, prerelease: true,
     html_url: 'https://example.invalid/current', body: 'current', assets: []
   };
   const future = {
-    tag_name: 'libmpv-r2k-v0.5.49-r4', draft: false, prerelease: true,
+    tag_name: 'libmpv-r2k-v0.5.49-r5', draft: false, prerelease: true,
     html_url: 'https://example.invalid/future', body: 'future notes',
-    assets: [{ name: 'LilacAnime-Libmpv-R2M-Setup.exe', browser_download_url: 'https://example.invalid/r4.exe', size: 1234 }]
+    assets: [{ name: 'LilacAnime-Libmpv-R2M-Setup.exe', browser_download_url: 'https://example.invalid/r5.exe', size: 1234 }]
   };
   let releases = [current];
   global.fetch = async (url, options) => {
@@ -23,8 +22,8 @@ const path = require('node:path');
   };
   const states = [];
   const fakeApp = {
-    getVersion: () => '0.5.49-libmpv-r2m.rc1',
-    getName: () => 'LilacAnime Libmpv R2J Subtitle Fix',
+    getVersion: () => '0.5.49-libmpv-r2m.rc2',
+    getName: () => 'LilacAnime Libmpv R2M',
     getPath: () => path.resolve(process.cwd(), '.tmp-r2k-updater-smoke'),
     quit: () => {}
   };
