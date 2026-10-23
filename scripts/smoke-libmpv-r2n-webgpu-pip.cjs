@@ -90,19 +90,23 @@ console.log('R2N_PIP_MAIN_SCRIPT_READY',JSON.stringify({gpu:Boolean(navigator.gp
     const format=navigator.gpu.getPreferredCanvasFormat();
     context.configure({device,format,alphaMode:'opaque',usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_DST});
     probe.gpu=true;
+    let flip=false;
+    const renderFrame=()=>{
+      flip=!flip;
+      const encoder=device.createCommandEncoder();
+      const pass=encoder.beginRenderPass({colorAttachments:[{view:context.getCurrentTexture().createView(),loadOp:'clear',storeOp:'store',clearValue:flip?{r:.05,g:.25,b:.85,a:1}:{r:.85,g:.18,b:.05,a:1}}]});
+      pass.end();device.queue.submit([encoder.finish()]);probe.renderedFrames++;
+    };
+    // The real Lilac surface is already rendering before PiP is requested. Mirror that
+    // order here so captureStream has live frames before the hidden video calls play().
+    renderFrame();
+    window.__renderTimer=setInterval(renderFrame,33);
     probe.stage='capture-stream';
     const stream=canvas.captureStream(30);probe.videoTracks=stream.getVideoTracks().length;if(!probe.videoTracks)throw new Error('captureStream returned no video track');
     video.srcObject=stream;
     probe.stage='play-capture-video';
     await video.play();
     if(typeof video.requestVideoFrameCallback==='function')video.requestVideoFrameCallback(countFrame);
-    let flip=false;
-    window.__renderTimer=setInterval(()=>{
-      flip=!flip;
-      const encoder=device.createCommandEncoder();
-      const pass=encoder.beginRenderPass({colorAttachments:[{view:context.getCurrentTexture().createView(),loadOp:'clear',storeOp:'store',clearValue:flip?{r:.05,g:.25,b:.85,a:1}:{r:.85,g:.18,b:.05,a:1}}]});
-      pass.end();device.queue.submit([encoder.finish()]);probe.renderedFrames++;
-    },33);
     probe.stage='ready';probe.ready=true;status.textContent='ready';console.log('R2N_PIP_WEBGPU_CAPTURE_READY');
   }catch(error){fail(error)}
 })();
