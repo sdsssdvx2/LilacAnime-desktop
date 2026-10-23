@@ -74,12 +74,9 @@ player = replaceOnce(player,
   "window.addEventListener('keydown', event => {\n  usingKeyboard = true;\n  const typingTarget = event.target instanceof Element && event.target.matches('input,textarea,select,[contenteditable=\\\"true\\\"]');\n  if (!typingTarget && !event.ctrlKey && !event.altKey && !event.metaKey && document.body.classList.contains('player-mode')) showPlayerControls();\n}, true);",
   'capture keyboard reveal');
 
-// Hide the unsupported libmpv PiP affordance until a shared-texture PiP path is qualified.
-player = replaceOnce(player,
-  "$('#miniPlayer').onclick=()=>togglePictureInPicture();",
-  "$('#miniPlayer').onclick=()=>togglePictureInPicture();\nif ($('#video')?.tagName === 'LILAC-MPV-VIDEO') { $('#miniPlayer').classList.add('hidden'); $('#miniPlayer').setAttribute('aria-hidden', 'true'); }",
-  'hide unsupported libmpv PiP');
-for (const marker of ['unlockedPlaySiblingEpisode','let episodeTransitioning = false','if (!episode || episodeTransitioning) return','if (!playerLocked) showPlayerControls()','typingTarget',"tagName === 'LILAC-MPV-VIDEO'"]) {
+// Keep upstream PiP code untouched; only remove the dead affordance in the custom libmpv player.
+player += `\n\n// R2L: libmpv shared-texture PiP is not qualified yet.\nif ($('#video')?.tagName === 'LILAC-MPV-VIDEO' && $('#miniPlayer')) {\n  $('#miniPlayer').classList.add('hidden');\n  $('#miniPlayer').setAttribute('aria-hidden', 'true');\n}\n`;
+for (const marker of ['unlockedPlaySiblingEpisode','let episodeTransitioning = false','if (!episode || episodeTransitioning) return','if (!playerLocked) showPlayerControls()','typingTarget',"tagName === 'LILAC-MPV-VIDEO'","$('#miniPlayer').classList.add('hidden')"]) {
   if (!player.includes(marker)) throw new Error(`R2L player marker missing: ${marker}`);
 }
 write('src/player.js', player);
