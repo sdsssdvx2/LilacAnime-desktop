@@ -12,11 +12,6 @@ function replaceOnce(source, needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   return source.replace(needle, replacement);
 }
-function replaceRegexOnce(source, pattern, replacer, label) {
-  const matches = [...source.matchAll(new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`))];
-  if (matches.length !== 1) throw new Error(`${label}: expected exactly one regex match, found ${matches.length}`);
-  return source.replace(pattern, replacer);
-}
 
 // Bind media state to the exact bridge generation and fire ended only on a false -> true edge.
 let entry = read('src/libmpv-shared-entry.js');
@@ -45,8 +40,8 @@ entry = replaceOnce(entry,
   "      if (this._ended && !previousEnded) this.dispatchEvent(new Event('ended'));",
   'ended edge dispatch');
 
-// Calibrate the custom VTT overlay to the visible Lilac subtitle UI. Position is a direct bottom inset,
-// so 0 really reaches the bottom and 45 remains available; remove the extra custom cue gap.
+// Match the normal Lilac subtitle appearance more closely. Position is a direct visual bottom inset,
+// so the slider can really reach the lower edge instead of having an extra forced margin.
 entry = replaceOnce(entry,
   '.lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;gap:.08em;text-align:center;white-space:pre-line;line-height:1.22;color:#fff;overflow-wrap:anywhere}',
   '.lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;text-align:center;white-space:pre-line;line-height:1.2;color:#fff;overflow-wrap:anywhere}',
@@ -61,19 +56,16 @@ for (const marker of ['this._generation = Number(result?.generation) || 0','Numb
 }
 write('src/libmpv-shared-entry.js', entry);
 
-// Serialize next/previous episode transitions. Earlier diagnostic transforms may insert code inside this function,
-// so transform the whole bounded function instead of relying on adjacent source lines.
 let player = read('src/player.js');
-const siblingPattern = /async function playSiblingEpisode\(episode\)\s*\{([\s\S]*?)\n\}\n\n\/\/ Explicit seeks/;
-player = replaceRegexOnce(player, siblingPattern, (_whole, originalBody) => {
-  let body = originalBody;
-  const before = body;
-  body = body.replace(/^\s*if\s*\(!episode\)\s*return;?\s*/m, '\n');
-  if (body === before) throw new Error('episode transition lock: initial guard not found inside bounded function');
-  return `let episodeTransitioning = false;\nasync function playSiblingEpisode(episode) {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;\n  try {${body}\n  } finally {\n    episodeTransitioning = false;\n  }\n}\n\n// Explicit seeks`;
-}, 'bounded sibling episode function');
+// Do not rewrite playSiblingEpisode itself: earlier compatibility transforms may change its body. Wrap the
+// live function binding immediately before the stable previous/next button wiring, so autoplay, buttons,
+// media keys and every other caller all share the same transition lock.
+player = replaceOnce(player,
+  "$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
+  "const unlockedPlaySiblingEpisode = playSiblingEpisode;\nlet episodeTransitioning = false;\nplaySiblingEpisode = async episode => {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;\n  try { return await unlockedPlaySiblingEpisode(episode); }\n  finally { episodeTransitioning = false; }\n};\n$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
+  'episode transition wrapper');
 
-// Any real mouse movement reveals controls; all unmodified player shortcuts reveal them before their action.
+// Mouse movement and any normal player shortcut briefly reveal the controls/gradients.
 player = replaceOnce(player,
   "  if (!playerLocked && event.target !== $('#video') && player.classList.contains('controls-visible')) showPlayerControls();",
   "  if (!playerLocked) showPlayerControls();",
@@ -83,18 +75,19 @@ player = replaceOnce(player,
   "  if (typing) return;\n  if (!event.ctrlKey && !event.altKey && !event.metaKey) showPlayerControls();\n  const controlsShown = player.classList.contains('controls-visible');",
   'keyboard reveals controls');
 
-// The current composite PiP path cannot draw a lilac-mpv-video custom element as a CanvasImageSource safely.
-// Hide the dead affordance until a qualified shared-texture PiP path exists.
+// The current PiP compositor expects a real video CanvasImageSource, while libmpv playback is a custom
+// WebGPU element. Hide the dead button until a shared-texture PiP path is implemented and qualified.
 player = replaceOnce(player,
   "$('#miniPlayer').onclick=()=>togglePictureInPicture();",
   "$('#miniPlayer').onclick=()=>togglePictureInPicture();\nif ($('#video')?.tagName === 'LILAC-MPV-VIDEO') { $('#miniPlayer').classList.add('hidden'); $('#miniPlayer').setAttribute('aria-hidden', 'true'); }",
   'hide unsupported libmpv PiP');
-for (const marker of ['let episodeTransitioning = false','if (!episode || episodeTransitioning) return','episodeTransitioning = false','if (!playerLocked) showPlayerControls()',"tagName === 'LILAC-MPV-VIDEO'"]) {
+for (const marker of ['unlockedPlaySiblingEpisode','let episodeTransitioning = false','if (!episode || episodeTransitioning) return','if (!playerLocked) showPlayerControls()',"tagName === 'LILAC-MPV-VIDEO'"]) {
   if (!player.includes(marker)) throw new Error(`R2L player marker missing: ${marker}`);
 }
 write('src/player.js', player);
 
-// Controls/gradients are transient whether playing or paused; settings panel is the only normal pin-open state.
+// Controls and top/bottom gradients auto-hide after two seconds whether playing or paused. An open settings
+// panel is the deliberate pin-open state.
 let app = read('src/app.js');
 app = replaceOnce(app,
   "function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!$('#video').paused&&!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}",
@@ -107,8 +100,8 @@ const pkg = JSON.parse(read('package.json'));
 if (pkg.version !== '0.5.49-libmpv-r2k.rc1') throw new Error(`R2L expected R2K package, got ${pkg.version}`);
 pkg.version = '0.5.49-libmpv-r2l.rc1';
 pkg.lilacCustomTag = 'libmpv-r2k-v0.5.49-r2';
-// Keep the R2K identity so this is an in-place custom-channel update and preserves settings.
+// Keep R2K app identity/profile so this upgrades in place and preserves the user's settings.
 pkg.build.win.artifactName = 'LilacAnime-Libmpv-R2L-Setup.${ext}';
 write('package.json', JSON.stringify(pkg, null, 2) + '\n');
 
-console.log('LIBMPV_R2L_PLAYER_POLISH_OK generationGuard=1 endedEdge=1 episodeLock=1 controls=transient paused=autohide subtitles=calibrated pip=hidden');
+console.log('LIBMPV_R2L_PLAYER_POLISH_OK generationGuard=1 endedEdge=1 episodeLock=wrapper controls=transient paused=autohide subtitles=calibrated pip=hidden');
