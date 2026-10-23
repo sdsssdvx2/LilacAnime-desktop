@@ -10,9 +10,14 @@ function replaceOnce(needle, replacement, label) {
   if (n !== 1) throw new Error(`${label}: expected one anchor, found ${n}`);
   source = source.replace(needle, replacement);
 }
+function replaceRegexOnce(pattern, replacement, label) {
+  const matches = [...source.matchAll(new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'))];
+  if (matches.length !== 1) throw new Error(`${label}: expected one anchor, found ${matches.length}`);
+  source = source.replace(pattern, replacement);
+}
 
-replaceOnce(
-  'let server=null;\n',
+replaceRegexOnce(
+  /let server=null;\r?\n/,
   `let server=null;\nconst diag={requests:0,playlists:0,segments:0,other:0,errors:0,responseBytes:0,lastActivityAt:0,lastKind:null};\nfunction touch(kindName){diag.requests++;diag.lastActivityAt=Date.now();diag.lastKind=kindName||null;if(kindName==='m3u8')diag.playlists++;else if(kindName==='segment')diag.segments++;else diag.other++}\nfunction flixProxyStats(){return {requests:diag.requests,playlists:diag.playlists,segments:diag.segments,other:diag.other,errors:diag.errors,responseMiB:Math.round(diag.responseBytes/104857.6)/10,lastActivityAt:diag.lastActivityAt,lastKind:diag.lastKind,sessions:sessions.size,aheadInFlight:ahead.size,primed:primed.size,heldLists:heldLists.size,listening:Boolean(server?.listening)}}\n`,
   'diag globals'
 );
@@ -29,9 +34,12 @@ replaceOnce(
   'response and error counters'
 );
 
-replaceOnce(
-  'module.exports={createFlixProxyUrl,createFlixAvProxyUrl,closeFlixProxy,fetchHedged,primeFlix};',
-  'module.exports={createFlixProxyUrl,createFlixAvProxyUrl,closeFlixProxy,fetchHedged,primeFlix,flixProxyStats};',
+replaceRegexOnce(
+  /module\.exports=\{([^}]*)\};/,
+  (_match, exportsList) => {
+    if (exportsList.split(',').map(value => value.trim()).includes('flixProxyStats')) throw new Error('flixProxyStats already exported');
+    return `module.exports={${exportsList},flixProxyStats};`;
+  },
   'stats export'
 );
 
