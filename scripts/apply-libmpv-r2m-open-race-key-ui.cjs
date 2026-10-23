@@ -128,4 +128,20 @@ if (!mouseBlock.includes('if (!playerLocked) showPlayerControls();')) throw new 
 if (!settingsBlock.includes('showPlayerControls();')) throw new Error('settings panel pin-open reveal missing');
 write('src/player.js', player);
 
-console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 keyReveal=none removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} mouseReveal=1 settingsPin=1`);
+// Up/down volume shortcuts dispatch the slider's input event. Upstream's input handler also
+// revealed controls, so removing only direct key-handler calls was not sufficient. Keep the
+// same volume/mute persistence and UI sync, but do not let slider input reveal the full UI.
+let app = read('src/app.js');
+app = replaceOnce(
+  app,
+  "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI();showPlayerControls()};",
+  "$('#playerVolume').oninput=e=>{const video=$('#video');video.volume=Number(e.target.value)/100;video.muted=video.volume===0;localStorage.setItem('playerVolume',String(video.volume));localStorage.setItem('playerMuted',String(video.muted));syncVolumeUI()};",
+  'volume input keyboard reveal'
+);
+const volumeStart = app.indexOf("$('#playerVolume').oninput=");
+const volumeEnd = app.indexOf("\n$('#video').addEventListener('volumechange'", volumeStart);
+if (volumeStart < 0 || volumeEnd <= volumeStart) throw new Error('volume input section missing');
+if (app.slice(volumeStart, volumeEnd).includes('showPlayerControls')) throw new Error('volume input still reveals full controls');
+write('src/app.js', app);
+
+console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 keyReveal=none removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} volumeInputQuiet=1 mouseReveal=1 settingsPin=1`);

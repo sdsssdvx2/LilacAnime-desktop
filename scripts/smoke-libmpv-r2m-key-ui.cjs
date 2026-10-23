@@ -30,10 +30,12 @@ const keySource = block(playerSource, 'function handlePlayerKey(event) {', '\n//
 const mouseSource = block(playerSource, "$('#immersivePlayer').addEventListener('mousemove', event => {", '\n// --- Picture-in-picture');
 const settingsSource = block(playerSource, 'function openPlayerSettings(open, focusSection = null) {', '\n// Mirrors the settings page');
 const controlsSource = block(appSource, 'function showPlayerControls()', '\nfunction scheduleOpEdAnalysis');
+const volumeSource = block(appSource, "$('#playerVolume').oninput=", "\n$('#video').addEventListener('volumechange'");
 
 assert.equal(playerSource.includes('typingTarget'), false, 'broad key capture reveal survived');
 assert.equal(finishSource.includes('showPlayerControls'), false, 'Space release still reveals full controls');
 assert.equal(keySource.includes('showPlayerControls'), false, 'keyboard handler still reveals full controls');
+assert.equal(volumeSource.includes('showPlayerControls'), false, 'volume input still reveals full controls');
 assert.ok(mouseSource.includes('if (!playerLocked) showPlayerControls();'), 'actual mouse movement no longer reveals controls');
 assert.ok(settingsSource.includes('showPlayerControls();'), 'settings panel no longer pins controls visible');
 assert.ok(controlsSource.includes('if(!settingsOpen())controlsTimer=setTimeout'), 'paused controls are not transient');
@@ -48,6 +50,8 @@ const video = {
   duration: 100,
   currentTime: 50,
   playbackRate: 1,
+  volume: .5,
+  muted: false,
   paused: false,
   ended: false,
   play() { this.paused = false; actionCount++; return Promise.resolve(); },
@@ -56,6 +60,16 @@ const video = {
 const subtitle = { checked: true, dispatchEvent() { actionCount++; } };
 const skip = { classList: classList('hidden'), click() { actionCount++; } };
 const speed = { value: '1' };
+const playerVolume = {
+  value: '50',
+  dispatchEvent() {
+    video.volume = Number(this.value) / 100;
+    video.muted = video.volume === 0;
+    storage.set('playerVolume', String(video.volume));
+    storage.set('playerMuted', String(video.muted));
+    actionCount++;
+  }
+};
 const toggle = { focus() { document.activeElement = this; } };
 const button = () => ({ click() { actionCount++; }, focus() { document.activeElement = this; } });
 const fullscreen = button(), mute = button(), back = button(), settingsButton = button();
@@ -67,6 +81,7 @@ const elements = {
   '#subtitleEnabled': subtitle,
   '#skipNow': skip,
   '#speed': speed,
+  '#playerVolume': playerVolume,
   '#fullscreenPlayer': fullscreen,
   '#mutePlayer': mute,
   '#playerBack': back,
@@ -89,6 +104,7 @@ const context = vm.createContext({
   playerLocked: false,
   playerWindowFullscreen: false,
   playerSettingsOpen: () => false,
+  playerFlag: (key, fallback = true) => key === 'arrowVolume' ? true : fallback,
   showPlayerControls: () => { revealCount++; player.classList.add('controls-visible'); },
   flashUnlockButton: () => { actionCount++; },
   openPlayerSettings: () => { actionCount++; },
@@ -130,15 +146,19 @@ function reset() {
   video.duration = 100;
   video.currentTime = 50;
   video.playbackRate = 1;
+  video.volume = .5;
+  video.muted = false;
   video.paused = false;
   video.ended = false;
   subtitle.checked = true;
   speed.value = '1';
+  playerVolume.value = '50';
   document.activeElement = { tagName: 'BODY', matches: () => false };
   document.fullscreenElement = null;
   context.playerLocked = false;
   context.playerWindowFullscreen = false;
   context.playerSettingsOpen = () => false;
+  context.playerFlag = (key, fallback = true) => key === 'arrowVolume' ? true : fallback;
 }
 function assertQuiet(label, event, after = null) {
   reset();
@@ -151,8 +171,8 @@ function assertQuiet(label, event, after = null) {
 const cases = [
   ['ArrowLeft', eventFor('ArrowLeft', 'ArrowLeft')],
   ['ArrowRight', eventFor('ArrowRight', 'ArrowRight')],
-  ['ArrowUp', eventFor('ArrowUp', 'ArrowUp')],
-  ['ArrowDown', eventFor('ArrowDown', 'ArrowDown')],
+  ['ArrowUp-volume', eventFor('ArrowUp', 'ArrowUp')],
+  ['ArrowDown-volume', eventFor('ArrowDown', 'ArrowDown')],
   ['C', eventFor('c', 'KeyC')],
   ['Z', eventFor('z', 'KeyZ')],
   ['X', eventFor('x', 'KeyX')],
@@ -177,6 +197,15 @@ for (const [label, event] of cases) assertQuiet(label, event);
 
 assertQuiet('Space-short-press', eventFor(' ', 'Space'), () => context.finishSpaceHold(true));
 
+// Also cover the remote-focus arrow mode with arrowVolume disabled.
+for (const [label, key] of [['ArrowUp-focus', 'ArrowUp'], ['ArrowDown-focus', 'ArrowDown']]) {
+  reset();
+  context.playerFlag = (name, fallback = true) => name === 'arrowVolume' ? false : fallback;
+  context.handlePlayerKey(eventFor(key, key));
+  assert.equal(revealCount, 0, `${label}: showPlayerControls called`);
+  assert.equal(player.classList.contains('controls-visible'), false, `${label}: controls-visible became true`);
+}
+
 // A key pressed while mouse-revealed controls are already visible must not refresh the timer either.
 reset();
 player.classList.add('controls-visible');
@@ -184,4 +213,4 @@ context.handlePlayerKey(eventFor('ArrowRight', 'ArrowRight'));
 assert.equal(revealCount, 0, 'keyboard refreshed already-visible controls');
 assert.equal(player.classList.contains('controls-visible'), true, 'keyboard unexpectedly hid already-visible controls');
 
-console.log(`LIBMPV_R2M_KEY_UI_PASS keys=${cases.length + 1} hidden=all revealCalls=0 mouseReveal=1 settingsPin=1 pausedAutoHide=1`);
+console.log(`LIBMPV_R2M_KEY_UI_PASS keys=${cases.length + 3} hidden=all revealCalls=0 volumeInputQuiet=1 mouseReveal=1 settingsPin=1 pausedAutoHide=1`);
