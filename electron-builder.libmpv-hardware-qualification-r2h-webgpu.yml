@@ -1,8 +1,8 @@
-appId: com.lilac.anime.libmpvhardwarequalification.webgpucopy.e44
-productName: LilacLibmpvHardwareQualificationWebGPUCopyElectron44
+appId: com.lilac.anime.libmpvhardwarequalification.webgpupipeline.e44
+productName: LilacLibmpvHardwareQualificationWebGPUPipelineElectron44
 electronVersion: 44.9.3
 directories:
-  output: dist-libmpv-hardware-qualification-r2h-webgpu
+  output: dist-libmpv-hardware-qualification-r2i-pipeline
 files:
   - electron/libmpv-hardware-qualification.cjs
   - electron/libmpv-shared-main.cjs
@@ -28,7 +28,7 @@ extraMetadata:
   main: electron/libmpv-hardware-qualification.cjs
 win:
   icon: build/icon.ico
-  executableName: LilacLibmpvHardwareQualificationWebGPUCopyElectron44
+  executableName: LilacLibmpvHardwareQualificationWebGPUPipelineElectron44
   target:
     - portable
-  artifactName: LilacLibmpvHardwareQualification-WebGPUCopy-Electron44.exe
+  artifactName: LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe
