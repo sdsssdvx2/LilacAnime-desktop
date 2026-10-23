@@ -20,7 +20,7 @@ env:
   QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
   QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
   QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
-  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.49-r3
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.49-r4
 
 jobs:
   build-r2m:
@@ -107,7 +107,7 @@ jobs:
           $version=node -p "require('./package.json').version"
           $tag=node -p "require('./package.json').lilacCustomTag"
           if($electron -ne $env:ELECTRON_VERSION){throw "Electron mismatch: $electron"}
-          if($version -ne '0.5.49-libmpv-r2m.rc1' -or $tag -ne $env:CUSTOM_RELEASE_TAG){throw "R2M metadata mismatch: $version / $tag"}
+          if($version -ne '0.5.49-libmpv-r2m.rc2' -or $tag -ne $env:CUSTOM_RELEASE_TAG){throw "R2M metadata mismatch: $version / $tag"}
           foreach($s in @('electron/updater.cjs','src/libmpv-shared-entry.js','src/libmpv-shared.generated.js','src/player.js','src/app.js')){node --check $s;if($LASTEXITCODE -ne 0){throw "post-transform syntax failed: $s"}}
           Write-Host 'R2M_TRANSFORMS_APPLIED_OK'
 
@@ -167,10 +167,14 @@ jobs:
           $entry=Get-Content src/libmpv-shared-entry.js -Raw;$bundle=Get-Content src/libmpv-shared.generated.js -Raw;$player=Get-Content src/player.js -Raw;$app=Get-Content src/app.js -Raw
           foreach($required in @('copyExternalImageToTexture','state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&','this._ended && !previousEnded','position.toFixed(3)')){if(-not $entry.Contains($required) -or -not $bundle.Contains($required)){throw "R2M bundle marker missing: $required"}}
           if($player.Contains('typingTarget')){throw 'broad keyboard reveal survived'}
+          $keyStart=$player.IndexOf('function handlePlayerKey(event) {');$keyEnd=$player.IndexOf('// 스크린샷',$keyStart);if($keyStart -lt 0 -or $keyEnd -le $keyStart){throw 'keyboard handler markers missing'};if($player.Substring($keyStart,$keyEnd-$keyStart).Contains('showPlayerControls')){throw 'keyboard handler still reveals full controls'}
+          $spaceStart=$player.IndexOf('function finishSpaceHold(toggle = false) {');$spaceEnd=$player.IndexOf("window.addEventListener('keyup'",$spaceStart);if($spaceStart -lt 0 -or $spaceEnd -le $spaceStart){throw 'Space release markers missing'};if($player.Substring($spaceStart,$spaceEnd-$spaceStart).Contains('showPlayerControls')){throw 'Space release still reveals full controls'}
+          if(-not $player.Contains('if (!playerLocked) showPlayerControls();')){throw 'mouse reveal marker missing'}
+          if(-not $app.Contains('if(!settingsOpen())controlsTimer=setTimeout')){throw 'transient controls marker missing'}
           foreach($required in @('episodeTransitioning',"letter === 'c'", "tagName === 'LILAC-MPV-VIDEO'")){if(-not $player.Contains($required)){throw "R2M player marker missing: $required"}}
           if((Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256){throw 'addon identity changed'}
           if((Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'DLL identity changed'}
-          Write-Host 'R2M_ARCHITECTURE_IDENTITY_OK'
+          Write-Host 'R2M_ARCHITECTURE_IDENTITY_OK keyReveal=none mouseReveal=1 native=exact'
 
       - name: Build Windows R2M installer
         run: npx electron-builder --win nsis --publish never
@@ -186,29 +190,33 @@ jobs:
           if(-not $addon -or -not $dll){throw 'packaged native payload missing'}
           if((Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256){throw 'packaged addon mismatch'};if((Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'packaged DLL mismatch'}
           $asar=Get-ChildItem $raw,$nested -Recurse -File -Filter 'app.asar'|Select-Object -First 1;if(-not $asar){throw 'app.asar missing'};& npx.cmd asar extract $asar.FullName $asarOut;if($LASTEXITCODE -ne 0){throw 'asar extract failed'}
-          $entry=Get-Content (Join-Path $asarOut 'src/libmpv-shared.generated.js') -Raw;$player=Get-Content (Join-Path $asarOut 'src/player.js') -Raw
+          $entry=Get-Content (Join-Path $asarOut 'src/libmpv-shared.generated.js') -Raw;$player=Get-Content (Join-Path $asarOut 'src/player.js') -Raw;$app=Get-Content (Join-Path $asarOut 'src/app.js') -Raw
           foreach($required in @('state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&')){if(-not $entry.Contains($required)){throw "packaged race marker missing: $required"}}
           if($player.Contains('typingTarget')){throw 'packaged broad key reveal survived'}
+          $keyStart=$player.IndexOf('function handlePlayerKey(event) {');$keyEnd=$player.IndexOf('// 스크린샷',$keyStart);if($keyStart -lt 0 -or $keyEnd -le $keyStart){throw 'packaged keyboard handler markers missing'};if($player.Substring($keyStart,$keyEnd-$keyStart).Contains('showPlayerControls')){throw 'packaged keyboard reveal survived'}
+          $spaceStart=$player.IndexOf('function finishSpaceHold(toggle = false) {');$spaceEnd=$player.IndexOf("window.addEventListener('keyup'",$spaceStart);if($spaceStart -lt 0 -or $spaceEnd -le $spaceStart){throw 'packaged Space markers missing'};if($player.Substring($spaceStart,$spaceEnd-$spaceStart).Contains('showPlayerControls')){throw 'packaged Space reveal survived'}
+          if(-not $player.Contains('if (!playerLocked) showPlayerControls();')){throw 'packaged mouse reveal missing'}
+          if(-not $app.Contains('if(!settingsOpen())controlsTimer=setTimeout')){throw 'packaged transient controls marker missing'}
           $hash=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant();"R2M_INSTALLER_PATH=$($installer.FullName)"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"R2M_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "R2M_PACKAGED_VERIFY_OK bytes=$($installer.Length) sha=$hash"
+          Write-Host "R2M_PACKAGED_VERIFY_OK bytes=$($installer.Length) sha=$hash keyReveal=none"
 
       - name: Create checksum and attestation
         shell: powershell
         run: |
           $installer=Get-Item $env:R2M_INSTALLER_PATH;$checksum=Join-Path $installer.DirectoryName 'LilacAnime-Libmpv-R2M-Setup.sha256.txt';[IO.File]::WriteAllText($checksum,"$env:R2M_INSTALLER_SHA256  $($installer.Name)`n",(New-Object Text.UTF8Encoding($false)))
-          $att=[ordered]@{schema=1;releaseTag=$env:CUSTOM_RELEASE_TAG;version='0.5.49-libmpv-r2m.rc1';upstream='v0.5.49';electron=$env:ELECTRON_VERSION;qualifiedSource=$env:QUALIFIED_SOURCE_COMMIT;qualifiedAddonSha256=$env:QUALIFIED_ADDON_SHA256;qualifiedDllSha256=$env:QUALIFIED_DLL_SHA256;installerSha256=$env:R2M_INSTALLER_SHA256;fixes=@('ignore pre-FILE_LOADED stale EOF/time/duration','clear stale timing on reopen','ended edge trigger','episode transition lock','selective keyboard control reveal with C','transient controls','subtitle calibration','hide unsupported PiP')};$att|ConvertTo-Json -Depth 4|Set-Content (Join-Path $installer.DirectoryName 'LilacAnime-Libmpv-R2M-attestation.json') -Encoding utf8
+          $att=[ordered]@{schema=1;releaseTag=$env:CUSTOM_RELEASE_TAG;version='0.5.49-libmpv-r2m.rc2';upstream='v0.5.49';electron=$env:ELECTRON_VERSION;qualifiedSource=$env:QUALIFIED_SOURCE_COMMIT;qualifiedAddonSha256=$env:QUALIFIED_ADDON_SHA256;qualifiedDllSha256=$env:QUALIFIED_DLL_SHA256;installerSha256=$env:R2M_INSTALLER_SHA256;fixes=@('ignore pre-FILE_LOADED stale EOF/time/duration','clear stale timing on reopen','ended edge trigger','episode transition lock','keyboard shortcuts never reveal full controls','real mouse movement reveals transient controls','settings panel pins controls','subtitle calibration','hide unsupported PiP')};$att|ConvertTo-Json -Depth 4|Set-Content (Join-Path $installer.DirectoryName 'LilacAnime-Libmpv-R2M-attestation.json') -Encoding utf8
           Write-Host 'R2M_ATTESTATION_OK'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: lilac-libmpv-r2m-v0.5.49-r3
+          name: lilac-libmpv-r2m-v0.5.49-r4
           path: |
             dist/LilacAnime-Libmpv-R2M-Setup.exe
             dist/LilacAnime-Libmpv-R2M-Setup.sha256.txt
             dist/LilacAnime-Libmpv-R2M-attestation.json
           if-no-files-found: error
 
-      - name: Publish R2M prerelease on custom channel
+      - name: Publish R2M r4 prerelease on custom channel
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
@@ -216,6 +224,6 @@ jobs:
           $ErrorActionPreference='Stop'
           gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
           if($LASTEXITCODE -eq 0){gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes;git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null}
-          gh release create $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'LilacAnime libmpv R2M · reopen race + key UI' --notes 'Fixes the real reopen stale-EOF race that could chain 11→19, clears stale timing until the new file is actually loaded, restores selective keyboard control reveal (C added; Space/volume/brackets/etc stay quiet), and keeps the exact hardware-qualified playback payload.' dist/LilacAnime-Libmpv-R2M-Setup.exe dist/LilacAnime-Libmpv-R2M-Setup.sha256.txt dist/LilacAnime-Libmpv-R2M-attestation.json
-          if($LASTEXITCODE -ne 0){throw 'R2M release publish failed'}
-          Write-Host 'R2M_RELEASE_PUBLISHED'
+          gh release create $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'LilacAnime libmpv R2M r4 · keyboard UI policy fix' --notes 'Keeps the verified R2M stale-EOF reopen-race fix and exact hardware-qualified playback payload. Keyboard shortcuts no longer reveal or extend the full player controls/gradients; actual mouse movement still reveals them transiently, and the settings panel pins them visible.' dist/LilacAnime-Libmpv-R2M-Setup.exe dist/LilacAnime-Libmpv-R2M-Setup.sha256.txt dist/LilacAnime-Libmpv-R2M-attestation.json
+          if($LASTEXITCODE -ne 0){throw 'R2M r4 release publish failed'}
+          Write-Host 'R2M_R4_RELEASE_PUBLISHED'

@@ -12,6 +12,15 @@ function replaceOnce(source, needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   return source.replace(needle, replacement);
 }
+function rewriteSection(source, startMarker, endMarker, transform, label) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end <= start) throw new Error(`${label}: section anchors missing`);
+  const before = source.slice(start, end);
+  const after = transform(before);
+  if (after === before) throw new Error(`${label}: section was not changed`);
+  return source.slice(0, start) + after + source.slice(end);
+}
 
 // R2M closes the real-world reopen race that R2L's generation-only guard missed:
 // mpv can briefly surface the previous file's END_FILE/time/duration after loadfile(replace)
@@ -69,10 +78,10 @@ for (const marker of [
 }
 write('src/libmpv-shared-entry.js', entry);
 
-// R2L revealed controls for every unmodified key. Restore upstream's selective behavior:
-// left/right, digits, F/M and other original UI-bearing shortcuts keep revealing controls,
-// while Space, [ ], volume up/down, Z/X, P/S, PageUp/Down stay quiet. C is the one extra
-// shortcut the user asked to reveal because its subtitle state is visual.
+// R2L temporarily broadened keyboard input into a controls reveal. R2M's final policy is
+// deliberately stricter: keyboard shortcuts may perform their action/toast, but must never
+// make the full controls/gradients visible or extend their mouse-triggered visibility timer.
+// Only real mouse movement reveals the controls; an open settings panel remains the pin-open state.
 let player = read('src/player.js');
 const broadCapture = `window.addEventListener('keydown', event => {\n  usingKeyboard = true;\n  const typingTarget = event.target instanceof Element && event.target.matches('input,textarea,select,[contenteditable=\\"true\\"]');\n  if (!typingTarget && !event.ctrlKey && !event.altKey && !event.metaKey && document.body.classList.contains('player-mode')) showPlayerControls();\n}, true);`;
 player = replaceOnce(
@@ -81,15 +90,42 @@ player = replaceOnce(
   "window.addEventListener('keydown', () => { usingKeyboard = true; }, true);",
   'remove broad keyboard reveal'
 );
-player = replaceOnce(
+
+let spaceRevealCount = 0;
+player = rewriteSection(
   player,
-  "  if (letter === 'c') { const box = $('#subtitleEnabled'); box.checked = !box.checked; box.dispatchEvent(new Event('change')); toast(box.checked ? '자막을 켰어요' : '자막을 껐어요'); return; }",
-  "  if (letter === 'c') { const box = $('#subtitleEnabled'); box.checked = !box.checked; box.dispatchEvent(new Event('change')); toast(box.checked ? '자막을 켰어요' : '자막을 껐어요'); showPlayerControls(); return; }",
-  'C shortcut reveal'
+  'function finishSpaceHold(toggle = false) {',
+  "\nwindow.addEventListener('keyup'",
+  section => {
+    spaceRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
+    if (spaceRevealCount < 1) throw new Error('Space release reveal anchor missing');
+    return section.replaceAll('showPlayerControls();', '');
+  },
+  'Space release keyboard reveal'
 );
 
+let keyRevealCount = 0;
+player = rewriteSection(
+  player,
+  'function handlePlayerKey(event) {',
+  '\n// 스크린샷',
+  section => {
+    keyRevealCount = (section.match(/showPlayerControls\(\);/g) || []).length;
+    if (keyRevealCount < 1) throw new Error('keyboard reveal anchors missing');
+    return section.replaceAll('showPlayerControls();', '');
+  },
+  'player keyboard reveals'
+);
+
+const finishBlock = player.slice(player.indexOf('function finishSpaceHold(toggle = false) {'), player.indexOf("\nwindow.addEventListener('keyup'", player.indexOf('function finishSpaceHold(toggle = false) {')));
+const keyBlock = player.slice(player.indexOf('function handlePlayerKey(event) {'), player.indexOf('\n// 스크린샷', player.indexOf('function handlePlayerKey(event) {')));
+const mouseBlock = player.slice(player.indexOf("$('#immersivePlayer').addEventListener('mousemove', event => {"), player.indexOf('\n// --- Picture-in-picture', player.indexOf("$('#immersivePlayer').addEventListener('mousemove', event => {")));
+const settingsBlock = player.slice(player.indexOf('function openPlayerSettings(open, focusSection = null) {'), player.indexOf('\n// Mirrors the settings page', player.indexOf('function openPlayerSettings(open, focusSection = null) {')));
 if (player.includes('typingTarget')) throw new Error('R2L broad keyboard reveal survived');
-if (!player.includes("letter === 'c') { const box = $('#subtitleEnabled')") || !player.includes("showPlayerControls(); return; }")) throw new Error('C reveal missing');
+if (finishBlock.includes('showPlayerControls')) throw new Error('Space release still reveals full controls');
+if (keyBlock.includes('showPlayerControls')) throw new Error('keyboard handler still reveals full controls');
+if (!mouseBlock.includes('if (!playerLocked) showPlayerControls();')) throw new Error('real mouse movement reveal missing');
+if (!settingsBlock.includes('showPlayerControls();')) throw new Error('settings panel pin-open reveal missing');
 write('src/player.js', player);
 
-console.log('LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 keyReveal=selective+c');
+console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 keyReveal=none removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} mouseReveal=1 settingsPin=1`);
