@@ -132,6 +132,22 @@ async function runPhase(addon, fixture, holdMs, durationMs = 4500) {
   }
 }
 
+async function runSampledAB(addon, fixture, maxAttempts = 3) {
+  let baseline = null;
+  let retained = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    baseline = await runPhase(addon, fixture, 0);
+    retained = await runPhase(addon, fixture, 800);
+    if (baseline.frames >= 20 && retained.frames >= 20) {
+      if (attempt > 1) console.log(`LIBMPV_NATIVE_RETENTION_SAMPLE_RETRY_OK attempt=${attempt} baseline=${baseline.frames} retained=${retained.frames}`);
+      return { baseline, retained, sampleAttempt: attempt };
+    }
+    console.log(`LIBMPV_NATIVE_RETENTION_SAMPLE_RETRY attempt=${attempt} baseline=${baseline.frames} retained=${retained.frames}`);
+    if (attempt < maxAttempts) await sleep(250);
+  }
+  throw new Error(`insufficient A/B sample size after ${maxAttempts} attempts: baseline=${baseline?.frames ?? 0} retained=${retained?.frames ?? 0}`);
+}
+
 async function main() {
   const addonPath = process.env.LILAC_LIBMPV_PLAYER_ADDON;
   const dllPath = process.env.LILAC_LIBMPV_DLL;
@@ -147,18 +163,21 @@ async function main() {
   }
 
   const report = {
-    schema: 2,
+    schema: 3,
     smoke: '1080p same-runner immediate-release vs 800ms-retention A/B',
     baseline: null,
     retained: null,
+    sampleAttempt: 0,
     retentionToBaselineRatio: 0,
     hostedRunnerBaselineLimited: false,
     pass: false
   };
 
   try {
-    report.baseline = await runPhase(addon, fixture, 0);
-    report.retained = await runPhase(addon, fixture, 800);
+    const sampled = await runSampledAB(addon, fixture);
+    report.baseline = sampled.baseline;
+    report.retained = sampled.retained;
+    report.sampleAttempt = sampled.sampleAttempt;
 
     const base = report.baseline;
     const held = report.retained;
@@ -199,6 +218,7 @@ async function main() {
       retainedFps: held.effectiveFps,
       retentionToBaselineRatio: report.retentionToBaselineRatio,
       hostedRunnerBaselineLimited: report.hostedRunnerBaselineLimited,
+      sampleAttempt: report.sampleAttempt,
       baselineFrames: base.frames,
       retainedFrames: held.frames,
       retainedBackpressure: held.backpressure,
