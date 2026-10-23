@@ -20,8 +20,6 @@ const playerFile=path.join(root,'src','player.js');
 let player=fs.readFileSync(playerFile,'utf8');
 const fontAnchor="  const fontFile = localStorage.getItem('subtitleFontPath') || '';";
 if((player.split(fontAnchor).length-1)!==1)throw new Error('R2P font anchor missing or duplicated');
-// R2M/R2N may have reformatted or removed the legacy checkbox sync. Normalize it so
-// the R2P transform can replace one deterministic block without depending on history.
 player=player.replace(/^\s*\$\('#psVttBold'\)\.checked\s*=.*;\s*$/gm,'');
 player=player.replace(fontAnchor,"  $('#psVttBold').checked = localStorage.getItem('vttBold') !== 'false';\n"+fontAnchor);
 
@@ -34,6 +32,16 @@ for(const pattern of [
 ]) player=player.replace(pattern,'');
 const normalizedHandlers=`$('#psVttStyle').onchange = event => { localStorage.setItem('vttStyle', String(event.target.checked)); applyCueStyle(); };\n$('#psVttBold').onchange = event => { setSubtitleSetting('vttBold', event.target.checked); applyCueStyle(); };\n$('#psVttOutline').oninput = event => { setSubtitleSetting('vttOutline', event.target.value); applyCueStyle(); };\n`;
 player=player.replace(chooseAnchor,normalizedHandlers+chooseAnchor);
+
+const widthStatement=/\s*cue\.size\s*=\s*100\s*;\s*cue\.position\s*=\s*50\s*;\s*cue\.positionAlign\s*=\s*['"]center['"]\s*;\s*cue\.align\s*=\s*['"]center['"]\s*;/g;
+const widthMatches=[...player.matchAll(widthStatement)];
+if(widthMatches.length!==1){
+  const at=player.indexOf('cue.size');
+  const nearby=at>=0?player.slice(Math.max(0,at-350),at+600):'cue.size missing';
+  throw new Error(`R2P VTT width statement count=${widthMatches.length}; nearby=${JSON.stringify(nearby)}`);
+}
+const normalizedWidth=`\n    // Chromium translates percentage-positioned cues horizontally again when size < 100,\n    // shifting a 90% cue 4.5% to the left. Keep the box full-width; CSS supplies safe text margins.\n    cue.size = 100; cue.position = 50; cue.positionAlign = 'center'; cue.align = 'center';`;
+player=player.replace(widthStatement,normalizedWidth);
 fs.writeFileSync(playerFile,player);
 
-console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1');
+console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1');
