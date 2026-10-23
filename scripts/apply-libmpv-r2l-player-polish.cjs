@@ -40,8 +40,7 @@ entry = replaceOnce(entry,
   "      if (this._ended && !previousEnded) this.dispatchEvent(new Event('ended'));",
   'ended edge dispatch');
 
-// Match the normal Lilac subtitle appearance more closely. Position is a direct visual bottom inset,
-// so the slider can really reach the lower edge instead of having an extra forced margin.
+// Match the visible normal-Lilac VTT UI more closely and keep the full lower position range.
 entry = replaceOnce(entry,
   '.lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;gap:.08em;text-align:center;white-space:pre-line;line-height:1.22;color:#fff;overflow-wrap:anywhere}',
   '.lilac-vtt-stack,.lilac-vtt-top{position:absolute;left:2%;right:2%;display:flex;flex-direction:column;align-items:center;text-align:center;white-space:pre-line;line-height:1.2;color:#fff;overflow-wrap:anywhere}',
@@ -57,37 +56,35 @@ for (const marker of ['this._generation = Number(result?.generation) || 0','Numb
 write('src/libmpv-shared-entry.js', entry);
 
 let player = read('src/player.js');
-// Do not rewrite playSiblingEpisode itself: earlier compatibility transforms may change its body. Wrap the
-// live function binding immediately before the stable previous/next button wiring, so autoplay, buttons,
-// media keys and every other caller all share the same transition lock.
+// Wrap the live episode function at stable button wiring instead of rewriting its transform-sensitive body.
 player = replaceOnce(player,
   "$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
   "const unlockedPlaySiblingEpisode = playSiblingEpisode;\nlet episodeTransitioning = false;\nplaySiblingEpisode = async episode => {\n  if (!episode || episodeTransitioning) return;\n  episodeTransitioning = true;\n  try { return await unlockedPlaySiblingEpisode(episode); }\n  finally { episodeTransitioning = false; }\n};\n$('#previousEpisode').onclick = () => playSiblingEpisode(siblingEpisode(-1));",
   'episode transition wrapper');
 
-// Mouse movement and any normal player shortcut briefly reveal the controls/gradients.
+// Any actual mouse movement reveals controls. Use the stable capture key listener to reveal them for every
+// unmodified player shortcut (arrows, digits, C, Space, Z/X, P/S, brackets, media/page keys) without touching
+// the individual shortcut implementations.
 player = replaceOnce(player,
   "  if (!playerLocked && event.target !== $('#video') && player.classList.contains('controls-visible')) showPlayerControls();",
   "  if (!playerLocked) showPlayerControls();",
   'mousemove reveals controls');
 player = replaceOnce(player,
-  '  if (typing) return;\n  const controlsShown = player.classList.contains(\'controls-visible\');',
-  "  if (typing) return;\n  if (!event.ctrlKey && !event.altKey && !event.metaKey) showPlayerControls();\n  const controlsShown = player.classList.contains('controls-visible');",
-  'keyboard reveals controls');
+  "window.addEventListener('keydown', () => { usingKeyboard = true; }, true);",
+  "window.addEventListener('keydown', event => {\n  usingKeyboard = true;\n  const typingTarget = event.target instanceof Element && event.target.matches('input,textarea,select,[contenteditable=\\\"true\\\"]');\n  if (!typingTarget && !event.ctrlKey && !event.altKey && !event.metaKey && document.body.classList.contains('player-mode')) showPlayerControls();\n}, true);",
+  'capture keyboard reveal');
 
-// The current PiP compositor expects a real video CanvasImageSource, while libmpv playback is a custom
-// WebGPU element. Hide the dead button until a shared-texture PiP path is implemented and qualified.
+// Hide the unsupported libmpv PiP affordance until a shared-texture PiP path is qualified.
 player = replaceOnce(player,
   "$('#miniPlayer').onclick=()=>togglePictureInPicture();",
   "$('#miniPlayer').onclick=()=>togglePictureInPicture();\nif ($('#video')?.tagName === 'LILAC-MPV-VIDEO') { $('#miniPlayer').classList.add('hidden'); $('#miniPlayer').setAttribute('aria-hidden', 'true'); }",
   'hide unsupported libmpv PiP');
-for (const marker of ['unlockedPlaySiblingEpisode','let episodeTransitioning = false','if (!episode || episodeTransitioning) return','if (!playerLocked) showPlayerControls()',"tagName === 'LILAC-MPV-VIDEO'"]) {
+for (const marker of ['unlockedPlaySiblingEpisode','let episodeTransitioning = false','if (!episode || episodeTransitioning) return','if (!playerLocked) showPlayerControls()','typingTarget',"tagName === 'LILAC-MPV-VIDEO'"]) {
   if (!player.includes(marker)) throw new Error(`R2L player marker missing: ${marker}`);
 }
 write('src/player.js', player);
 
-// Controls and top/bottom gradients auto-hide after two seconds whether playing or paused. An open settings
-// panel is the deliberate pin-open state.
+// Controls and gradients are transient even while paused; an open settings panel is the pin-open state.
 let app = read('src/app.js');
 app = replaceOnce(app,
   "function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!$('#video').paused&&!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}",
@@ -100,7 +97,6 @@ const pkg = JSON.parse(read('package.json'));
 if (pkg.version !== '0.5.49-libmpv-r2k.rc1') throw new Error(`R2L expected R2K package, got ${pkg.version}`);
 pkg.version = '0.5.49-libmpv-r2l.rc1';
 pkg.lilacCustomTag = 'libmpv-r2k-v0.5.49-r2';
-// Keep R2K app identity/profile so this upgrades in place and preserves the user's settings.
 pkg.build.win.artifactName = 'LilacAnime-Libmpv-R2L-Setup.${ext}';
 write('package.json', JSON.stringify(pkg, null, 2) + '\n');
 
