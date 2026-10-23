@@ -18,7 +18,7 @@ const checks = {
   pipHidden: player.includes("tagName === 'LILAC-MPV-VIDEO'") && player.includes("$('#miniPlayer').classList.add('hidden')"),
   subtitleDirectPosition: entry.includes('position.toFixed(3)') && !entry.includes('bottomInset.toFixed(3)'),
   subtitleMetrics: entry.includes('line-height:1.2') && !entry.includes('gap:.08em'),
-  inPlaceIdentity: pkg.build?.appId === 'com.lilac.anime.desktop.libmpvr2kcandidate' && pkg.build?.productName === 'LilacAnime Libmpv R2K 0.5.49',
+  inPlaceIdentity: pkg.build?.appId === 'com.lilac.anime.desktop.libmpvr2jcandidate' && pkg.build?.productName === 'LilacAnime Libmpv R2J Subtitle Fix',
   customTag: pkg.lilacCustomTag === 'libmpv-r2k-v0.5.49-r2',
   version: pkg.version === '0.5.49-libmpv-r2l.rc1'
 };
@@ -28,4 +28,4 @@ if (failed.length) {
   console.error(JSON.stringify(checks));
   process.exit(1);
 }
-console.log('LIBMPV_R2L_UI_PASS generation=bound ended=edge episode=locked controls=transient mouse=1 keyboard=1 pip=hidden subtitles=calibrated identity=in-place');
+console.log('LIBMPV_R2L_UI_PASS generation=bound ended=edge episode=locked controls=transient mouse=1 keyboard=1 pip=hidden subtitles=calibrated identity=r2j-preserved');
