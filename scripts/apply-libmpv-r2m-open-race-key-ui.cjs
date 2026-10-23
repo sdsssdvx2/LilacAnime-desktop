@@ -52,6 +52,41 @@ function controlsSites(source) {
   }
   return sites;
 }
+function replaceExecutableBareControls(source) {
+  const needle = 'showPlayerControls()';
+  let out = '', i = 0, state = 'code', quote = '', count = 0;
+  while (i < source.length) {
+    const ch = source[i], next = source[i + 1];
+    if (state === 'line') {
+      out += ch;
+      if (ch === '\n') state = 'code';
+      i++; continue;
+    }
+    if (state === 'block') {
+      out += ch;
+      if (ch === '*' && next === '/') { out += next; i += 2; state = 'code'; } else i++;
+      continue;
+    }
+    if (state === 'string') {
+      out += ch;
+      if (ch === '\\' && i + 1 < source.length) { out += source[i + 1]; i += 2; continue; }
+      if (ch === quote) { state = 'code'; quote = ''; }
+      i++; continue;
+    }
+    if (ch === '/' && next === '/') { out += '//'; i += 2; state = 'line'; continue; }
+    if (ch === '/' && next === '*') { out += '/*'; i += 2; state = 'block'; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { out += ch; i++; state = 'string'; quote = ch; continue; }
+    if (source.startsWith(needle, i) && (i === 0 || !/[A-Za-z0-9_$]/.test(source[i - 1]))) {
+      out += 'void 0';
+      i += needle.length;
+      count++;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return { source: out, count };
+}
 
 // R2M closes the real-world reopen race that R2L's generation-only guard missed.
 let entry = read('src/libmpv-shared-entry.js');
@@ -120,9 +155,9 @@ const r2lControls = "function showPlayerControls(){const player=$('#immersivePla
 const guardedControls = "function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
 app = replaceOnce(app, r2lControls, guardedControls, 'controls source guard');
 
-// Clean every known legacy reveal if it is still present after the earlier transforms. Some prior
-// libmpv transforms already remove individual handlers, so absence here is acceptable; the executable
-// call-site gate below is authoritative.
+// Clean known legacy reveals when present, then remove every remaining executable no-source
+// call generically. `void 0` preserves surrounding expression/statement syntax while making
+// the full-controls policy independent of upstream formatting or future indirect paths.
 app = replaceOptional(app, '  enterPlayer();showPlayerControls();', '  enterPlayer();', 'pending player reveal');
 app = replaceOptional(app, '  enterPlayer();setPlayerLocked(false);showPlayerControls();updateEpisodeButtons();', '  enterPlayer();setPlayerLocked(false);updateEpisodeButtons();', 'play entry reveal');
 app = replaceOptional(app, "$('#screenshotPlayer').onclick=()=>{takeScreenshot();showPlayerControls()};", "$('#screenshotPlayer').onclick=()=>{takeScreenshot()};", 'screenshot click timer extension');
@@ -132,6 +167,8 @@ app = replaceOptional(app, "if(player.classList.contains('controls-visible')){cl
 app = replaceOptional(app, "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');showPlayerControls();prepareNext().catch(()=>{})});", "$('#video').addEventListener('playing',()=>{$('#immersivePlayer').classList.add('is-playing');$('#playerEmpty').classList.add('hidden');prepareNext().catch(()=>{})});", 'playing event reveal');
 app = replaceOptional(app, "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing');showPlayerControls()});", "$('#video').addEventListener('pause',()=>{saveHistorySoon();$('#immersivePlayer').classList.remove('is-playing')});", 'pause event reveal');
 app = replaceOptional(app, "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';showPlayerControls();return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';showPlayerControls();return}playSiblingEpisode(next)});", "$('#video').addEventListener('ended',()=>{const next=siblingEpisode(1);if(!next){$('#downloadStatus').textContent='마지막 회차입니다.';return}if(!playerFlag('playerAutoPlay')){$('#downloadStatus').textContent='재생이 끝났습니다.';return}playSiblingEpisode(next)});", 'ended event reveal');
+const bareControls = replaceExecutableBareControls(app);
+app = bareControls.source;
 
 const playerCalls = controlsSites(player);
 const appCalls = controlsSites(app);
@@ -141,4 +178,4 @@ if (!app.includes("if(source!=='mouse'&&!settingsOpen())return")) throw new Erro
 if (!app.includes("if(!settingsOpen())controlsTimer=setTimeout")) throw new Error('2-second transient controls timer missing');
 write('src/app.js', app);
 
-console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} controlsPolicy=mouse-or-settings playerCalls=${playerCalls.length} appCalls=${appCalls.length}`);
+console.log(`LIBMPV_R2M_OPEN_RACE_KEY_UI_OK fileLoadedGate=1 staleTimingReset=1 endedEdge=1 removedKey=${keyRevealCount} removedSpace=${spaceRevealCount} removedAppBare=${bareControls.count} controlsPolicy=mouse-or-settings playerCalls=${playerCalls.length} appCalls=${appCalls.length}`);
