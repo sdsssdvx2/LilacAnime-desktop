@@ -312,3 +312,28 @@ test('Claude: a rate-limited model hands over to another of its family only', as
   assert.equal(models.at(-1), 'claude-opus-5');
   assert.ok(!models.includes('claude-haiku-5-5'));
 });
+
+// Whisper's subtitle grows while it is translated: each run keeps its lines under linesKey, so the next one sends only
+// the new lines; a partial run makes no file; the final run takes them all up and writes the translation.
+test('a growing subtitle is translated line by line as it grows (linesKey, partial)', async t => {
+  const sent = [];
+  const { ai, dir } = setup(t, async (url, init) => {
+    const body = String(init.body), texts = [...body.matchAll(/LINE(\d+)/g)].map(match => Number(match[1]));
+    sent.push([...new Set(texts)]);
+    const ids = [...new Set([...body.matchAll(/\\"i\\":(\d+)/g)].map(match => Number(match[1])))];
+    return response({ output: [{ content: [{ type: 'output_text', text: JSON.stringify({ lines: ids.map(i => ({ i, t: `번역${i}` })) }) }] }] });
+  }, { cloud: 'openai', openaiKey: 'fake-openai', openaiModel: 'gpt-5-mini' });
+  const file = path.join(dir, 'whisper.vtt'), cue = n => `00:00:${String(n).padStart(2, '0')}.000 --> 00:00:${String(n).padStart(2, '0')}.900\nLINE${n}\n`;
+  const write = count => fs.writeFileSync(file, `WEBVTT\n\n${Array.from({ length: count }, (_, n) => cue(n + 1)).join('\n')}`);
+  write(3);
+  const first = await ai.translate({ file, provider: 'cloud', linesKey: file, partial: true });
+  assert.equal(first.partial, true); assert.equal(first.lines, 3);
+  write(5);
+  const shown = [];
+  await ai.translate({ file, provider: 'cloud', linesKey: file, partial: true, lines: items => shown.push(...items) });
+  assert.deepEqual(sent[sent.length - 1], [4, 5], 'only the two new lines are sent');
+  assert.equal(new Set(shown.map(item => item.raw)).size, 5, 'the lines kept from before are given too');
+  const requests = sent.length, final = await ai.translate({ file, provider: 'cloud', linesKey: file });
+  assert.equal(sent.length, requests, 'the final run sends nothing');
+  assert.ok(final.path && fs.readFileSync(final.path, 'utf8').includes('번역'));
+});

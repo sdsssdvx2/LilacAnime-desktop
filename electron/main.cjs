@@ -66,7 +66,7 @@ let playerStreamHeaders = null;
 const malIdCache = new Map();
 let downloadManager;
 let updater;
-let subtitleSync=null;
+let subtitleSync=null,whisper=null;
 
 async function coverDataUrl(rawUrl){
   return String(rawUrl||'');
@@ -2654,7 +2654,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('subtitle-sync:cancel',()=>{subtitleSync.cancel();return true});
   // Whisper AI 자막: the episode's Japanese speech made into a subtitle (see whisper.cjs). Lines and progress go to the
   // window that asked, as they come.
-  const whisper=createWhisper({userData:app.getPath('userData'),ffmpegPath:require('ffmpeg-static').replace('app.asar','app.asar.unpacked'),subtitleRoot:subtitleStore.managedRoot,proxy:ffmpegStream});
+  whisper=createWhisper({userData:app.getPath('userData'),ffmpegPath:require('ffmpeg-static').replace('app.asar','app.asar.unpacked'),subtitleRoot:subtitleStore.managedRoot,proxy:ffmpegStream});
   const whisperEvent=(event,value)=>{if(!event.sender.isDestroyed())event.sender.send('whisper:progress',value)};
   ipcMain.handle('whisper:status',()=>whisper.status());
   ipcMain.handle('whisper:select',(_,id)=>whisper.select(String(id||'')));
@@ -2667,6 +2667,7 @@ app.whenReady().then(async () => {
     catch(error){if(error.canceled)return {canceled:true};throw error}
   });
   ipcMain.handle('whisper:cancel',()=>whisper.cancel());
+  ipcMain.handle('whisper:jump',(_,seconds)=>whisper.jump(Number(seconds)||0));
   // 설정 > 자막 캐시: the subtitle files no saved subtitle uses (translations, downloads, partial results), removed by
   // hand, and by themselves a minute after start once a month old.
   ipcMain.handle('subtitle-cache:usage',()=>subtitleStore.usage());
@@ -2874,14 +2875,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('subtitle:jump',(_,id,seconds)=>{translator().jump(Number(id)||null,Number(seconds)||0);return true});
   // playing: where the episode is (the lines from there are translated first); the lines done so far go to the player
   // as they come (translate:progress {lines}), so it shows them before the rest is translated.
-  ipcMain.handle('subtitle:translate',async(event,{path:file='',title='',id=0,provider='',anime=null,playing=0,fresh=false,only=false,anySide=false}={})=>{
+  // linesKey + partial: a subtitle still being written (Whisper's): its lines are kept under linesKey so each run only
+  // translates the new ones, and a partial run makes no file (the player shows its lines as they come).
+  ipcMain.handle('subtitle:translate',async(event,{path:file='',title='',id=0,provider='',anime=null,playing=0,fresh=false,only=false,anySide=false,linesKey='',partial=false}={})=>{
     const resolved=path.resolve(String(file||''));
     // App subtitle files and the tracks saved with downloads.
     const savedByUser=Object.values(subtitleStore.data).some(items=>items.some(item=>item.source==='user'&&path.resolve(item.path)===resolved));
     if(!savedByUser&&![path.join(app.getPath('userData'),'subtitles'),downloadManager?.root].some(root=>root&&resolved.startsWith(root+path.sep))||!/\.vtt$/i.test(resolved)||!fs.existsSync(resolved))throw new Error('번역할 자막 파일이 없습니다.');
     const send=value=>{if(!event.sender.isDestroyed())event.sender.send('translate:progress',{id,...value})};
     const context=await translationContext(anime||{},String(title||''));
-    const result=await translator().translate({file:resolved,id:Number(id)||null,title:String(title||''),provider:['cloud','gemini','local'].includes(provider)?provider:'',context,playing:Number(playing)||0,fresh:fresh===true,only:only===true,anySide:anySide===true,progress:(done,total)=>send({done,total}),status:text=>send({status:text}),lines:items=>send({lines:items})});
+    const result=await translator().translate({file:resolved,id:Number(id)||null,title:String(title||''),provider:['cloud','gemini','local'].includes(provider)?provider:'',context,playing:Number(playing)||0,fresh:fresh===true,only:only===true,anySide:anySide===true,linesKey:String(linesKey||''),partial:partial===true,progress:(done,total)=>send({done,total}),status:text=>send({status:text}),lines:items=>send({lines:items})});
+    if(result.partial)return {partial:true,engine:result.engine||'',failed:result.failed,lines:result.lines};
     return subtitleResult(result.path,{model:result.model,engine:result.engine||'',failed:result.failed,cached:result.cached,fallbackNote:result.fallbackNote||'',fallbackReason:result.fallbackReason||''});
   });
   // Several lookups at a time (TMDB answers quickly; AniList allows about 90 requests a minute).
@@ -2985,5 +2989,5 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on('before-quit', () => { desktopState?.beforeQuit();subtitleSync?.stop();downloadManager?.shutdown();closeFlixProxy(); subtitleTranslator?.local?.stop(); updater?.installOnQuit(); });
+app.on('before-quit', () => { desktopState?.beforeQuit();subtitleSync?.stop();whisper?.stop();downloadManager?.shutdown();closeFlixProxy(); subtitleTranslator?.local?.stop(); updater?.installOnQuit(); });
 app.on('window-all-closed', () => { if (process.env.LILAC_SMOKE_REANIME==='1'||desktopState?.settings().trayEnabled&&!desktopState.quitting)return;if (process.platform !== 'darwin') app.quit(); });

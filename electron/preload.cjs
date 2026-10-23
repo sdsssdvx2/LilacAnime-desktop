@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('lilac', {
   whisperRemove: id => ipcRenderer.invoke('whisper:remove', id),
   whisperTranscribe: request => ipcRenderer.invoke('whisper:transcribe', request),
   whisperCancel: () => ipcRenderer.invoke('whisper:cancel'),
+  whisperJump: seconds => ipcRenderer.invoke('whisper:jump', seconds),
   onWhisperProgress: callback => ipcRenderer.on('whisper:progress', (_, value) => callback(value)),
   providerSubtitleTracks: episode => ipcRenderer.invoke('provider:subtitle-tracks', episode),
   coverData: url => ipcRenderer.invoke('cover:data', url),

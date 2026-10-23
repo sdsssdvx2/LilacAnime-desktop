@@ -552,7 +552,10 @@ function createTranslator(userData) {
   // (the cue's text in the file, the translated cue's), a few at a time, so the player can show them before the rest is
   // done; control.done() gives all of them. fresh: made again (다시 번역), the saved translation and the lines kept from an
   // earlier run passed over; the new one takes the saved one's place.
-  async function translateOnce({ file, title = '', provider = '', context = {}, signal = null, progress = () => {}, status = () => {}, playing = 0, onLines = () => {}, control = {}, fresh = false, only = false, anySide = false }) {
+  // linesKey: the lines are kept under this name instead of the file's content (a file still growing: Whisper's), so a
+  // run on its next version translates only the new lines; partial: such a run, which writes no translated file and
+  // keeps its lines for the next one.
+  async function translateOnce({ file, title = '', provider = '', context = {}, signal = null, progress = () => {}, status = () => {}, playing = 0, onLines = () => {}, control = {}, fresh = false, only = false, anySide = false, linesKey = '', partial = false }) {
     const settings = read(), wanted = provider || autoProvider() || 'cloud';
     // The engines in the order they are tried: an API's name, or 'local'.
     const apis = [settings.cloud, ...Object.keys(CLOUDS).filter(api => api !== settings.cloud)].filter(api => keyOf(settings, api));
@@ -576,7 +579,7 @@ function createTranslator(userData) {
     // anySide (a translation made by itself, not a button pressed): with none on its own side, a finished one the other
     // side made is taken too (the next episode made ready by the local AI when the API's allowance ran out, opened on
     // the API's side).
-    for (const name of fresh ? [] : [...order.filter(sameSide), ...(anySide ? order.filter(name => !sameSide(name)) : [])]) {
+    for (const name of fresh || partial ? [] : [...order.filter(sameSide), ...(anySide ? order.filter(name => !sameSide(name)) : [])]) {
       const out = path.join(cacheDir, `${hashOf(name)}.vtt`);
       if (!fs.existsSync(out)) continue;
       const models = modelsIn(out);
@@ -618,7 +621,10 @@ function createTranslator(userData) {
     // (lines that failed, the episode or the app closed, the allowance gone) goes on from where it was: only the
     // missing lines are translated again.
     // by: the engine of each line; lineModel: the model that translated it (kept lines: the engine's picked model).
-    const translated = new Map(), by = new Map(), lineModel = new Map(), linesFile = name => path.join(cacheDir, `${hashOf(name)}.lines.json`);
+    const keptName = name => linesKey ? crypto.createHash('sha1').update(`${modelOf(name)}
+${name === 'local' ? LOCAL_PROMPT_VERSION + promptVersion(localModel) : PROMPT_VERSION}
+lines:${linesKey}`).digest('hex').slice(0, 20) : hashOf(name);
+    const translated = new Map(), by = new Map(), lineModel = new Map(), linesFile = name => path.join(cacheDir, `${keptName(name)}.lines.json`);
     for (const name of fresh ? [] : order.filter(sameSide)) {
       let kept = {}; try { kept = JSON.parse(fs.readFileSync(linesFile(name), 'utf8')) || {}; } catch { continue; }
       for (const line of unique) if (!translated.has(line.i) && typeof kept[line.text] === 'string') { translated.set(line.i, kept[line.text]); by.set(line.i, name); lineModel.set(line.i, modelOf(name)); }
@@ -674,6 +680,7 @@ function createTranslator(userData) {
     const models = {};
     for (const i of translated.keys()) { if (silent.has(i)) continue; const model = lineModel.get(i) || modelOf(by.get(i) || main); models[model] = (models[model] || 0) + 1; }
     const ranked = Object.fromEntries(Object.entries(models).sort((a, b) => b[1] - a[1]));
+    if (partial) return { partial: true, engine: engineOf(main).name, failed: unique.length - translated.size, lines: translated.size };
     const written = writeResult(cues, unique, translated, hashOf(main), ranked, new Set([...silent].map(i => unique[i].raw)));
     if (!written.failed) for (const name of used) try { fs.unlinkSync(linesFile(name)); } catch { /* none kept */ }
     const result = { ...written, engine: engineOf(main).name };

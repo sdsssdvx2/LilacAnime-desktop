@@ -893,7 +893,8 @@ function cancelButtonRun(button){const run=Number(button.dataset.run);if(!run||!
 function cancelOtherEpisodeTranslations(){const episode=subtitleStoreKey();for(const [run,key] of translationEpisodes)if(key!==episode)window.lilac.cancelTranslation(run).catch(()=>{})}
 // A translation for the episode on screen is running: its progress stays in the subtitle state line.
 const translatingNow=()=>translating?.requestId===playbackRequestId;
-async function runTranslation({file,name,button,provider,manual=false,fresh=false}){
+// linesKey: a Whisper subtitle's own path, so the lines its live translation kept are taken up (see src/whisper.js).
+async function runTranslation({file,name,button,provider,manual=false,fresh=false,linesKey=''}){
   translationSettings=await window.lilac.geminiSettings().catch(()=>translationSettings);
   if(!translationReady('cloud')&&!translationReady('local')){toast(provider==='local'?'설정 > 자막 자동 번역에서 로컬 AI 모델을 먼저 받아 주세요.':`설정 > 자막 자동 번역에서 ${cloudName()} API 키를 넣어 주세요.`);return}
   cancelButtonRun(button); // a run this button was showing gives way (another Jimaku file picked)
@@ -905,7 +906,7 @@ async function runTranslation({file,name,button,provider,manual=false,fresh=fals
   try{
     const source=await file();if(!current())return;
     if(translating?.run===run)translating.path=source.path;
-    const result=await window.lilac.translateSubtitle({path:source.path,title,id:run,provider,anime:subtitleSearchAnime(),playing:$('#video').currentTime||0,fresh,only:manual&&provider==='local',anySide:!manual});if(!current())return;
+    const result=await window.lilac.translateSubtitle({path:source.path,title,id:run,provider,anime:subtitleSearchAnime(),playing:$('#video').currentTime||0,fresh,only:manual&&provider==='local',anySide:!manual,linesKey});if(!current())return;
     // Its source was synced while it ran: the translation is retimed the same way.
     const fix=syncFixes.get(source.path),synced=fix?await window.lilac.retimeSubtitle({subtitlePath:result.path,...fix}).catch(()=>null):null;if(!current())return;
     if(synced)syncChecked.add(synced.path);const done=synced||result;
@@ -1038,7 +1039,7 @@ async function prepareNext(){
 }
 function translateJimaku(provider='cloud',manual=false){const subtitle=currentPlaybackContext.jimakuSubtitle;if(subtitle)runTranslation({file:async()=>subtitle,name:'Jimaku',button:provider==='local'?$('#translateNowLocal'):$('#translateNow'),provider,manual})}
 // The one 번역 row translates the subtitle on screen: the picked Jimaku file, or the picked track.
-const translateShown=provider=>{const kind=translatableSubtitle(),button=provider==='local'?$('#translateNowLocal'):$('#translateNow'),again=retranslatable();if(again)return runTranslation({file:async()=>({path:again.from}),name:again.fromName||'자막',button,provider,manual:true,fresh:true});if(kind==='jimaku')return translateJimaku(provider,true);if(kind==='user'||kind==='whisper'){const path=currentSubtitle.path;return runTranslation({file:async()=>({path}),name:kind==='whisper'?'Whisper':'내 자막',button,provider,manual:true})}return translateSubtitleTrack(provider,true)};
+const translateShown=provider=>{const kind=translatableSubtitle(),button=provider==='local'?$('#translateNowLocal'):$('#translateNow'),again=retranslatable();if(again)return runTranslation({file:async()=>({path:again.from}),name:again.fromName||'자막',button,provider,manual:true,fresh:true});if(kind==='jimaku')return translateJimaku(provider,true);if(kind==='user'||kind==='whisper'){const path=currentSubtitle.path;return runTranslation({file:async()=>({path}),name:kind==='whisper'?'Whisper':'내 자막',button,provider,manual:true,linesKey:kind==='whisper'?path:''})}return translateSubtitleTrack(provider,true)};
 $('#translateNow').onclick=event=>cancelButtonRun(event.currentTarget)||translateShown('cloud');$('#translateNowLocal').onclick=event=>cancelButtonRun(event.currentTarget)||translateShown('local');
 // A jump while the subtitle on screen is translated: its run translates from there next.
 $('#video').addEventListener('seeked',()=>{if(translating?.path&&translatingNow())window.lilac.jumpTranslation(translating.run,$('#video').currentTime||0).catch(()=>{})});
