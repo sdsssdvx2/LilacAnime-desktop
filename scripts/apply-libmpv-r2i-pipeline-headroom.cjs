@@ -85,12 +85,10 @@ qualification = replaceOnce(
   `          releaseLatencyMaxMs: Number(state?.metrics?.releaseLatencyMaxMs || 0),\n          maxPending: Number(state?.metrics?.maxPending || 0),\n          effectiveSentFps: Number(state?.metrics?.effectiveSentFps || 0)`,
   'R2I safe failure pool diagnostics'
 );
-qualification = replaceOnce(
-  qualification,
-  `    : \`FAIL at \${report.stage}\\n\${report.error || 'Unknown qualification failure'}\\n\\nSent frames: \${throughput.sentFrames ?? 'n/a'}\\nBackpressure: \${throughput.backpressureRatio != null ? \`${(Number(throughput.backpressureRatio) * 100).toFixed(1)}%\` : 'n/a'}\\n\\nThe safe result JSON was copied to the clipboard\${resultPath ? ' and saved to Downloads.' : '.'}\`;`,
-  `    : \`FAIL at \${report.stage}\\n\${report.error || 'Unknown qualification failure'}\\n\\nPresented: \${throughput.measuredPresentedFps ?? 'n/a'} fps\\nSent: \${throughput.measuredSentFps ?? throughput.effectiveSentFps ?? 'n/a'} fps\\nBackpressure: \${(throughput.measuredBackpressureRatio ?? throughput.backpressureRatio) != null ? \`${(Number(throughput.measuredBackpressureRatio ?? throughput.backpressureRatio) * 100).toFixed(1)}%\` : 'n/a'}\\nPool pending max: \${throughput.maxPendingFrames ?? throughput.maxPending ?? 'n/a'}/\${throughput.texturePoolSlots ?? TEXTURE_POOL_SLOTS}\\nRelease pipeline avg/max: \${throughput.avgReleasePipelineFrames ?? 'n/a'}/\${throughput.maxReleasePipelineFrames ?? 'n/a'} frames\\n\\nThe safe result JSON was copied to the clipboard\${resultPath ? ' and saved to Downloads.' : '.'}\`;`,
-  'R2I failure dialog measured metrics'
-);
+
+// Keep the dialog formatting unchanged. The result JSON now carries the full
+// measured throughput/headroom snapshot, which is the authoritative diagnostic
+// surface. Avoid a brittle nested-template rewrite in this transform.
 write('electron/libmpv-hardware-qualification.cjs', qualification);
 
 const finalQualification = read('electron/libmpv-hardware-qualification.cjs');
