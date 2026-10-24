@@ -1,4 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session, net, Tray, Menu, screen, nativeImage } = require('electron');
+const { installPopupBlocker } = require('./popup-policy.cjs');
+installPopupBlocker(app);
 const path = require('path');
 const zlib = require('zlib');
 const cheerio = require('cheerio');
