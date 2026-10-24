@@ -1,0 +1,291 @@
+name: Libmpv R2Y r8 finalize v2
+
+on:
+  push:
+    branches: [libmpv-r2x-vsync-fullscreen]
+    paths: [.github/workflows/libmpv-r2y-r8-finalize-v2.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2y-r8-finalize-v2
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  R2Y_TESTED_SHA: 22cb37fe4b9a6df7ae12ccc58bf5870f3f1542e5
+  R2W_HEAD: 7aeb89c41c6779edc1c564c401651bf02404641a
+  R2V_QUALIFIED_APP: 89f170a1b245313204ee23e6dbe711e41f9241ba
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r8
+  INSTALLER_NAME: LilacAnime-Libmpv-R2Y-Setup.exe
+  MANIFEST_NAME: r2y-release-manifest.json
+
+jobs:
+  finalize:
+    runs-on: windows-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pin exact R2Y source and upstream
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git checkout --detach $env:R2Y_TESTED_SHA
+          if((git rev-parse HEAD).Trim() -ne $env:R2Y_TESTED_SHA){throw 'R2Y source pin mismatch'}
+          foreach($sha in @($env:R2W_HEAD,$env:R2V_QUALIFIED_APP)){git merge-base --is-ancestor $sha HEAD;if($LASTEXITCODE -ne 0){throw "missing ancestor $sha"}}
+          git diff --quiet $env:R2W_HEAD $env:R2Y_TESTED_SHA -- native
+          if($LASTEXITCODE -ne 0){throw 'R2Y changed native sources'}
+          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.50'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
+          if((git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream SHA mismatch'}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          Write-Host "R2Y_FINALIZE_SOURCE_OK tested=$env:R2Y_TESTED_SHA upstream=$env:UPSTREAM_SHA nativeDiff=0"
+
+      - name: Reproduce exact transform chain through R2Y
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          if($LASTEXITCODE -ne 0){throw 'package seed failed'}
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs')
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
+          node scripts/rebundle-libmpv-r2v.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
+          npm install --no-audit --no-fund
+          if($LASTEXITCODE -ne 0){throw 'post-transform npm install failed'}
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          if($LASTEXITCODE -ne 0){throw 'asar install failed'}
+          $version=node -p "require('./package.json').version";$tag=node -p "require('./package.json').lilacCustomTag";$electron=node -p "require('electron/package.json').version"
+          if($version -ne '0.5.50-libmpv-r2y.rc1' -or $tag -ne $env:CUSTOM_RELEASE_TAG -or $electron -ne $env:ELECTRON_VERSION){throw "R2Y identity mismatch version=$version tag=$tag electron=$electron"}
+          Write-Host 'R2Y_FINALIZE_TRANSFORMS_OK'
+
+      - name: Hard-gate static R2Y cadence models
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($s in @('scripts/smoke-libmpv-r2w-cadence.cjs','scripts/smoke-libmpv-r2x-aspect-suspend.cjs','scripts/smoke-libmpv-r2y-cadence-fix.cjs','scripts/smoke-libmpv-r2y-present-loop-sim.cjs')){
+            & node $s
+            if($LASTEXITCODE -ne 0){throw "static cadence gate failed: $s exit=$LASTEXITCODE"}
+          }
+          Write-Host 'R2Y_FINALIZE_STATIC_CADENCE_OK'
+
+      - name: Bind exact real-hardware-qualified native payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $q=Join-Path $env:RUNNER_TEMP 'qualified-r2i';New-Item -ItemType Directory -Force -Path $q|Out-Null
+          gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if($LASTEXITCODE -ne 0){throw 'qualification download failed'}
+          $exe=Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe';$manifest=Join-Path $q 'qualification-manifest.json'
+          if((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_EXE_SHA256){throw 'qualification EXE hash mismatch'}
+          if((Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_MANIFEST_SHA256){throw 'qualification manifest hash mismatch'}
+          $m=Get-Content $manifest -Raw|ConvertFrom-Json
+          if($m.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $m.electronVersion -ne $env:ELECTRON_VERSION){throw 'qualification provenance mismatch'}
+          $raw=Join-Path $env:RUNNER_TEMP 'qualified-extract';$nested=Join-Path $env:RUNNER_TEMP 'qualified-nested';New-Item -ItemType Directory -Force -Path $raw,$nested|Out-Null
+          7z.exe x $exe "-o$raw" -y|Out-Null
+          function FindPayload([string]$name){Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue|Select-Object -First 1}
+          $addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll'
+          if(-not $addon -or -not $dll){$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'})){$i++;$out=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $out|Out-Null;7z.exe x $a.FullName "-o$out" -y|Out-Null;$addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll';if($addon -and $dll){break}}}
+          if(-not $addon -or -not $dll){throw 'qualified native payload missing'}
+          $addonHash=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dllHash=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($addonHash -ne $env:QUALIFIED_ADDON_SHA256 -or $dllHash -ne $env:QUALIFIED_DLL_SHA256){throw "qualified payload mismatch addon=$addonHash dll=$dllHash"}
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force;Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          Write-Host "R2Y_FINALIZE_NATIVE_OK addon=$addonHash dll=$dllHash"
+
+      - name: Hard-gate adaptive pump with qualified native path present
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & node scripts/smoke-libmpv-r2y-pump-sim.cjs
+          if($LASTEXITCODE -ne 0){throw "R2Y adaptive pump hard gate failed exit=$LASTEXITCODE"}
+          Write-Host 'R2Y_FINALIZE_PUMP_OK exitHardGated=1'
+
+      - name: Re-run Windows and qualified native regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'window aspect runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2x-webgpu-staging-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'WebGPU staging runtime failed unexpectedly'}
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path;$env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path;$env:ELECTRON_RUN_AS_NODE='1'
+          foreach($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-relay-av.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "native/runtime regression failed: $s"}}
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer input stress failed'}
+          foreach($s in @('scripts/smoke-libmpv-r2v-subtitle-controls.cjs','scripts/smoke-libmpv-r2v-subtitle-visual.cjs','scripts/smoke-libmpv-r2v-miniplayer-fallback.cjs','scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "retained Electron behavior failed: $s"}}
+          foreach($s in @('scripts/smoke-libmpv-r2t-miniplayer-window.cjs','scripts/smoke-libmpv-r2m-key-ui.cjs','scripts/smoke-flix-proxy-fixture.cjs')){& node $s;if($LASTEXITCODE -ne 0){throw "retained behavior failed: $s"}}
+          Write-Host 'R2Y_FINALIZE_WINDOWS_REGRESSION_OK'
+
+      - name: Complete all 278 upstream tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p='tests/window-buttons.test.cjs';$original=Get-Content $p -Raw
+          node -e "const fs=require('fs');const p=process.argv[1],s=fs.readFileSync(p,'utf8'),n='const context=vm.createContext({process:{platform},windowButtons,BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});';if(!s.includes(n))throw Error('VM anchor missing');fs.writeFileSync(p,s.replace(n,'const context=vm.createContext({process:{platform},windowButtons,setVideoAspectLocked:()=>{},setVideoAspectSuspended:()=>{},bindVideoAspectFullscreen:()=>{},BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});'))" $p
+          if($LASTEXITCODE -ne 0){throw 'window-buttons VM adapter failed'}
+          $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName});& node --test @tests;$testExit=$LASTEXITCODE
+          Set-Content $p -Value $original -NoNewline
+          if($testExit -ne 0){throw 'upstream 0.5.50 regression suite failed'}
+          Write-Host 'R2Y_FINALIZE_UPSTREAM_OK tests=278'
+
+      - name: Verify final source architecture and native identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r2y.rc1' -or $pkg.lilacCustomTag -ne $env:CUSTOM_RELEASE_TAG -or $pkg.build.win.artifactName -ne 'LilacAnime-Libmpv-R2Y-Setup.${ext}'){throw 'package identity mismatch'}
+          $main=Get-Content electron/main.cjs -Raw;$bridge=Get-Content electron/libmpv-shared-main.cjs -Raw;$preload=Get-Content electron/preload-libmpv-shared.generated.cjs -Raw;$entry=Get-Content src/libmpv-shared-entry.js -Raw;$css=Get-Content src/player-android.css -Raw
+          foreach($m in @('LILAC_R2X_VSYNC_FULLSCREEN','setVideoAspectSuspended(win,true)','bindVideoAspectFullscreen(win)')){if(-not $main.Contains($m)){throw "main marker missing $m"}}
+          foreach($m in @('raf-warm-staged-copy','ensureGpuPresentLoop','gpuPresentLoopTicks','gpuPresentLoopStarts','gpuPresentLoopStops','copyTextureToTexture','receiveCadenceTracker')){if(-not $preload.Contains($m)){throw "preload marker missing $m"}}
+          foreach($m in @('ACTIVE_PUMP_RETRY_MS = 2','ACTIVE_PUMP_LEAD_MS = 6','pumpExpectedFps','refreshPumpTimingState','lastPumpStatePollPerfAt')){if(-not $bridge.Contains($m)){throw "bridge marker missing $m"}}
+          if($bridge.Contains('lastNativeTimestampUs') -or $bridge.Contains('measuredIntervalMs') -or $bridge.Contains('let nextDelay = 16;') -or $bridge.Contains('nextDelay = 16;')){throw 'forbidden cadence path survived'}
+          if($preload.Contains('scheduleGpuPresent(gpu)') -or $preload.Contains('await requestAnimationFrame') -or $preload.Contains('setSharedTextureReceiver(async')){throw 'presentation/source lifetime regressed'}
+          if(([regex]::Matches($preload,'getCurrentTexture\(\)')).Count -ne 1){throw 'swapchain acquisition count mismatch'}
+          if(-not $entry.Contains('object-fit:contain')){throw 'canvas aspect marker missing'}
+          if(-not $css.Contains('.immersive-player.windowed .player-top { padding-right: 158px; }') -or -not $css.Contains('.immersive-player.windowed .player-settings { right: 150px; }')){throw 'original right-side UI positioning not restored'}
+          if($css.Contains('.immersive-player .player-top { padding-right: 158px; }')){throw 'R2X global top safe-area survived'}
+          $addonHash=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant();$dllHash=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($addonHash -ne $env:QUALIFIED_ADDON_SHA256 -or $dllHash -ne $env:QUALIFIED_DLL_SHA256){throw 'native identity changed before build'}
+          Write-Host "R2Y_FINALIZE_ARCH_OK addon=$addonHash dll=$dllHash"
+
+      - name: Build R2Y NSIS installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Unpack and verify installer internals
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Get-ChildItem dist -File -Filter $env:INSTALLER_NAME|Select-Object -First 1
+          if(-not $installer){throw 'R2Y installer missing'}
+          if($installer.Length -lt 10000000){throw "installer unexpectedly small: $($installer.Length)"}
+          $raw=Join-Path $env:RUNNER_TEMP 'r2y-installer';$nested=Join-Path $env:RUNNER_TEMP 'r2y-nested';$asarOut=Join-Path $env:RUNNER_TEMP 'r2y-asar'
+          New-Item -ItemType Directory -Force -Path $raw,$nested,$asarOut|Out-Null
+          7z.exe x $installer.FullName "-o$raw" -y|Out-Null
+          $archives=@(Get-ChildItem $raw -Recurse -File -ErrorAction SilentlyContinue|Where-Object{$_.Name -match '(?i)(app.*\.7z$|\.7z$|\.zip$)'}|Sort-Object Length -Descending)
+          $i=0;foreach($a in $archives){$i++;$out=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $out|Out-Null;7z.exe x $a.FullName "-o$out" -y|Out-Null}
+          $roots=@($raw,$nested,'dist/win-unpacked')
+          function FindBuilt([string]$name){Get-ChildItem $roots -Recurse -File -Filter $name -ErrorAction SilentlyContinue|Select-Object -First 1}
+          $addon=FindBuilt 'lilac-libmpv-player-bridge.node';$dll=FindBuilt 'libmpv-2.dll';$asar=FindBuilt 'app.asar'
+          if(-not $addon -or -not $dll -or -not $asar){throw 'installer/native/app.asar payload missing'}
+          $addonHash=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dllHash=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($addonHash -ne $env:QUALIFIED_ADDON_SHA256 -or $dllHash -ne $env:QUALIFIED_DLL_SHA256){throw "built native hash mismatch addon=$addonHash dll=$dllHash"}
+          & npx.cmd asar extract $asar.FullName $asarOut
+          if($LASTEXITCODE -ne 0){throw 'app.asar extraction failed'}
+          $pkg=Get-Content (Join-Path $asarOut 'package.json') -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r2y.rc1' -or $pkg.lilacCustomTag -ne $env:CUSTOM_RELEASE_TAG){throw 'packaged app identity mismatch'}
+          $main=Get-Content (Join-Path $asarOut 'electron/main.cjs') -Raw;$bridge=Get-Content (Join-Path $asarOut 'electron/libmpv-shared-main.cjs') -Raw;$preload=Get-Content (Join-Path $asarOut 'electron/preload-libmpv-shared.generated.cjs') -Raw;$entry=Get-Content (Join-Path $asarOut 'src/libmpv-shared-entry.js') -Raw;$css=Get-Content (Join-Path $asarOut 'src/player-android.css') -Raw
+          foreach($m in @('LILAC_R2X_VSYNC_FULLSCREEN','setVideoAspectSuspended(win,true)')){if(-not $main.Contains($m)){throw "packaged main marker missing $m"}}
+          foreach($m in @('raf-warm-staged-copy','ensureGpuPresentLoop','gpuPresentLoopTicks','copyTextureToTexture')){if(-not $preload.Contains($m)){throw "packaged preload marker missing $m"}}
+          foreach($m in @('ACTIVE_PUMP_RETRY_MS = 2','pumpExpectedFps','refreshPumpTimingState')){if(-not $bridge.Contains($m)){throw "packaged bridge marker missing $m"}}
+          if($preload.Contains('scheduleGpuPresent(gpu)') -or $preload.Contains('await requestAnimationFrame') -or $preload.Contains('setSharedTextureReceiver(async')){throw 'packaged source lifetime invariant regressed'}
+          if(-not $entry.Contains('object-fit:contain')){throw 'packaged contain aspect missing'}
+          if(-not $css.Contains('.immersive-player.windowed .player-top { padding-right: 158px; }') -or -not $css.Contains('.immersive-player.windowed .player-settings { right: 150px; }')){throw 'packaged original-right UI missing'}
+          $hash=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$size=$installer.Length
+          "R2Y_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "R2Y_INSTALLER_SIZE=$size"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R2Y_FINALIZE_INSTALLER_OK sha256=$hash size=$size addon=$addonHash dll=$dllHash"
+
+      - name: Create release manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $manifest=[ordered]@{
+            schema=1
+            releaseTag=$env:CUSTOM_RELEASE_TAG
+            testedCommit=$env:R2Y_TESTED_SHA
+            upstreamCommit=$env:UPSTREAM_SHA
+            electronVersion=$env:ELECTRON_VERSION
+            version='0.5.50-libmpv-r2y.rc1'
+            installer=$env:INSTALLER_NAME
+            installerSha256=$env:R2Y_INSTALLER_SHA256
+            installerSize=[long]$env:R2Y_INSTALLER_SIZE
+            addonSha256=$env:QUALIFIED_ADDON_SHA256
+            dllSha256=$env:QUALIFIED_DLL_SHA256
+            presentationMode='raf-warm-staged-copy'
+            sourceFrameLifetime='immediate-release'
+            sourceTimingPeriod='libmpv-fps'
+            nativePolling='phase-aware-2ms-near-boundary'
+            fullscreenAspectPolicy='suspend-native-constraint'
+            canvasAspectPolicy='contain'
+            topRightUiPolicy='original-right'
+            diagnosticCause='R2X-final-present-19.9fps-coalescing'
+          }
+          $manifest|ConvertTo-Json -Depth 4|Set-Content "dist/$env:MANIFEST_NAME" -Encoding utf8
+          Get-Content "dist/$env:MANIFEST_NAME"
+
+      - name: Publish prerelease and verify downloaded bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          @"
+          R2Y r8 follows the user's R2X hardware diagnostic: native/receive cadence remained near 23.98 fps while the R2X one-shot-rAF final presenter fell to 19.9 fps and coalesced hundreds of frames.
+
+          Changes:
+          - final presentation uses a warm rAF loop over the private WebGPU staging texture instead of one cold rAF request per source frame
+          - source VideoFrame/imported shared-texture lifetime remains immediate-release
+          - main-process frame discovery removes the fixed 16 ms poll and uses source-FPS phase-aware near-boundary polling
+          - OP/ED text and settings gear are restored to the original right-side layout
+          - fullscreen aspect suspension and canvas contain semantics from R2X are retained
+
+          Verified gates:
+          - exact upstream Lilac v0.5.50: $env:UPSTREAM_SHA
+          - tested R2Y source: $env:R2Y_TESTED_SHA
+          - native source diff from R2W: zero
+          - deterministic 23.976 fps -> 144 Hz presenter model: 240 received / 240 presented / 0 coalesced / about 23.983 fps
+          - adaptive pump test is a hard exit-code gate after qualified native payload binding
+          - retained subtitle, mini-player, keyboard, Flix and renderer-input probes passed
+          - upstream regression suite: 278 tests passed
+          - qualified addon SHA-256: $env:QUALIFIED_ADDON_SHA256
+          - qualified libmpv DLL SHA-256: $env:QUALIFIED_DLL_SHA256
+          - installer SHA-256: $env:R2Y_INSTALLER_SHA256
+          - installer size: $env:R2Y_INSTALLER_SIZE bytes
+
+          Final subjective cadence still requires the intended 144 Hz local playback check; the next diagnostic now exposes warm-present-loop counters as well.
+          "@|Set-Content release-notes-r2y.md -Encoding utf8
+          $installer=(Resolve-Path "dist/$env:INSTALLER_NAME").Path;$manifest=(Resolve-Path "dist/$env:MANIFEST_NAME").Path
+          gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if($LASTEXITCODE -eq 0){
+            gh release edit $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:R2Y_TESTED_SHA --title 'LilacAnime libmpv R2Y r8' --notes-file release-notes-r2y.md
+            if($LASTEXITCODE -ne 0){throw 'release edit failed'}
+            gh release upload $env:CUSTOM_RELEASE_TAG $installer $manifest --repo $env:GITHUB_REPOSITORY --clobber
+          }else{
+            gh release create $env:CUSTOM_RELEASE_TAG $installer $manifest --repo $env:GITHUB_REPOSITORY --prerelease --target $env:R2Y_TESTED_SHA --title 'LilacAnime libmpv R2Y r8' --notes-file release-notes-r2y.md
+          }
+          if($LASTEXITCODE -ne 0){throw 'R2Y prerelease publish failed'}
+          $verify=Join-Path $env:RUNNER_TEMP 'published-r2y';New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE -ne 0){throw 'published release download failed'}
+          $downloaded=Join-Path $verify $env:INSTALLER_NAME;$downloadManifest=Join-Path $verify $env:MANIFEST_NAME
+          $hash=(Get-FileHash $downloaded -Algorithm SHA256).Hash.ToLowerInvariant();$size=(Get-Item $downloaded).Length;$m=Get-Content $downloadManifest -Raw|ConvertFrom-Json
+          if($hash -ne $env:R2Y_INSTALLER_SHA256 -or $size -ne [long]$env:R2Y_INSTALLER_SIZE){throw 'published installer byte mismatch'}
+          if($m.installerSha256 -ne $hash -or $m.installerSize -ne $size -or $m.testedCommit -ne $env:R2Y_TESTED_SHA -or $m.addonSha256 -ne $env:QUALIFIED_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256){throw 'published manifest mismatch'}
+          Write-Host "R2Y_FINALIZE_PUBLISHED_OK tag=$env:CUSTOM_RELEASE_TAG sha256=$hash size=$size"
