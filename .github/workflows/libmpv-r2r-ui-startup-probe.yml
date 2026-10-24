@@ -39,17 +39,16 @@ jobs:
           Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
           Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
           if((node -p "require('./package.json').version") -ne '0.5.50'){throw 'upstream version mismatch'}
+          if(-not (Test-Path electron/miruro-session.cjs)){throw '0.5.50 Miruro session module missing'}
       - name: Install dependencies
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           npm ci --no-audit --no-fund
-      - name: Apply legacy-qualified chain to 0.5.50 source
+      - name: Apply qualified chain and finalize 0.5.50
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          # The qualified transform chain advances package metadata at each historical stage.
-          # Feed it the expected 0.5.49 metadata while keeping the actual 0.5.50 source tree.
           node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
           $scripts=@(
             'scripts/apply-libmpv-d2-diagnostics.cjs',
@@ -71,14 +70,23 @@ jobs:
             'scripts/apply-libmpv-r2n-webgpu-pip.cjs',
             'scripts/normalize-libmpv-r2p-subtitle-anchor.cjs',
             'scripts/apply-libmpv-r2p-subtitle-ui.cjs',
-            'scripts/apply-libmpv-r2q-tenrai-metadata.cjs')
+            'scripts/apply-libmpv-r2q-tenrai-metadata.cjs',
+            'scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs')
           foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
           node scripts/rebundle-libmpv-r2p.cjs
           if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
           npm install --no-audit --no-fund
-          node --check scripts/smoke-libmpv-r2r-full-ui-startup.cjs
-          node --check src/app.js
-          node --check src/player.js
+          if((node -p "require('./package.json').version") -ne '0.5.50-libmpv-r2r.rc1'){throw 'R2R version mismatch'}
+          if((node -p "require('./package.json').lilacCustomTag") -ne 'libmpv-r2k-v0.5.50-r1'){throw 'R2R tag mismatch'}
+          foreach($s in @('scripts/smoke-libmpv-r2r-full-ui-startup.cjs','scripts/smoke-libmpv-r2p-subtitle-ui.cjs','scripts/smoke-libmpv-r2r-updater.cjs','src/app.js','src/player.js')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
+      - name: Validate merged subtitle UI and custom updater
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2p-subtitle-ui.cjs
+          if($LASTEXITCODE -ne 0){throw 'merged subtitle UI smoke failed'}
+          node scripts/smoke-libmpv-r2r-updater.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2R updater smoke failed'}
       - name: Launch full generated renderer and click core UI
         shell: powershell
         run: |
