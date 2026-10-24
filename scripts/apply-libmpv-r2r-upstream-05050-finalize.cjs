@@ -22,4 +22,10 @@ pkg.version = '0.5.50-libmpv-r2r.rc1';
 pkg.lilacCustomTag = 'libmpv-r2k-v0.5.50-r1';
 pkg.build.win.artifactName = 'LilacAnime-Libmpv-R2R-Setup.${ext}';
 fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
-console.log('LIBMPV_R2R_05050_FINALIZE_OK version=' + pkg.version + ' tag=' + pkg.lilacCustomTag + ' upstream=0.5.50');
+
+// Preserve upstream 0.5.50 startup tests while accounting for the custom build's
+// production-only native sharedTexture bootstrap. This mutates test harness code only;
+// electron/main.cjs and the packaged application remain unchanged.
+require('./normalize-libmpv-r2r-startup-test.cjs');
+
+console.log('LIBMPV_R2R_05050_FINALIZE_OK version=' + pkg.version + ' tag=' + pkg.lilacCustomTag + ' upstream=0.5.50 startupTestAdapter=1');
