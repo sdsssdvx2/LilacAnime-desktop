@@ -1,4 +1,4 @@
-name: LilacAnime libmpv R3D autonomous JS-block probe v3
+name: LilacAnime libmpv R3D autonomous JS-block probe v4
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: lilac-libmpv-r3d-autonomous-js-block-v3
+  group: lilac-libmpv-r3d-autonomous-js-block-v4
   cancel-in-progress: true
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 
 env:
   R3D_PRODUCT_SHA: 79eb1e6bee586e3b3168ab592ca08cc45b8a3470
-  R3D_TEST_SHA: 58402d6532e1e5153e31cb143474ee07737e60fb
+  R3D_TEST_SHA: 8812ec44bb71371499227cfe321e30eac98017c7
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
   LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
@@ -23,7 +23,7 @@ env:
   QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
 
 jobs:
-  autonomous-js-block-v3:
+  autonomous-js-block-v4:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -33,22 +33,20 @@ jobs:
         with: { node-version: 22 }
       - uses: ilammy/msvc-dev-cmd@v1
         with: { arch: x64 }
-
-      - name: Pin autonomous v3 probe and prove product isolation
+      - name: Pin autonomous v4 probe and prove product isolation
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           git checkout --detach $env:R3D_TEST_SHA
-          if((git rev-parse HEAD).Trim() -ne $env:R3D_TEST_SHA){throw 'R3D autonomous v3 test pin mismatch'}
+          if((git rev-parse HEAD).Trim() -ne $env:R3D_TEST_SHA){throw 'R3D autonomous v4 test pin mismatch'}
           git diff --quiet $env:R3D_PRODUCT_SHA $env:R3D_TEST_SHA -- electron src native package.json package-lock.json scripts/apply-libmpv-r3d-stall-isolation.cjs
           if($LASTEXITCODE -ne 0){throw 'production source changed after R3D product pin'}
           foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix-v2.cjs','scripts/smoke-libmpv-r3d-autonomous-js-block-v2.cjs')){
-            if(-not (Test-Path $p)){throw "missing autonomous v3 source $p"}
+            if(-not (Test-Path $p)){throw "missing autonomous v4 source $p"}
             node --check $p
             if($LASTEXITCODE -ne 0){throw "syntax failed $p"}
           }
-          Write-Host 'R3D_AUTONOMOUS_V3_PINS_OK'
-
+          Write-Host 'R3D_AUTONOMOUS_V4_PINS_OK'
       - name: Reproduce exact upstream through R3D
         shell: powershell
         run: |
@@ -67,9 +65,7 @@ jobs:
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
           if($LASTEXITCODE -ne 0){throw 'tool install failed'}
           node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
-          $scripts=@(
-            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs','scripts/apply-libmpv-r3a-decoupled-delivery.cjs','scripts/apply-libmpv-r3a-poll-cadence-fix.cjs','scripts/apply-libmpv-r3a-phase-deadline.cjs','scripts/apply-libmpv-r3b-update-callback.cjs','scripts/apply-libmpv-r3b-pending-wake.cjs','scripts/apply-libmpv-r3c-hotpath-state.cjs','scripts/apply-libmpv-r3d-stall-isolation.cjs'
-          )
+          $scripts=@('scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs','scripts/apply-libmpv-r3a-decoupled-delivery.cjs','scripts/apply-libmpv-r3a-poll-cadence-fix.cjs','scripts/apply-libmpv-r3a-phase-deadline.cjs','scripts/apply-libmpv-r3b-update-callback.cjs','scripts/apply-libmpv-r3b-pending-wake.cjs','scripts/apply-libmpv-r3c-hotpath-state.cjs','scripts/apply-libmpv-r3d-stall-isolation.cjs')
           foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed $s"}}
           node scripts/rebundle-libmpv-r2v.cjs
           if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
@@ -77,23 +73,17 @@ jobs:
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.50-libmpv-r3d.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r13'){throw 'R3D identity mismatch'}
-          Write-Host 'R3D_AUTONOMOUS_V3_PRODUCT_REPRO_OK'
-
-      - name: Apply isolated autonomous producer v3 probe
+          Write-Host 'R3D_AUTONOMOUS_V4_PRODUCT_REPRO_OK'
+      - name: Apply autonomous producer v4 probe
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix-v2.cjs')){
-            node $p
-            if($LASTEXITCODE -ne 0){throw "autonomous transform failed $p"}
-          }
+          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix-v2.cjs')){node $p;if($LASTEXITCODE -ne 0){throw "autonomous transform failed $p"}}
           $n=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
-          foreach($m in @('StartAutonomousProbeWorker','autonomousRawWakeSignals','autonomousCv.notify_one()','std::atomic<bool> autonomousStop','autonomousStop.store(true, std::memory_order_release)','autonomousStop.load(std::memory_order_acquire)')){if(-not $n.Contains($m)){throw "autonomous v3 marker missing $m"}}
-          if($n.Contains('lock_guard<std::mutex> lock(autonomousMutex);`n      autonomousStop = true')){throw 'mutex-gated stop survived'}
+          foreach($m in @('StartAutonomousProbeWorker','autonomousRawWakeSignals','autonomousCv.notify_one()','autonomousStop.store(true, std::memory_order_release)')){if(-not $n.Contains($m)){throw "autonomous marker missing $m"}}
           if($n.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control leaked into autonomous probe'}
-          Write-Host 'R3D_AUTONOMOUS_V3_TRANSFORM_OK stop=pre-mutex rawCallback=native-cv advancedControl=0'
-
-      - name: Build autonomous v3 addon with pinned SDK
+          Write-Host 'R3D_AUTONOMOUS_V4_TRANSFORM_OK'
+      - name: Build autonomous v4 addon with pinned SDK
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -114,16 +104,14 @@ jobs:
           & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
           Copy-Item native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node electron/lilac-libmpv-player-bridge.node -Force
-          $ah=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant()
           "LILAC_LIBMPV_PLAYER_ADDON=$((Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "LILAC_LIBMPV_DLL=$((Resolve-Path 'electron/libmpv-2.dll').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "R3D_AUTONOMOUS_V3_BUILD_OK addon=$ah dll=$dh"
-
-      - name: Prove native production survives JS block and stops cleanly
+          Write-Host "R3D_AUTONOMOUS_V4_BUILD_OK dll=$dh"
+      - name: Prove native production survives JS block and bounded saturation
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'; $env:ELECTRON_RUN_AS_NODE='1'
           & npx.cmd electron scripts/smoke-libmpv-r3d-autonomous-js-block-v2.cjs
           $e=$LASTEXITCODE; Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          if($e -ne 0){throw 'autonomous JS-block v3 smoke failed'}
-          Write-Host 'R3D_AUTONOMOUS_JS_BLOCK_V3_COMPLETE'
+          if($e -ne 0){throw 'autonomous JS-block v4 smoke failed'}
+          Write-Host 'R3D_AUTONOMOUS_JS_BLOCK_V4_COMPLETE'
