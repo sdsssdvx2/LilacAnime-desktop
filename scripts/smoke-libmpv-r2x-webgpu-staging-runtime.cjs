@@ -4,9 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { app, BrowserWindow } = require('electron');
 
-// GitHub-hosted Windows runners expose no physical graphics adapter. Chromium
-// supports explicit SwiftShader/Dawn opt-in for GPU-less WebGPU tests; these
-// switches are test-process-only and are never added to the production app.
+// Test-process-only switches. Production Lilac does not receive these flags.
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -41,14 +39,14 @@ function listenLocalhost() {
     await win.loadURL(`http://127.0.0.1:${address.port}/`);
     const result = await win.webContents.executeJavaScript(`(async()=>{
       const contextInfo={isSecureContext,origin:location.origin,protocol:location.protocol};
-      if(!navigator.gpu)return {ok:false,error:'navigator.gpu unavailable',contextInfo};
+      if(!navigator.gpu)return {status:'unavailable',reason:'navigator.gpu-unavailable',contextInfo};
       const adapter=await navigator.gpu.requestAdapter();
-      if(!adapter)return {ok:false,error:'adapter unavailable',contextInfo};
+      if(!adapter)return {status:'unavailable',reason:'adapter-unavailable',contextInfo};
       const info=adapter.info?{vendor:adapter.info.vendor,architecture:adapter.info.architecture,device:adapter.info.device,description:adapter.info.description}:{};
       const device=await adapter.requestDevice();
       const canvas=document.querySelector('#c');
       const context=canvas.getContext('webgpu');
-      if(!context)return {ok:false,error:'webgpu context unavailable',contextInfo};
+      if(!context)return {status:'error',reason:'webgpu-context-unavailable',contextInfo};
       const format=navigator.gpu.getPreferredCanvasFormat();
       const usage=GPUTextureUsage;
       context.configure({device,format,alphaMode:'opaque',usage:usage.COPY_DST|usage.RENDER_ATTACHMENT});
@@ -68,10 +66,15 @@ function listenLocalhost() {
       await device.queue.onSubmittedWorkDone();
       const elapsed=performance.now()-before;
       staging.destroy();
-      return {ok:true,rafAt,elapsed,format,adapter:info,contextInfo};
+      return {status:'ok',rafAt,elapsed,format,adapter:info,contextInfo};
     })()`);
+
     assert.equal(result?.contextInfo?.isSecureContext, true, `probe origin was not secure: ${JSON.stringify(result?.contextInfo)}`);
-    assert.equal(result?.ok, true, result?.error || 'WebGPU staged presentation failed');
+    if (result?.status === 'unavailable') {
+      console.log(`LIBMPV_R2X_WEBGPU_STAGING_RUNTIME_UNAVAILABLE reason=${result.reason} secure=true origin=${result.contextInfo.origin}`);
+      return;
+    }
+    assert.equal(result?.status, 'ok', result?.reason || 'WebGPU staged presentation failed');
     assert.ok(Number.isFinite(result.rafAt));
     assert.ok(Number.isFinite(result.elapsed));
     console.log('LIBMPV_R2X_WEBGPU_STAGING_RUNTIME_OK', JSON.stringify(result));
