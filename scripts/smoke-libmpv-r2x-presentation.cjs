@@ -28,8 +28,14 @@ for (const source of [preload, generated]) {
 
 assert.equal((preload.match(/getCurrentTexture\(\)/g) || []).length, 1, 'swapchain texture should only be acquired in final presenter');
 assert.match(preload, /\{ texture: gpu\.stagingTexture \}/, 'source frame must copy into private GPU staging texture');
-assert.match(preload, /frame\?\.close\?\.\(\)/, 'VideoFrame immediate close must remain');
-assert.match(preload, /importedSharedTexture\?\.release\?\.\(\)/, 'shared texture immediate release must remain');
+assert.match(preload, /if \(frame\?\.close\) \{\s*frame\.close\(\);/s, 'VideoFrame immediate close must remain');
+assert.match(preload, /if \(importedSharedTexture\?\.release\) \{\s*importedSharedTexture\.release\(\);/s, 'shared texture immediate release must remain');
+const receiverStart = preload.indexOf('sharedTexture.setSharedTextureReceiver(({ importedSharedTexture }');
+const receiverFinally = preload.indexOf('} finally {', receiverStart);
+const receiverEnd = preload.indexOf("reason: 'lifetime-release-failed'", receiverFinally);
+assert.ok(receiverStart >= 0 && receiverFinally > receiverStart && receiverEnd > receiverFinally, 'explicit receiver finally release block missing');
+const receiverLifetimeBlock = preload.slice(receiverStart, receiverEnd);
+assert.doesNotMatch(receiverLifetimeBlock, /\bawait\b/, 'source receiver must not await before releasing VideoFrame/shared texture');
 for (const marker of ['gpuPresentFrames', 'gpuCoalescedFrames', 'avgSendSharedTextureMs', 'sendSharedTextureMaxMs', 'nativeCadenceTracker', 'receiveCadence']) {
   assert.ok(bridge.includes(marker), `bridge diagnostic marker missing: ${marker}`);
 }
@@ -43,4 +49,4 @@ assert.equal(pkg.version, '0.5.50-libmpv-r2x.rc1');
 assert.equal(pkg.lilacCustomTag, 'libmpv-r2k-v0.5.50-r7');
 assert.equal(pkg.build.win.artifactName, 'LilacAnime-Libmpv-R2X-Setup.${ext}');
 
-console.log('LIBMPV_R2X_PRESENTATION_SMOKE_OK sourceCopy=immediate-staging finalPresent=rAF diagnostics=native-send-receive-present canvasAspect=contain uiSafeArea=stable');
+console.log('LIBMPV_R2X_PRESENTATION_SMOKE_OK sourceCopy=immediate-staging sourceRelease=same-turn finalPresent=rAF diagnostics=native-send-receive-present canvasAspect=contain uiSafeArea=stable');
