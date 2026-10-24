@@ -42,6 +42,31 @@ async function main() {
     }, wait);
   }
 
+  function playbackState() {
+    return {
+      fileLoaded: true,
+      eof: false,
+      lastError: null,
+      renderedFrames: nextFrameId - 1,
+      backpressureDrops: 0,
+      textureSlotCount: 24,
+      textureSlotsInFlight: inFlight.size,
+      time: Math.max(0, (Date.now() - sourceEpochMs) / 1000),
+      duration: 30,
+      fps: SOURCE_FPS,
+      estimatedVfFps: SOURCE_FPS,
+      width: 1920,
+      height: 1080,
+      paused: false,
+      pausedForCache: false,
+      volume: 100,
+      speed: 1,
+      mute: false,
+      aid: '1',
+      vid: '1'
+    };
+  }
+
   const fakeAddon = {
     createPlayer() { return { playerId: 1, deviceMode: 'simulated', featureLevel: 'simulated' }; },
     setUpdateCallback(_playerId, callback) {
@@ -53,27 +78,8 @@ async function main() {
     },
     open() {},
     command() { return { ok: true }; },
-    poll() {
-      return {
-        fileLoaded: true,
-        eof: false,
-        lastError: null,
-        renderedFrames: nextFrameId - 1,
-        backpressureDrops: 0,
-        textureSlotCount: 24,
-        textureSlotsInFlight: inFlight.size,
-        time: Math.max(0, (Date.now() - sourceEpochMs) / 1000),
-        duration: 30,
-        fps: SOURCE_FPS,
-        estimatedVfFps: SOURCE_FPS,
-        width: 1920,
-        height: 1080,
-        paused: false,
-        pausedForCache: false,
-        aid: '1',
-        vid: '1'
-      };
-    },
+    poll: playbackState,
+    pollPlayback: playbackState,
     renderFrame() {
       const now = Date.now();
       if (inFlight.size >= 24) return { updated: false, backpressure: true };
@@ -156,7 +162,7 @@ async function main() {
   let bridge;
   try {
     const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs');
-    bridge = createLibmpvSharedBridge({ app, ipcMain, headersFor: () => ({}), userAgent: 'R3B callback delayed-send stress' });
+    bridge = createLibmpvSharedBridge({ app, ipcMain, headersFor: () => ({}), userAgent: 'R3C callback delayed-send stress' });
     await bridge.ensure();
     await bridge.attachWindow(fakeWindow);
     sourceEpochMs = Date.now() + 20;
@@ -198,12 +204,12 @@ async function main() {
       releases,
       ordered
     };
-    console.log(`LIBMPV_R3B_DECOUPLED_DELIVERY_REPORT=${JSON.stringify(report)}`);
+    console.log(`LIBMPV_R3C_DECOUPLED_DELIVERY_REPORT=${JSON.stringify(report)}`);
 
     if (nativeFrames < 100) throw new Error(`callback-driven producer lost too many source frames: ${nativeFrames}`);
     if (sentFrames < nativeFrames - 5) throw new Error(`delivery fell too far behind producer: native=${nativeFrames} sent=${sentFrames}`);
     if (nativeFps && nativeFps < 22.7) throw new Error(`native cadence too low under delayed sends/stalls: ${nativeFps}`);
-    if (Number(m.nativeUpdateSignals || 0) < 95 || Number(m.nativeUpdateWakeups || 0) < 90) throw new Error(`native update callback was not authoritative: signals=${m.nativeUpdateSignals} wakes=${m.nativeUpdateWakeups}`);
+    if (Number(m.nativeUpdateSignals || 0) < 95 || Number(m.nativeUpdateWakeups || 0) < 90) throw new Error(`native update callback was not active: signals=${m.nativeUpdateSignals} wakes=${m.nativeUpdateWakeups}`);
     if (Number(m.sendSharedTextureMaxMs || 0) < 60) throw new Error('stress did not exercise delayed send promise');
     if (Number(m.deliveryMaxInFlight || 0) < 2 || maxActiveSends < 2) throw new Error('delivery did not overlap as designed');
     if (!ordered) throw new Error('shared texture send invocation order changed');
@@ -211,7 +217,7 @@ async function main() {
     if (Number(m.backpressureRatio || 0) > 0.01) throw new Error(`unexpected backpressure: ${m.backpressureRatio}`);
     if (releases < sentFrames - 5) throw new Error(`native releases lagged deliveries: releases=${releases} sent=${sentFrames}`);
 
-    console.log('LIBMPV_R3B_DECOUPLED_DELIVERY_OK sourceClock=callback transport=async timerFallback=non-authoritative');
+    console.log('LIBMPV_R3C_DECOUPLED_DELIVERY_OK sourceClock=callback+phase transport=async');
   } finally {
     try { await bridge?.dispose?.(); } catch {}
     if (sourceSignalTimer) realClearTimeout(sourceSignalTimer);
