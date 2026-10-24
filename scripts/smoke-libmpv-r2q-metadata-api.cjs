@@ -21,7 +21,8 @@ const expected = {
   '0.5.49-libmpv-r2q.rc1': { tag: 'libmpv-r2k-v0.5.49-r7', installer: 'LilacAnime-Libmpv-R2Q-Setup.${ext}' },
   '0.5.50-libmpv-r2r.rc1': { tag: 'libmpv-r2k-v0.5.50-r1', installer: 'LilacAnime-Libmpv-R2R-Setup.${ext}' },
   '0.5.50-libmpv-r2s.rc1': { tag: 'libmpv-r2k-v0.5.50-r2', installer: 'LilacAnime-Libmpv-R2S-Setup.${ext}' },
-  '0.5.50-libmpv-r2t.rc1': { tag: 'libmpv-r2k-v0.5.50-r3', installer: 'LilacAnime-Libmpv-R2T-Setup.${ext}' }
+  '0.5.50-libmpv-r2t.rc1': { tag: 'libmpv-r2k-v0.5.50-r3', installer: 'LilacAnime-Libmpv-R2T-Setup.${ext}' },
+  '0.5.50-libmpv-r2u.rc1': { tag: 'libmpv-r2k-v0.5.50-r4', installer: 'LilacAnime-Libmpv-R2U-Setup.${ext}' }
 }[pkg.version];
 assert.ok(expected, `unexpected Tenrai-enabled version ${pkg.version}`);
 assert.equal(pkg.lilacCustomTag, expected.tag);
