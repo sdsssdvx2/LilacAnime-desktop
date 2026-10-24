@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 env:
-  UPSTREAM_TAG: v0.5.49
-  UPSTREAM_SHA: e67c86d40aa0d7fa84db06d9151f6a097b5099ad
+  UPSTREAM_TAG: v0.5.50
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
 
 jobs:
@@ -24,11 +24,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Overlay exact upstream Lilac 0.5.49 source
+      - name: Overlay exact upstream Lilac 0.5.50 source
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.49'
+          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.50'
           git clone --depth 1 --branch $env:UPSTREAM_TAG https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
           if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
           $sha=(git -C $up rev-parse HEAD).Trim();if($sha -ne $env:UPSTREAM_SHA){throw "upstream tag moved: $sha"}
@@ -38,15 +38,19 @@ jobs:
           Copy-Item (Join-Path $up 'package.json') package.json -Force
           Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
           Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          if((node -p "require('./package.json').version") -ne '0.5.50'){throw 'upstream version mismatch'}
       - name: Install dependencies
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           npm ci --no-audit --no-fund
-      - name: Apply exact r7 transform chain
+      - name: Apply legacy-qualified chain to 0.5.50 source
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          # The qualified transform chain advances package metadata at each historical stage.
+          # Feed it the expected 0.5.49 metadata while keeping the actual 0.5.50 source tree.
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
           $scripts=@(
             'scripts/apply-libmpv-d2-diagnostics.cjs',
             'scripts/apply-libmpv-r2-runtime-fixes.cjs',
