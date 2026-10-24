@@ -1,4 +1,4 @@
-name: LilacAnime libmpv R3D autonomous JS-block probe v2
+name: LilacAnime libmpv R3D autonomous JS-block probe v3
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: lilac-libmpv-r3d-autonomous-js-block-v2
+  group: lilac-libmpv-r3d-autonomous-js-block-v3
   cancel-in-progress: true
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 
 env:
   R3D_PRODUCT_SHA: 79eb1e6bee586e3b3168ab592ca08cc45b8a3470
-  R3D_TEST_SHA: b91344b7902cb9efa2ed87d49b8208953d361375
+  R3D_TEST_SHA: 58402d6532e1e5153e31cb143474ee07737e60fb
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
   LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
@@ -23,7 +23,7 @@ env:
   QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
 
 jobs:
-  autonomous-js-block-v2:
+  autonomous-js-block-v3:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -34,20 +34,20 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with: { arch: x64 }
 
-      - name: Pin autonomous v2 probe and prove product isolation
+      - name: Pin autonomous v3 probe and prove product isolation
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           git checkout --detach $env:R3D_TEST_SHA
-          if((git rev-parse HEAD).Trim() -ne $env:R3D_TEST_SHA){throw 'R3D autonomous v2 test pin mismatch'}
+          if((git rev-parse HEAD).Trim() -ne $env:R3D_TEST_SHA){throw 'R3D autonomous v3 test pin mismatch'}
           git diff --quiet $env:R3D_PRODUCT_SHA $env:R3D_TEST_SHA -- electron src native package.json package-lock.json scripts/apply-libmpv-r3d-stall-isolation.cjs
           if($LASTEXITCODE -ne 0){throw 'production source changed after R3D product pin'}
-          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/smoke-libmpv-r3d-autonomous-js-block-v2.cjs')){
-            if(-not (Test-Path $p)){throw "missing autonomous v2 source $p"}
+          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix-v2.cjs','scripts/smoke-libmpv-r3d-autonomous-js-block-v2.cjs')){
+            if(-not (Test-Path $p)){throw "missing autonomous v3 source $p"}
             node --check $p
             if($LASTEXITCODE -ne 0){throw "syntax failed $p"}
           }
-          Write-Host 'R3D_AUTONOMOUS_V2_PINS_OK'
+          Write-Host 'R3D_AUTONOMOUS_V3_PINS_OK'
 
       - name: Reproduce exact upstream through R3D
         shell: powershell
@@ -77,22 +77,23 @@ jobs:
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.50-libmpv-r3d.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r13'){throw 'R3D identity mismatch'}
-          Write-Host 'R3D_AUTONOMOUS_V2_PRODUCT_REPRO_OK'
+          Write-Host 'R3D_AUTONOMOUS_V3_PRODUCT_REPRO_OK'
 
-      - name: Apply isolated autonomous producer v2 probe
+      - name: Apply isolated autonomous producer v3 probe
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs')){
+          foreach($p in @('scripts/apply-libmpv-r3d-autonomous-producer-probe.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-compat.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix.cjs','scripts/apply-libmpv-r3d-autonomous-producer-probe-stopfix-v2.cjs')){
             node $p
             if($LASTEXITCODE -ne 0){throw "autonomous transform failed $p"}
           }
           $n=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
-          foreach($m in @('StartAutonomousProbeWorker','autonomousRawWakeSignals','autonomousCv.notify_one()','std::atomic<bool> autonomousStop','autonomousStop.load(std::memory_order_acquire)')){if(-not $n.Contains($m)){throw "autonomous v2 marker missing $m"}}
+          foreach($m in @('StartAutonomousProbeWorker','autonomousRawWakeSignals','autonomousCv.notify_one()','std::atomic<bool> autonomousStop','autonomousStop.store(true, std::memory_order_release)','autonomousStop.load(std::memory_order_acquire)')){if(-not $n.Contains($m)){throw "autonomous v3 marker missing $m"}}
+          if($n.Contains('lock_guard<std::mutex> lock(autonomousMutex);`n      autonomousStop = true')){throw 'mutex-gated stop survived'}
           if($n.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control leaked into autonomous probe'}
-          Write-Host 'R3D_AUTONOMOUS_V2_TRANSFORM_OK rawCallback=native-cv stop=per-drain advancedControl=0'
+          Write-Host 'R3D_AUTONOMOUS_V3_TRANSFORM_OK stop=pre-mutex rawCallback=native-cv advancedControl=0'
 
-      - name: Build autonomous v2 addon with pinned SDK
+      - name: Build autonomous v3 addon with pinned SDK
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -116,7 +117,7 @@ jobs:
           $ah=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant()
           "LILAC_LIBMPV_PLAYER_ADDON=$((Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "LILAC_LIBMPV_DLL=$((Resolve-Path 'electron/libmpv-2.dll').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "R3D_AUTONOMOUS_V2_BUILD_OK addon=$ah dll=$dh"
+          Write-Host "R3D_AUTONOMOUS_V3_BUILD_OK addon=$ah dll=$dh"
 
       - name: Prove native production survives JS block and stops cleanly
         shell: powershell
@@ -124,5 +125,5 @@ jobs:
           $ErrorActionPreference='Stop'; $env:ELECTRON_RUN_AS_NODE='1'
           & npx.cmd electron scripts/smoke-libmpv-r3d-autonomous-js-block-v2.cjs
           $e=$LASTEXITCODE; Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          if($e -ne 0){throw 'autonomous JS-block v2 smoke failed'}
-          Write-Host 'R3D_AUTONOMOUS_JS_BLOCK_V2_COMPLETE'
+          if($e -ne 0){throw 'autonomous JS-block v3 smoke failed'}
+          Write-Host 'R3D_AUTONOMOUS_JS_BLOCK_V3_COMPLETE'
