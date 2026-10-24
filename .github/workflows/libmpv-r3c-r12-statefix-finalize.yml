@@ -15,7 +15,7 @@ permissions:
 
 env:
   R3C_PRODUCT_SHA: 64aa4d23ad4d03cd54f31af470c3f31ab72344fb
-  R3C_TEST_SHA: d05d34cd2d5373c7a04f2346afde6d42f0ce8d04
+  R3C_TEST_SHA: c281f38250de087a753cb4cfe412a77f879a3d3a
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
   CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r12
@@ -208,7 +208,7 @@ jobs:
           $addon=FindBuilt 'lilac-libmpv-player-bridge.node';$dll=FindBuilt 'libmpv-2.dll';$asar=FindBuilt 'app.asar';if(-not$addon -or -not$dll -or -not$asar){throw 'packaged payload missing'}
           $ah=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant();if($ah -ne $env:R3C_ADDON_SHA256 -or $dh -ne $env:QUALIFIED_DLL_SHA256){throw 'packaged native hash mismatch'}
           & npx.cmd asar extract $asar.FullName $asarOut;if($LASTEXITCODE -ne 0){throw 'asar extraction failed'}
-          $pkg=Get-Content (Join-Path $asarOut 'package.json') -Raw|ConvertFrom-Json;$pre=Get-Content (Join-Path $asarOut 'electron/preload-libmpv-shared.generated.cjs') -Raw;$bridge=Get-Content (Join-Path $asarOut 'electron/libmpv-shared-main.cjs') -Raw;$native=Get-Content (Join-Path $asarOut 'native/libmpv-d3d11-bridge/player_addon.cc') -Raw -ErrorAction SilentlyContinue;$css=Get-Content (Join-Path $asarOut 'src/player-android.css') -Raw
+          $pkg=Get-Content (Join-Path $asarOut 'package.json') -Raw|ConvertFrom-Json;$pre=Get-Content (Join-Path $asarOut 'electron/preload-libmpv-shared.generated.cjs') -Raw;$bridge=Get-Content (Join-Path $asarOut 'electron/libmpv-shared-main.cjs') -Raw;$css=Get-Content (Join-Path $asarOut 'src/player-android.css') -Raw
           if($pkg.version -ne '0.5.50-libmpv-r3c.rc1' -or $pkg.lilacCustomTag -ne $env:CUSTOM_RELEASE_TAG){throw 'packaged identity mismatch'}
           if(-not$pre.Contains('direct-receive-webgpu-copy') -or -not$pre.Contains('copyExternalImageToTexture')){throw 'packaged direct path missing'}
           if($pre.Contains('stagingTexture') -or $pre.Contains('ensureGpuPresentLoop') -or $pre.Contains('requestAnimationFrame(')){throw 'packaged staged path returned'}
