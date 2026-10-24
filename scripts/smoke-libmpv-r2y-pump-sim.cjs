@@ -122,11 +122,14 @@ async function main() {
     if (sent < 65) throw new Error(`adaptive pump undersent frames: ${sent}`);
     if (fps < 20 || fps > 27) throw new Error(`adaptive pump effective FPS outside hosted-runner guard band: ${fps}`);
     if (pumps < sent || pumps > sent * 8) throw new Error(`adaptive pump tick count unreasonable: pumps=${pumps} sent=${sent}`);
-    if (delay2 < 20) throw new Error(`near-boundary 2ms polling was not exercised: ${delay2}`);
-    if (coarse < 20) throw new Error(`phase-aware coarse sleep was not exercised: ${coarse}`);
+    // The number of 2ms retries is not a quality target: if the coarse phase sleep
+    // lands after the frame becomes available, fewer retries are better. Require
+    // only that the near-boundary path is genuinely exercised on this run.
+    if (delay2 < 5) throw new Error(`near-boundary 2ms polling path was not meaningfully exercised: ${delay2}`);
+    if (coarse < Math.floor(sent * 0.7)) throw new Error(`phase-aware coarse sleep was not exercised per frame: coarse=${coarse} sent=${sent}`);
     if (delay16 !== 0) throw new Error(`legacy fixed 16ms pump survived: ${delay16}`);
     if (delay100 !== 0) throw new Error(`unexpected backpressure path exercised: ${delay100}`);
-    if (immediate < 1) throw new Error('release-driven immediate wakeup missing');
+    if (immediate < sent - 2) throw new Error(`release-driven immediate wakeups lagged sent frames: immediate=${immediate} sent=${sent}`);
     if (Number(metrics.backpressureRatio || 0) > 0.03) throw new Error(`backpressure too high: ${metrics.backpressureRatio}`);
     if (Number(metrics.maxPending || 0) > 3) throw new Error(`too many pending frames: ${metrics.maxPending}`);
     if (receiverReleases < sent - 2) throw new Error(`release count lagged sent frames: releases=${receiverReleases} sent=${sent}`);
