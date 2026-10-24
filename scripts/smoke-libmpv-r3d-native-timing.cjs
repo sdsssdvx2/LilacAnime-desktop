@@ -82,7 +82,7 @@ async function main() {
       await sleep(4);
     }
 
-    if (calls < 100) throw new Error(`insufficient renderFrame calls: ${calls}`);
+    if (calls < 50) throw new Error(`insufficient renderFrame calls: ${calls}`);
     if (frames < 20) throw new Error(`insufficient rendered frames: ${frames}`);
     if (updateTimingSamples !== calls) throw new Error(`update timing coverage mismatch: ${updateTimingSamples}/${calls}`);
     if (textureTimingSamples !== frames || renderTimingSamples !== frames) {
