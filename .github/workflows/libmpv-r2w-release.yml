@@ -141,8 +141,14 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'R2W aspect policy failed'}
           & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
           if($LASTEXITCODE -ne 0){throw 'R2W BrowserWindow aspect runtime failed'}
-          node scripts/smoke-libmpv-r2q-metadata-api.cjs
-          if($LASTEXITCODE -ne 0){throw 'Tenrai live smoke failed'}
+          $tenraiSource='scripts/smoke-libmpv-r2q-metadata-api.cjs'
+          $tenraiR2w='scripts/smoke-libmpv-r2q-metadata-api-r2w.generated.cjs'
+          node -e "const fs=require('fs');const src=fs.readFileSync(process.argv[1],'utf8');const line=src.split(/\r?\n/).find(v=>v.includes('0.5.50-libmpv-r2v.rc1'));if(!line)throw new Error('R2Q metadata version anchor missing');const q=String.fromCharCode(39),d=String.fromCharCode(36);const added='  '+q+'0.5.50-libmpv-r2w.rc1'+q+': { tag: '+q+'libmpv-r2k-v0.5.50-r6'+q+', installer: '+q+'LilacAnime-Libmpv-R2W-Setup.'+d+'{ext}'+q+' }';const out=src.replace(line,line.trimEnd()+','+'\n'+added);fs.writeFileSync(process.argv[2],out)" $tenraiSource $tenraiR2w
+          if($LASTEXITCODE -ne 0){throw 'R2W Tenrai smoke adapter generation failed'}
+          node $tenraiR2w
+          $tenraiExit=$LASTEXITCODE
+          Remove-Item $tenraiR2w -Force -ErrorAction SilentlyContinue
+          if($tenraiExit -ne 0){throw 'Tenrai live smoke failed'}
           & npx.cmd electron scripts/smoke-libmpv-r2r-full-ui-startup.cjs
           if($LASTEXITCODE -ne 0){throw 'full UI startup failed'}
           & npx.cmd electron scripts/smoke-libmpv-r2v-subtitle-controls.cjs
