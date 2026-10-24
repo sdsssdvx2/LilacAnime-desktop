@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  R3A_SOURCE_SHA: 5765703346838f3ff2b8dfc9b8eedd76bf50a51a
+  R3A_SOURCE_SHA: 1697b3eb172a2505b0dcda1071b100f7576b0fa9
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
 
 jobs:
