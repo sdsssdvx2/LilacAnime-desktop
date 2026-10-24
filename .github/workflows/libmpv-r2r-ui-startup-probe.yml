@@ -70,6 +70,7 @@ jobs:
             'scripts/apply-libmpv-r2n-webgpu-pip.cjs',
             'scripts/normalize-libmpv-r2p-subtitle-anchor.cjs',
             'scripts/apply-libmpv-r2p-subtitle-ui.cjs',
+            'scripts/apply-libmpv-r2p-metadata-finalize.cjs',
             'scripts/apply-libmpv-r2q-tenrai-metadata.cjs',
             'scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs')
           foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
