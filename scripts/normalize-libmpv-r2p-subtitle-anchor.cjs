@@ -5,15 +5,27 @@ const root=path.resolve(__dirname,'..');
 
 const indexFile=path.join(root,'src','index.html');
 let index=fs.readFileSync(indexFile,'utf8');
-const indexPattern=/[ \t]*<label[^>]*class="ps-switch ps-small"[^>]*>[\s\S]*?<input[^>]*id="psVttBold"[^>]*>[\s\S]*?<\/label>\s*<p[^>]*class="ps-label"[^>]*>글자 테두리 두께\s*<span[^>]*id="psOutlineLabel"[^>]*>[\s\S]*?<\/span><\/p>\s*<input[^>]*id="psVttOutline"[^>]*>/g;
-const indexMatches=[...index.matchAll(indexPattern)];
-if(indexMatches.length!==1){
-  const at=index.indexOf('psVttBold');
-  const nearby=at>=0?index.slice(Math.max(0,at-350),at+700):'psVttBold missing';
-  throw new Error(`R2P subtitle control anchor count=${indexMatches.length}; nearby=${JSON.stringify(nearby)}`);
-}
-const normalizedIndex=`                <label class="ps-switch ps-small"><span><b>글자 굵게</b><small>자막 글자를 굵게 표시합니다</small></span><input id="psVttBold" type="checkbox"></label>\n                <p class="ps-label">글자 테두리 두께 <span id="psOutlineLabel">2.0px</span></p>\n                <input id="psVttOutline" type="range" min="0" max="6" step="0.5" value="2" aria-label="VTT 테두리">`;
-index=index.replace(indexPattern,normalizedIndex);
+// Replace only the label that actually owns #psVttBold and the immediately following
+// outline controls. The old regex started at any earlier .ps-switch.ps-small label and
+// could therefore swallow ASS effects and VTT file-style controls before psVttBold.
+const boldMarker='id="psVttBold"';
+if((index.split(boldMarker).length-1)!==1)throw new Error('R2P psVttBold marker missing or duplicated');
+const boldAt=index.indexOf(boldMarker);
+const labelStart=index.lastIndexOf('<label',boldAt);
+const labelClose=index.indexOf('</label>',boldAt);
+if(labelStart<0||labelClose<0)throw new Error('R2P psVttBold label bounds missing');
+const labelEnd=labelClose+'</label>'.length;
+const boldLabel=index.slice(labelStart,labelEnd);
+if(!/class="ps-switch ps-small"/.test(boldLabel))throw new Error('R2P psVttBold label class mismatch');
+const outlinePStart=index.indexOf('<p class="ps-label">글자 테두리 두께',labelEnd);
+const outlineInputStart=index.indexOf('<input id="psVttOutline"',outlinePStart);
+const outlineInputEnd=outlineInputStart<0?-1:index.indexOf('>',outlineInputStart)+1;
+if(outlinePStart<0||outlineInputStart<0||outlineInputEnd<=outlineInputStart)throw new Error('R2P outline bounds missing');
+if(index.slice(labelEnd,outlinePStart).trim()!=='')throw new Error('R2P unexpected content between bold and outline controls');
+const normalizedIndex=`<label class="ps-switch ps-small"><span><b>글자 굵게</b><small>자막 글자를 굵게 표시합니다</small></span><input id="psVttBold" type="checkbox"></label>\n                <p class="ps-label">글자 테두리 두께 <span id="psOutlineLabel">2.0px</span></p>\n                <input id="psVttOutline" type="range" min="0" max="6" step="0.5" value="2" aria-label="VTT 테두리">`;
+index=index.slice(0,labelStart)+normalizedIndex+index.slice(outlineInputEnd);
+if(!index.includes('id="assEffectsSheet"'))throw new Error('R2P guard: ASS effects control was removed');
+if(!index.includes('id="psVttStyle"'))throw new Error('R2P guard: VTT file-style control was removed');
 if(!index.includes('R2P subtitle keys: vttMaxWidth vttLineHeight vttShadow')) index+='\n<!-- R2P subtitle keys: vttMaxWidth vttLineHeight vttShadow -->\n';
 fs.writeFileSync(indexFile,index);
 
@@ -61,4 +73,4 @@ if(fs.existsSync(interactionsFile)){
   fs.writeFileSync(interactionsFile,tests);
 }
 
-console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1 keys=1 upstreamVttTest=82/59');
+console.log('LIBMPV_R2P_SUBTITLE_ANCHORS_NORMALIZED index=1 playerSync=1 playerHandlers=1 vttWidth=1 keys=1 guards=ass,vttStyle upstreamVttTest=82/59');
