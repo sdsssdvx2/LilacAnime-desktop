@@ -1,0 +1,10 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const root=path.resolve(__dirname,'..'),player=fs.readFileSync(path.join(root,'src/player.js'),'utf8'),appSource=fs.readFileSync(path.join(root,'src/app.js'),'utf8'),preload=fs.readFileSync(path.join(root,'electron/preload.cjs'),'utf8'),main=fs.readFileSync(path.join(root,'electron/main.cjs'),'utf8'),pkg=require('../package.json');
+assert.equal(pkg.version,'0.5.50-libmpv-r2u.rc1');assert.equal(pkg.lilacCustomTag,'libmpv-r2k-v0.5.50-r4');assert.equal(pkg.build.win.artifactName,'LilacAnime-Libmpv-R2U-Setup.${ext}');
+for(const marker of ['function isLibmpvPlayer(','typeof real.openLilacSource === \'function\'','canvas[data-lilac-libmpv-surface]','function libmpvPipAvailable(','button.classList.remove(\'hidden\')','if (isLibmpvPlayer(real))',"letter === 'p' && event.shiftKey"]){assert.ok(player.includes(marker),`player missing ${marker}`)}
+assert.ok(!player.includes("if (real.tagName === 'LILAC-MPV-VIDEO') {\n    if (real.readyState < 2)"),'dead exact-tag toggle survived');
+assert.match(appSource,/\$\('#miniPlayer'\)\.onclick\s*=\s*\(\)\s*=>\s*togglePictureInPicture\(\)\s*;/);
+assert.ok(preload.includes("setMiniPlayer: enabled => ipcRenderer.invoke('player:miniplayer', Boolean(enabled))"),'preload bridge missing');assert.ok(main.includes("ipcMain.handle('player:miniplayer'"),'main handler missing');
+const electronBinary=require('electron'),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const interaction=spawnSync(electronBinary,['scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs'],{cwd:root,stdio:'inherit',shell:false,env});if(interaction.error)throw interaction.error;assert.equal(interaction.status,0,'real button/Shift+P interaction failed');
+console.log('LIBMPV_R2U_MINIPLAYER_POLICY_PASS exactTagRequired=0 surfaceCapability=1 buttonVisible=1 buttonAndShiftP=shared-toggle');
