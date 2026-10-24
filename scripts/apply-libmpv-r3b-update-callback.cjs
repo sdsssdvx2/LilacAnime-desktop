@@ -49,7 +49,7 @@ player = replaceOnce(player,
 
 player = replaceOnce(player,
   'std::unordered_map<uint32_t, std::unique_ptr<Player>> gPlayers;\n\nbool SetOption',
-  `std::unordered_map<uint32_t, std::unique_ptr<Player>> gPlayers;\n\nvoid CallUpdateJs(napi_env env, napi_value jsCallback, void*, void*) {\n  if (!env || !jsCallback) return;\n  napi_value undefined;\n  if (napi_get_undefined(env, &undefined) != napi_ok) return;\n  napi_call_function(env, undefined, jsCallback, 0, nullptr, nullptr);\n}\n\nvoid RenderUpdateWake(void* context) {\n  Player* player = static_cast<Player*>(context);\n  if (!player) return;\n  player->updateCallbacksInFlight.fetch_add(1, std::memory_order_acq_rel);\n  if (player->updateCallbackEnabled.load(std::memory_order_acquire)) {\n    napi_threadsafe_function tsfn = player->updateTsfn.load(std::memory_order_acquire);\n    if (tsfn) {\n      const napi_status status = napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_nonblocking);\n      (void)status; // queue-full/closing is intentionally coalesced; the fallback pump remains armed.\n    }\n  }\n  player->updateCallbacksInFlight.fetch_sub(1, std::memory_order_acq_rel);\n}\n\nbool SetOption`,
+  `std::unordered_map<uint32_t, std::unique_ptr<Player>> gPlayers;\n\nvoid CallUpdateJs(napi_env env, napi_value jsCallback, void*, void*) {\n  if (!env || !jsCallback) return;\n  napi_value undefined;\n  if (napi_get_undefined(env, &undefined) != napi_ok) return;\n  napi_call_function(env, undefined, jsCallback, 0, nullptr, nullptr);\n}\n\nvoid RenderUpdateWake(void* context) {\n  Player* player = static_cast<Player*>(context);\n  if (!player) return;\n  player->updateCallbacksInFlight.fetch_add(1, std::memory_order_acq_rel);\n  if (player->updateCallbackEnabled.load(std::memory_order_acquire)) {\n    napi_threadsafe_function tsfn = player->updateTsfn.load(std::memory_order_acquire);\n    if (tsfn) {\n      const napi_status status = napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_nonblocking);\n      (void)status; // Queue-full/closing is intentionally coalesced; the fallback pump remains armed.\n    }\n  }\n  player->updateCallbacksInFlight.fetch_sub(1, std::memory_order_acq_rel);\n}\n\nbool SetOption`,
   'native update wake helpers');
 
 player = replaceOnce(player,
@@ -72,10 +72,13 @@ bridge = replaceOnce(bridge,
   `  let pumpTimerDuePerfAt = 0;\n  let nativeUpdateCallbackInstalled = false;\n  const MAX_PENDING_DELIVERY_FRAMES = 12;`,
   'bridge callback install state');
 
+// R3A phase-deadline appends its two metrics after pumpRenderMaxMs. Anchor the
+// complete post-R3A tail so future ordering mistakes fail loudly instead of
+// silently dropping either diagnostic family.
 bridge = replaceOnce(bridge,
-  '    pumpRenderTotalMs: 0,\n    pumpRenderMaxMs: 0\n  };',
-  `    pumpRenderTotalMs: 0,\n    pumpRenderMaxMs: 0,\n    nativeUpdateSignals: 0,\n    nativeUpdateWakeups: 0\n  };`,
-  'callback diagnostics');
+  '    pumpRenderTotalMs: 0,\n    pumpRenderMaxMs: 0,\n    pumpPhaseCatchupPeriods: 0,\n    pumpPhaseLateMaxMs: 0\n  };',
+  `    pumpRenderTotalMs: 0,\n    pumpRenderMaxMs: 0,\n    pumpPhaseCatchupPeriods: 0,\n    pumpPhaseLateMaxMs: 0,\n    nativeUpdateSignals: 0,\n    nativeUpdateWakeups: 0\n  };`,
+  'callback diagnostics after absolute-phase diagnostics');
 
 bridge = replaceOnce(bridge,
   `  function schedulePump(delay = 4) {\n    if (!active || disposed) return;`,
@@ -128,10 +131,11 @@ for (const marker of [
   'nativeUpdateSignals',
   'nativeUpdateWakeups',
   'addon.setUpdateCallback(playerId, wakePumpFromNative)',
-  'nativeUpdateCallbackInstalled ? 250'
+  'nativeUpdateCallbackInstalled ? 250',
+  'pumpPhaseCatchupPeriods',
+  'pumpPhaseLateMaxMs'
 ]) if (!bridge.includes(marker)) throw new Error(`R3B bridge marker missing: ${marker}`);
 if (bridge.includes('await sharedTexture.sendSharedTexture')) throw new Error('R3B regressed decoupled delivery');
-if (!bridge.includes("presentationMode") && false) throw new Error('unreachable semantic guard');
 
 write('native/libmpv-d3d11-bridge/player_addon.cc', player);
 write('electron/libmpv-shared-main.cjs', bridge);
