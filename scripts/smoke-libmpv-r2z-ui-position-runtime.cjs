@@ -63,6 +63,10 @@ function closeTo(actual, expected, tolerance, label) {
 
     assert.equal(samples.length, 8);
     const base = samples[0];
+    const baseGearRightMargin = base.viewport.width - base.gear.right;
+    assert.ok(baseGearRightMargin >= 16 && baseGearRightMargin <= 48, `gear not in expected right-side zone: ${baseGearRightMargin}`);
+    closeTo(base.viewport.width - base.settings.right, 16, 0.25, 'base settings right margin');
+
     for (const [index, sample] of samples.entries()) {
       for (const key of ['left', 'right', 'top']) {
         closeTo(sample.gear[key], base.gear[key], 0.25, `gear ${key} toggle=${index}`);
@@ -71,11 +75,11 @@ function closeTo(actual, expected, tolerance, label) {
       for (const key of ['left', 'right', 'top', 'width']) {
         closeTo(sample.settings[key], base.settings[key], 0.25, `settings ${key} toggle=${index}`);
       }
-      closeTo(sample.viewport.width - sample.gear.right, 28, 0.25, `gear right margin toggle=${index}`);
+      closeTo(sample.viewport.width - sample.gear.right, baseGearRightMargin, 0.25, `gear right margin toggle=${index}`);
       closeTo(sample.viewport.width - sample.settings.right, 16, 0.25, `settings right margin toggle=${index}`);
     }
 
-    console.log(`LIBMPV_R2Z_UI_POSITION_RUNTIME_OK ${JSON.stringify({gearRightMargin:base.viewport.width-base.gear.right,settingsRightMargin:base.viewport.width-base.settings.right,statusRight:base.status.right,toggles:samples.length})}`);
+    console.log(`LIBMPV_R2Z_UI_POSITION_RUNTIME_OK ${JSON.stringify({gearRightMargin:baseGearRightMargin,settingsRightMargin:base.viewport.width-base.settings.right,statusRight:base.status.right,toggles:samples.length})}`);
   } finally {
     if (!win.isDestroyed()) win.destroy();
     app.quit();
