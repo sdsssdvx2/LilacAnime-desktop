@@ -1,0 +1,163 @@
+name: Libmpv R3A r10 probe v2
+
+on:
+  push:
+    branches: [libmpv-r3a-decoupled-delivery]
+    paths: [.github/workflows/libmpv-r3a-r10-probe-v2.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r3a-r10-probe-v2
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  R3A_SOURCE_SHA: a2e757937607ae34078c546208c6bd8fdf8a9e88
+  R2Z_PRODUCT_SHA: 7907d63eb1f15eed7928dd93f4a2b922fbbf01a9
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Pin qualified R3A source and prove native baseline untouched
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git checkout --detach $env:R3A_SOURCE_SHA
+          if((git rev-parse HEAD).Trim() -ne $env:R3A_SOURCE_SHA){throw 'R3A v2 source pin mismatch'}
+          git diff --quiet $env:R2Z_PRODUCT_SHA $env:R3A_SOURCE_SHA -- electron src native package.json package-lock.json
+          if($LASTEXITCODE -ne 0){throw 'R3A v2 source changed product/native files directly'}
+          $t=Get-Content scripts/apply-libmpv-r3a-decoupled-delivery.cjs -Raw
+          if($t -match 'native/libmpv|player_addon|binding\.gyp'){throw 'R3A transform must not touch native source'}
+          $ui=Get-Content scripts/smoke-libmpv-r2z-ui-position-runtime.cjs -Raw
+          if($ui.Contains('sample.viewport.width - sample.gear.right, 28')){throw 'stale absolute gear-margin test survived'}
+          if(-not $ui.Contains('baseGearRightMargin')){throw 'qualified UI invariance test missing'}
+          Write-Host 'R3A_V2_SOURCE_OK appDiff=0 nativeDiff=0 uiTest=qualified'
+
+      - name: Reproduce exact upstream plus R3A
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $up=Join-Path $env:RUNNER_TEMP 'upstream'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0 -or (git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream pin mismatch'}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs','scripts/apply-libmpv-r3a-decoupled-delivery.cjs','scripts/apply-libmpv-r3a-poll-cadence-fix.cjs'
+          )
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform $s"}}
+          node scripts/rebundle-libmpv-r2v.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $p=Get-Content package.json -Raw|ConvertFrom-Json
+          if($p.version -ne '0.5.50-libmpv-r3a.rc1' -or $p.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r10' -or $p.build.win.artifactName -ne 'LilacAnime-Libmpv-R3A-Setup.${ext}'){throw 'R3A identity mismatch'}
+          if((node -p "require('electron/package.json').version") -ne $env:ELECTRON_VERSION){throw 'Electron version mismatch'}
+          $b=Get-Content electron/libmpv-shared-main.cjs -Raw
+          foreach($m in @('async function deliverImportedFrame','void deliverImportedFrame(delivery)','MAX_PENDING_DELIVERY_FRAMES = 12','pumpTimerLagMaxMs','pumpStatePollMaxMs','pumpRenderMaxMs','sendInvokeMaxMs','now - lastPumpStatePollPerfAt < 250')){if(-not $b.Contains($m)){throw "missing R3A marker $m"}}
+          if($b.Contains('now - lastPumpStatePollPerfAt < 1000')){throw 'stale 1000ms state poll survived'}
+          if($b.Contains('await sharedTexture.sendSharedTexture')){throw 'producer still awaits sendSharedTexture'}
+          if(-not $b.Contains('await sendPromise')){throw 'delivery lifetime await missing'}
+          Write-Host 'R3A_V2_REPRODUCE_OK pollMs=250'
+
+      - name: Retain qualified R2Z UI direct presentation and aspect runtime gates
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2z-ui-position-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'UI invariance failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2z-webgpu-direct-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'direct WebGPU runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'aspect runtime failed'}
+          Write-Host 'R3A_V2_UI_DIRECT_ASPECT_OK'
+
+      - name: Bind exact qualified native
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $q=Join-Path $env:RUNNER_TEMP 'qualified';New-Item -ItemType Directory -Force -Path $q|Out-Null
+          gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if($LASTEXITCODE -ne 0){throw 'qualification download failed'}
+          $exe=Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe';$mf=Join-Path $q 'qualification-manifest.json'
+          if((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_EXE_SHA256){throw 'qualification exe hash mismatch'}
+          if((Get-FileHash $mf -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_MANIFEST_SHA256){throw 'qualification manifest hash mismatch'}
+          $qm=Get-Content $mf -Raw|ConvertFrom-Json;if($qm.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $qm.electronVersion -ne $env:ELECTRON_VERSION){throw 'qualification provenance mismatch'}
+          $raw=Join-Path $env:RUNNER_TEMP 'qx';$nested=Join-Path $env:RUNNER_TEMP 'qn';New-Item -ItemType Directory -Force -Path $raw,$nested|Out-Null;7z.exe x $exe "-o$raw" -y|Out-Null
+          function FindPayload([string]$name){Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue|Select-Object -First 1}
+          $addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll'
+          if(-not $addon -or -not $dll){$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'})){$i++;$o=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $o|Out-Null;7z.exe x $a.FullName "-o$o" -y|Out-Null;$addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll';if($addon -and $dll){break}}}
+          if(-not $addon -or -not $dll){throw 'qualified payload missing'}
+          $ah=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ah -ne $env:QUALIFIED_ADDON_SHA256 -or $dh -ne $env:QUALIFIED_DLL_SHA256){throw 'payload hash mismatch'}
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force;Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          Write-Host "R3A_V2_NATIVE_OK addon=$ah dll=$dh"
+
+      - name: Stress delayed transport and retained regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/smoke-libmpv-r3a-decoupled-delivery.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3A delayed transport stress failed'}
+          node scripts/smoke-libmpv-r2y-pump-sim.cjs
+          if($LASTEXITCODE -ne 0){throw 'phase-aware pump regression failed'}
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+          $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
+          $env:ELECTRON_RUN_AS_NODE='1'
+          foreach($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-relay-av.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "native $s"}}
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer input stress failed'}
+          foreach($s in @('scripts/smoke-libmpv-r2v-subtitle-controls.cjs','scripts/smoke-libmpv-r2v-subtitle-visual.cjs','scripts/smoke-libmpv-r2v-miniplayer-fallback.cjs','scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "retained electron $s"}}
+          foreach($s in @('scripts/smoke-libmpv-r2t-miniplayer-window.cjs','scripts/smoke-libmpv-r2m-key-ui.cjs','scripts/smoke-flix-proxy-fixture.cjs')){node $s;if($LASTEXITCODE -ne 0){throw "retained node $s"}}
+          & npx.cmd electron scripts/smoke-libmpv-r2m-open-race.cjs
+          if($LASTEXITCODE -ne 0){throw 'open-race failed'}
+          $t='tests/window-buttons.test.cjs';$orig=Get-Content $t -Raw
+          node -e "const fs=require('fs'),p=process.argv[1],s=fs.readFileSync(p,'utf8'),n='const context=vm.createContext({process:{platform},windowButtons,BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});';if(!s.includes(n))throw Error('VM anchor');fs.writeFileSync(p,s.replace(n,'const context=vm.createContext({process:{platform},windowButtons,setVideoAspectLocked:()=>{},BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});'))" $t
+          if($LASTEXITCODE -ne 0){throw 'window adapter failed'}
+          $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName})
+          & node --test @tests
+          $exit=$LASTEXITCODE
+          Set-Content $t -Value $orig -NoNewline
+          if($exit -ne 0){throw 'upstream tests failed'}
+          Write-Host 'R3A_V2_REGRESSION_OK upstream=278'
+
+      - name: Final invariant gate
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $b=Get-Content electron/libmpv-shared-main.cjs -Raw;$pre=Get-Content electron/preload-libmpv-shared.generated.cjs -Raw
+          if($b.Contains('await sharedTexture.sendSharedTexture')){throw 'awaited producer transport survived'}
+          foreach($m in @('await sendPromise','MAX_PENDING_DELIVERY_FRAMES = 12','ACTIVE_PUMP_RETRY_MS = 2','nextActivePumpDelay','sendInvokeMaxMs','pumpTimerLagMaxMs','pumpStatePollMaxMs','pumpRenderMaxMs','now - lastPumpStatePollPerfAt < 250')){if(-not $b.Contains($m)){throw "missing final marker $m"}}
+          if($b.Contains('now - lastPumpStatePollPerfAt < 1000')){throw 'stale poll interval survived'}
+          foreach($m in @('direct-receive-webgpu-copy','copyExternalImageToTexture')){if(-not $pre.Contains($m)){throw "lost R2Z presenter $m"}}
+          foreach($m in @('stagingTexture','copyTextureToTexture','ensureGpuPresentLoop','requestAnimationFrame(')){if($pre.Contains($m)){throw "forbidden presenter marker $m"}}
+          $ah=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ah -ne $env:QUALIFIED_ADDON_SHA256 -or $dh -ne $env:QUALIFIED_DLL_SHA256){throw 'final native hash mismatch'}
+          Write-Host 'R3A_V2_FINAL_INVARIANTS_OK'
