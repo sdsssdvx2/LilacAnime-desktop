@@ -12,7 +12,8 @@ const pkg = require('../package.json');
 assert.equal(pkg.version,'0.5.50-libmpv-r2t.rc1');
 assert.equal(pkg.lilacCustomTag,'libmpv-r2k-v0.5.50-r3');
 assert.equal(pkg.build.win.artifactName,'LilacAnime-Libmpv-R2T-Setup.${ext}');
-for(const marker of ["window.lilac.setMiniPlayer",'setLibmpvMiniPlayer(','libmpvMiniPlayerActive',"$('#miniPlayer').onclick = togglePictureInPicture","letter === 'p' && event.shiftKey"]){assert.ok(player.includes(marker),`player missing ${marker}`)}
+for(const marker of ["window.lilac.setMiniPlayer",'setLibmpvMiniPlayer(','libmpvMiniPlayerActive',"letter === 'p' && event.shiftKey"]){assert.ok(player.includes(marker),`player missing ${marker}`)}
+assert.match(player,/\$\('#miniPlayer'\)\.onclick\s*=\s*togglePictureInPicture\s*;/,'mini player button must use the shared toggle');
 const start=player.indexOf("if (real.tagName === 'LILAC-MPV-VIDEO') {");
 const end=player.indexOf('  if (document.pictureInPictureElement)',start);
 assert.ok(start>=0&&end>start,'libmpv branch missing');
