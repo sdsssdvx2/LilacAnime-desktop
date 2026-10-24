@@ -3,6 +3,18 @@
 const assert = require('node:assert/strict');
 const { app, BrowserWindow } = require('electron');
 
+// GitHub-hosted Windows runners expose no physical graphics adapter. Chromium
+// supports explicit SwiftShader/Dawn opt-in for GPU-less WebGPU tests; these
+// switches are test-process-only and are never added to the production app.
+app.commandLine.appendSwitch('enable-unsafe-webgpu');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+app.commandLine.appendSwitch('enable-features', 'Vulkan');
+app.commandLine.appendSwitch('use-angle', 'swiftshader');
+app.commandLine.appendSwitch('use-vulkan', 'swiftshader');
+app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
+app.commandLine.appendSwitch('disable-vulkan-surface');
+
 (async () => {
   await app.whenReady();
   const win = new BrowserWindow({
@@ -15,8 +27,9 @@ const { app, BrowserWindow } = require('electron');
     await win.loadURL('data:text/html,<meta charset=utf-8><body style="margin:0;background:black"><canvas id=c width=64 height=64></canvas></body>');
     const result = await win.webContents.executeJavaScript(`(async()=>{
       if(!navigator.gpu)return {ok:false,error:'navigator.gpu unavailable'};
-      const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});
+      const adapter=await navigator.gpu.requestAdapter();
       if(!adapter)return {ok:false,error:'adapter unavailable'};
+      const info=adapter.info?{vendor:adapter.info.vendor,architecture:adapter.info.architecture,device:adapter.info.device,description:adapter.info.description}:{};
       const device=await adapter.requestDevice();
       const canvas=document.querySelector('#c');
       const context=canvas.getContext('webgpu');
@@ -40,7 +53,7 @@ const { app, BrowserWindow } = require('electron');
       await device.queue.onSubmittedWorkDone();
       const elapsed=performance.now()-before;
       staging.destroy();
-      return {ok:true,rafAt,elapsed,format};
+      return {ok:true,rafAt,elapsed,format,adapter:info};
     })()`);
     assert.equal(result?.ok, true, result?.error || 'WebGPU staged presentation failed');
     assert.ok(Number.isFinite(result.rafAt));
