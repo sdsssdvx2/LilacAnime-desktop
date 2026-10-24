@@ -1,0 +1,18 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const file=path.join(__dirname,'..','src','player.js');
+let source=fs.readFileSync(file,'utf8');
+const start=source.indexOf('function handlePlayerKey(event) {');
+const end=source.indexOf('\n// 스크린샷',start);
+if(start<0||end<=start)throw new Error('R2S handlePlayerKey section missing');
+let block=source.slice(start,end);
+const typing='  if (typing) return;';
+const arrow="  const arrow = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[key];";
+const a=block.indexOf(typing),b=block.indexOf(arrow,a+typing.length);
+if(a<0||b<0||b-a>500)throw new Error('R2S key anchor bounds missing');
+const normalized=`${typing}\n  const controlsShown = player.classList.contains('controls-visible');\n${arrow}`;
+block=block.slice(0,a)+normalized+block.slice(b+arrow.length);
+source=source.slice(0,start)+block+source.slice(end);
+fs.writeFileSync(file,source);
+console.log('LIBMPV_R2S_KEY_ANCHOR_NORMALIZED typing=1 controlsShown=1 arrow=1');
