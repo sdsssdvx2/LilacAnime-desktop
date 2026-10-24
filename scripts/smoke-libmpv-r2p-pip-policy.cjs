@@ -54,7 +54,8 @@ if (!toggle.includes('setInterval(drawPipFrame, 1000 / 30)')) throw new Error('n
 
 const expected = {
   '0.5.49-libmpv-r2p.rc1': { tag: 'libmpv-r2k-v0.5.49-r6', installer: 'LilacAnime-Libmpv-R2P-Setup.${ext}' },
-  '0.5.49-libmpv-r2q.rc1': { tag: 'libmpv-r2k-v0.5.49-r7', installer: 'LilacAnime-Libmpv-R2Q-Setup.${ext}' }
+  '0.5.49-libmpv-r2q.rc1': { tag: 'libmpv-r2k-v0.5.49-r7', installer: 'LilacAnime-Libmpv-R2Q-Setup.${ext}' },
+  '0.5.50-libmpv-r2r.rc1': { tag: 'libmpv-r2k-v0.5.50-r1', installer: 'LilacAnime-Libmpv-R2R-Setup.${ext}' }
 }[pkg.version];
 if (!expected) throw new Error(`unexpected R2P-compatible version: ${pkg.version}`);
 if (pkg.lilacCustomTag !== expected.tag) throw new Error(`unexpected R2P-compatible tag: ${pkg.lilacCustomTag}`);
