@@ -1,0 +1,12 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const file = path.resolve(__dirname, '..', 'src', 'libmpv-shared-entry.js');
+let source = fs.readFileSync(file, 'utf8');
+const from = '.lilac-vtt-cue{display:block;max-width:96%;background:transparent;color:inherit;font:inherit;text-shadow:inherit;white-space:pre-line}';
+const to = '.lilac-vtt-cue{max-width:96%;background:transparent;color:inherit;font:inherit;text-shadow:inherit;white-space:pre-line}';
+const count = source.split(from).length - 1;
+if (count !== 1) throw new Error(`R2T cue anchor normalize expected 1 exact source, found ${count}`);
+source = source.replace(from, to);
+fs.writeFileSync(file, source);
+console.log('LIBMPV_R2T_SUBTITLE_ANCHOR_NORMALIZED cueDisplay=implicit-block maxWidth=96');
