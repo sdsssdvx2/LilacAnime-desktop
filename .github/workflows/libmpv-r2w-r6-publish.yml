@@ -1,0 +1,119 @@
+name: Libmpv R2W r6 publish verified artifact
+
+on:
+  push:
+    branches: [libmpv-r2w-aspect-cadence]
+    paths: [.github/workflows/libmpv-r2w-r6-publish.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2w-r6-publish
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  SOURCE_RUN_ID: '40089865352'
+  ARTIFACT_NAME: LilacAnime-Libmpv-R2W-r6
+  R2W_TESTED_SHA: d416a3ed3cefe0726803b933e73338393556fcdd
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r6
+  VERSION: 0.5.50-libmpv-r2w.rc1
+  INSTALLER_NAME: LilacAnime-Libmpv-R2W-Setup.exe
+  INSTALLER_SHA256: 74b11541046f12424bd8f0b85a307a756f179fe231ff3590b2a91057879fdeed
+  INSTALLER_SIZE: '182519398'
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download already-built verified artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir publish
+          test -f "publish/$INSTALLER_NAME"
+          test -f publish/r2w-release-manifest.json
+          echo "R2W_PUBLISH_ARTIFACT_DOWNLOADED run=$SOURCE_RUN_ID"
+
+      - name: Re-verify artifact bytes and provenance before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="publish/$INSTALLER_NAME"
+          manifest="publish/r2w-release-manifest.json"
+          actual_hash="$(sha256sum "$installer" | awk '{print $1}')"
+          actual_size="$(stat -c '%s' "$installer")"
+          test "$actual_hash" = "$INSTALLER_SHA256"
+          test "$actual_size" = "$INSTALLER_SIZE"
+          test "$(jq -r '.applicationSourceSha' "$manifest")" = "$R2W_TESTED_SHA"
+          test "$(jq -r '.upstreamSha' "$manifest")" = "$UPSTREAM_SHA"
+          test "$(jq -r '.tag' "$manifest")" = "$CUSTOM_RELEASE_TAG"
+          test "$(jq -r '.version' "$manifest")" = "$VERSION"
+          test "$(jq -r '.installerName' "$manifest")" = "$INSTALLER_NAME"
+          test "$(jq -r '.installerSha256' "$manifest")" = "$INSTALLER_SHA256"
+          test "$(jq -r '.installerSize | tostring' "$manifest")" = "$INSTALLER_SIZE"
+          test "$(jq -r '.addonSha256' "$manifest")" = "$QUALIFIED_ADDON_SHA256"
+          test "$(jq -r '.dllSha256' "$manifest")" = "$QUALIFIED_DLL_SHA256"
+          test "$(jq -r '.cadenceObserver' "$manifest")" = 'post-copy-requestAnimationFrame-scalar-only'
+          test "$(jq -r '.aspectRatio' "$manifest")" = '16:9-native-BrowserWindow'
+          echo "R2W_PUBLISH_INPUT_VERIFIED sha256=$actual_hash size=$actual_size source=$R2W_TESTED_SHA"
+
+      - name: Create or refresh R2W prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes-r2w.md <<EOF
+          R2W preserves the real-hardware-qualified libmpv/D3D11 shared-texture/WebGPU native payload unchanged.
+
+          Changes from R2V:
+          - native BrowserWindow 16:9 manual-resize constraint in normal player and mini-player
+          - mini-player restores prior aspect lock and existing bounds/maximize/fullscreen state
+          - observation-only rolling 10s presentation-cadence diagnostics
+          - source FPS plus active display refresh-rate diagnostics
+          - playback scheduling, WebGPU copy, and immediate frame lifetime remain unchanged
+
+          Application source: $R2W_TESTED_SHA
+          Upstream source: $UPSTREAM_SHA
+          Addon SHA-256: $QUALIFIED_ADDON_SHA256
+          DLL SHA-256: $QUALIFIED_DLL_SHA256
+          Installer SHA-256: $INSTALLER_SHA256
+          Installer size: $INSTALLER_SIZE bytes
+          EOF
+          if gh release view "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$R2W_TESTED_SHA" --title 'LilacAnime libmpv R2W r6' --notes-file release-notes-r2w.md
+            gh release upload "$CUSTOM_RELEASE_TAG" "publish/$INSTALLER_NAME" publish/r2w-release-manifest.json --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$CUSTOM_RELEASE_TAG" "publish/$INSTALLER_NAME" publish/r2w-release-manifest.json --repo "$GITHUB_REPOSITORY" --prerelease --target "$R2W_TESTED_SHA" --title 'LilacAnime libmpv R2W r6' --notes-file release-notes-r2w.md
+          fi
+          echo "R2W_PRERELEASE_PUBLISHED tag=$CUSTOM_RELEASE_TAG"
+
+      - name: Download published assets and verify exact bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf verify
+          mkdir -p verify
+          gh release download "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir verify --pattern "$INSTALLER_NAME" --pattern 'r2w-release-manifest.json'
+          actual_hash="$(sha256sum "verify/$INSTALLER_NAME" | awk '{print $1}')"
+          actual_size="$(stat -c '%s' "verify/$INSTALLER_NAME")"
+          test "$actual_hash" = "$INSTALLER_SHA256"
+          test "$actual_size" = "$INSTALLER_SIZE"
+          test "$(jq -r '.installerSha256' verify/r2w-release-manifest.json)" = "$actual_hash"
+          test "$(jq -r '.installerSize | tostring' verify/r2w-release-manifest.json)" = "$actual_size"
+          test "$(jq -r '.applicationSourceSha' verify/r2w-release-manifest.json)" = "$R2W_TESTED_SHA"
+          test "$(jq -r '.addonSha256' verify/r2w-release-manifest.json)" = "$QUALIFIED_ADDON_SHA256"
+          test "$(jq -r '.dllSha256' verify/r2w-release-manifest.json)" = "$QUALIFIED_DLL_SHA256"
+          echo "R2W_PUBLISHED_BYTES_OK tag=$CUSTOM_RELEASE_TAG sha256=$actual_hash size=$actual_size"
