@@ -70,6 +70,7 @@ function syncPlayerSettingsUI() {
   $$('#psSubtitleSources button').forEach(button => button.classList.toggle('selected', button.dataset.source === activeSubtitleSource()));
   const size = Number(localStorage.getItem('subtitleSize') || 100), position = Number(localStorage.getItem('subtitlePosition') || 12), outline = Number(localStorage.getItem('vttOutline') || 2), sync = Number(localStorage.getItem('subtitleSync') || 0);
   $('#psSubtitleSize').value = String(size); $('#psSizeLabel').textContent = `${size}%`;
+  $('#psSubtitleLineHeight').value = String(subtitleLineHeight() || 160); $('#psLineHeightLabel').textContent = lineHeightLabel(subtitleLineHeight());
   $('#psSubtitlePosition').value = String(position); $('#psPositionLabel').textContent = `${position}%`;
   $('#psVttOutline').value = String(outline); $('#psOutlineLabel').textContent = `${outline.toFixed(1)}px`;
   $('#psSyncLabel').textContent = sync ? `${sync > 0 ? '+' : ''}${(sync / 1000).toFixed(2)}초 (${sync > 0 ? '늦게' : '빠르게'})` : '0초';
@@ -151,7 +152,7 @@ async function selectAnissiaMaker(name) {
 // Writes one subtitle setting and keeps the settings page controls in step.
 function setSubtitleSetting(key, value) {
   localStorage.setItem(key, String(value));
-  const page = { subtitleSize: ['#subtitleSize', '#subtitleSizeLabel', v => `${v}%`], subtitlePosition: ['#subtitlePosition', '#positionLabel', v => `${v}%`], vttOutline: ['#vttOutline', '#outlineLabel', v => Number(v).toFixed(1)], subtitleSync: ['#subtitleSync', '#subtitleSyncLabel', v => `${v} ms`] }[key];
+  const page = { subtitleSize: ['#subtitleSize', '#subtitleSizeLabel', v => `${v}%`], subtitleLineHeight: ['#subtitleLineHeight', '#subtitleLineHeightLabel', lineHeightLabel], subtitlePosition: ['#subtitlePosition', '#positionLabel', v => `${v}%`], vttOutline: ['#vttOutline', '#outlineLabel', v => Number(v).toFixed(1)], subtitleSync: ['#subtitleSync', '#subtitleSyncLabel', v => `${v} ms`] }[key];
   if (page) { const [input, label, format] = page; if ($(input)) $(input).value = String(value); if ($(label)) $(label).textContent = format(value); }
   if (key === 'vttBold' && $('#vttBold')) $('#vttBold').checked = Boolean(value);
   syncPlayerSettingsUI();
@@ -524,7 +525,7 @@ function drawPipCues(ctx, width, height, video) {
   if (!cues.length) return;
   const size = Number(localStorage.getItem('subtitleSize') || 100) / 100, bold = localStorage.getItem('vttBold') !== 'false';
   const outline = Math.max(0, Number(localStorage.getItem('vttOutline') ?? 2)) * height / 720;
-  const fontSize = Math.round(height * 0.05 * size), lineHeight = fontSize * 1.25;
+  const fontSize = Math.round(height * 0.05 * size), lineHeight = fontSize * (subtitleLineHeight() / 100 || 1.25);
   ctx.font = `${bold ? 700 : 400} ${fontSize}px LilacSubtitle, 'Malgun Gothic', sans-serif`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.lineJoin = 'round';
   const lines = cues.flatMap(cue => vttLines(ctx, cue.text || '', width * 0.9));
@@ -846,6 +847,8 @@ $('#psSeekSeconds').onchange = event => setSeekSeconds(event.target.value);
 $$('#psSubtitleSources button').forEach(button => button.onclick = () => selectSubtitleSource(button.dataset.source));
 $('#psSubtitleSync').onchange = event => { setSubtitleSync(event.target.value); syncPlayerSettingsUI(); };
 $('#psSubtitleSize').oninput = event => { setSubtitleSetting('subtitleSize', event.target.value); applyCueStyle(); };
+$('#psSubtitleLineHeight').oninput = event => { setSubtitleSetting('subtitleLineHeight', event.target.value); renderCueStyle(); };
+$('#psLineHeightReset').onclick = () => { setSubtitleSetting('subtitleLineHeight', 0); renderCueStyle(); };
 $('#psSubtitlePosition').oninput = event => { setSubtitleSetting('subtitlePosition', event.target.value); applyVttLayout(); };
 $$('[data-ps-sync]').forEach(button => button.onclick = () => {
   const delta = Number(button.dataset.psSync), current = Number(localStorage.getItem('subtitleSync') || 0);
