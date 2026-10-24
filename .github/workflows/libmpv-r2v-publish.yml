@@ -67,20 +67,21 @@ jobs:
           git cat-file -e "$env:TARGET_SHA^{commit}"
           if($LASTEXITCODE -ne 0){throw 'target source commit unavailable'}
           $notesFile=Join-Path $env:RUNNER_TEMP 'r2v-release-notes.md'
-          @'
-LilacAnime libmpv R2V r5 · calibrated subtitle parity + hardened mini-player
-
-- Based on exact upstream Lilac v0.5.50.
-- Keeps the hardware-qualified libmpv/D3D11 shared-texture/WebGPU playback pipeline and exact native addon/DLL payload unchanged.
-- Recalibrates ordinary VTT/SRT "Lilac original" against the saved original screenshot: size 105%, position 10%, line spacing 130%, Malgun Gothic 400, outline 3, width 100%, shadow 0, file colours/styles on.
-- Readability preset keeps the calibrated size/position/line spacing and preserves subtitle-file colours/italics. It uses Pretendard 600 + outline 2.5 only when Pretendard is actually installed; otherwise Malgun Gothic 400 + outline 3. Width is 92%, shadow 0.
-- Pretendard/Noto buttons distinguish installed vs missing fonts instead of silently looking identical through Malgun Gothic fallback.
-- "원본 간격으로" maps the libmpv DOM overlay to the screenshot-calibrated 130% visual line spacing while retaining reset/unset storage semantics.
-- Hardens the mini-player against the observed runtime state where the dedicated setMiniPlayer preload bridge is missing. A verified fallback routes through the long-standing setWindowButtons preload bridge without touching video/frame delivery.
-- Both the direct mini-player bridge and the missing-direct-bridge fallback were exercised in real Electron windows with button and Shift+P open/close cycles.
-- P remains screenshot; ASS original-effects rendering remains untouched.
-- Existing user subtitle settings remain preserved unless a preset or font choice is explicitly selected.
-'@ | Set-Content $notesFile -Encoding utf8
-          gh release create $env:TAG $env:INSTALLER_PATH $env:CHECKSUM_PATH $env:ATTESTATION_PATH --repo $env:GITHUB_REPOSITORY --target $env:TARGET_SHA --title 'LilacAnime libmpv R2V r5 · subtitle parity + mini-player runtime fix' --notes-file $notesFile --prerelease
+          $notes=@(
+            'LilacAnime libmpv R2V r5 · calibrated subtitle parity + hardened mini-player',
+            '',
+            '- Based on exact upstream Lilac v0.5.50.',
+            '- Keeps the hardware-qualified libmpv/D3D11 shared-texture/WebGPU playback pipeline and exact native addon/DLL payload unchanged.',
+            '- Recalibrates ordinary VTT/SRT Lilac original against the saved original screenshot: size 105%, position 10%, line spacing 130%, Malgun Gothic 400, outline 3, width 100%, shadow 0, file colours/styles on.',
+            '- Readability preset keeps the calibrated size/position/line spacing and preserves subtitle-file colours/italics. It uses Pretendard 600 + outline 2.5 only when Pretendard is actually installed; otherwise Malgun Gothic 400 + outline 3. Width is 92%, shadow 0.',
+            '- Pretendard/Noto buttons distinguish installed vs missing fonts instead of silently looking identical through Malgun Gothic fallback.',
+            '- The original-spacing button maps the libmpv DOM overlay to the screenshot-calibrated 130% visual line spacing while retaining reset/unset storage semantics.',
+            '- Hardens the mini-player against the observed runtime state where the dedicated setMiniPlayer preload bridge is missing. A verified fallback routes through the long-standing setWindowButtons preload bridge without touching video/frame delivery.',
+            '- Both the direct mini-player bridge and the missing-direct-bridge fallback were exercised in real Electron windows with button and Shift+P open/close cycles.',
+            '- P remains screenshot; ASS original-effects rendering remains untouched.',
+            '- Existing user subtitle settings remain preserved unless a preset or font choice is explicitly selected.'
+          )
+          $notes|Set-Content $notesFile -Encoding utf8
+          gh release create $env:TAG $env:INSTALLER_PATH $env:CHECKSUM_PATH $env:ATTESTATION_PATH --repo $env:GITHUB_REPOSITORY --target $env:TARGET_SHA --title 'LilacAnime libmpv R2V r5 - subtitle parity + mini-player runtime fix' --notes-file $notesFile --prerelease
           if($LASTEXITCODE -ne 0){throw 'R2V release publish failed'}
           Write-Host "R2V_RELEASE_PUBLISHED tag=$env:TAG target=$env:TARGET_SHA sha=$env:EXPECTED_SHA256 bytes=$env:EXPECTED_BYTES"
