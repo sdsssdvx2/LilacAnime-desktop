@@ -1,0 +1,142 @@
+name: Libmpv R2Z r9 probe v3
+
+on:
+  push:
+    branches: [libmpv-r2z-direct-present-ui-fixed]
+    paths: [.github/workflows/libmpv-r2z-r9-probe-v3.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2z-r9-probe-v3
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  R2Z_SOURCE_SHA: 7907d63eb1f15eed7928dd93f4a2b922fbbf01a9
+  R2Y_SOURCE_SHA: ccdabdd876737dd52ee2a301fc39ea68fd7e423f
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Reproduce exact R2Z from upstream
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git checkout --detach $env:R2Z_SOURCE_SHA
+          if((git rev-parse HEAD).Trim() -ne $env:R2Z_SOURCE_SHA){throw 'R2Z pin mismatch'}
+          git merge-base --is-ancestor $env:R2Y_SOURCE_SHA $env:R2Z_SOURCE_SHA
+          if($LASTEXITCODE -ne 0){throw 'R2Z lost R2Y ancestry'}
+          git diff --quiet $env:R2Y_SOURCE_SHA $env:R2Z_SOURCE_SHA -- native
+          if($LASTEXITCODE -ne 0){throw 'R2Z changed native source'}
+          $up=Join-Path $env:RUNNER_TEMP 'upstream'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0 -or (git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream pin mismatch'}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs'
+          )
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed $s"}}
+          node scripts/rebundle-libmpv-r2v.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $p=Get-Content package.json -Raw|ConvertFrom-Json
+          if($p.version -ne '0.5.50-libmpv-r2z.rc1' -or $p.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r9' -or (node -p "require('electron/package.json').version") -ne $env:ELECTRON_VERSION){throw 'R2Z identity mismatch'}
+          node scripts/smoke-libmpv-r2z-direct-present.cjs
+          if($LASTEXITCODE -ne 0){throw 'direct presentation static invariant failed'}
+          Write-Host 'R2Z_V3_REPRODUCE_DIRECT_OK'
+
+      - name: Runtime gate UI coordinates and direct WebGPU
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2z-ui-position-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'UI coordinate toggle runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2z-webgpu-direct-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'direct WebGPU runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'aspect runtime failed'}
+          Write-Host 'R2Z_V3_UI_DIRECT_RUNTIME_OK'
+
+      - name: Bind exact real-hardware-qualified native payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $q=Join-Path $env:RUNNER_TEMP 'qualified';New-Item -ItemType Directory -Force -Path $q|Out-Null
+          gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if($LASTEXITCODE -ne 0){throw 'qualification download failed'}
+          $exe=Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe';$mf=Join-Path $q 'qualification-manifest.json'
+          if((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_EXE_SHA256){throw 'qualification exe hash mismatch'}
+          if((Get-FileHash $mf -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_MANIFEST_SHA256){throw 'qualification manifest hash mismatch'}
+          $qm=Get-Content $mf -Raw|ConvertFrom-Json
+          if($qm.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $qm.electronVersion -ne $env:ELECTRON_VERSION){throw 'qualification provenance mismatch'}
+          $raw=Join-Path $env:RUNNER_TEMP 'qx';$nested=Join-Path $env:RUNNER_TEMP 'qn';New-Item -ItemType Directory -Force -Path $raw,$nested|Out-Null
+          7z.exe x $exe "-o$raw" -y|Out-Null
+          function FindPayload([string]$name){Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue|Select-Object -First 1}
+          $addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll'
+          if(-not $addon -or -not $dll){$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'})){$i++;$o=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $o|Out-Null;7z.exe x $a.FullName "-o$o" -y|Out-Null;$addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll';if($addon -and $dll){break}}}
+          if(-not $addon -or -not $dll){throw 'qualified payload missing'}
+          $ah=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ah -ne $env:QUALIFIED_ADDON_SHA256 -or $dh -ne $env:QUALIFIED_DLL_SHA256){throw 'qualified payload mismatch'}
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force;Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          Write-Host "R2Z_V3_NATIVE_OK addon=$ah dll=$dh"
+
+      - name: Pump native retained and upstream regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/smoke-libmpv-r2y-pump-sim.cjs
+          if($LASTEXITCODE -ne 0){throw 'phase-aware pump simulation failed'}
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path;$env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path;$env:ELECTRON_RUN_AS_NODE='1'
+          foreach($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-r2-pump-sim.cjs','scripts/smoke-libmpv-relay-av.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "native regression $s"}}
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs;if($LASTEXITCODE -ne 0){throw 'input stress failed'}
+          foreach($s in @('scripts/smoke-libmpv-r2v-subtitle-controls.cjs','scripts/smoke-libmpv-r2v-subtitle-visual.cjs','scripts/smoke-libmpv-r2v-miniplayer-fallback.cjs','scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "retained electron $s"}}
+          foreach($s in @('scripts/smoke-libmpv-r2t-miniplayer-window.cjs','scripts/smoke-libmpv-r2m-key-ui.cjs','scripts/smoke-libmpv-r2m-open-race.cjs','scripts/smoke-flix-proxy-fixture.cjs')){node $s;if($LASTEXITCODE -ne 0){throw "retained node $s"}}
+          $t='tests/window-buttons.test.cjs';$orig=Get-Content $t -Raw
+          node -e "const fs=require('fs'),p=process.argv[1],s=fs.readFileSync(p,'utf8'),n='const context=vm.createContext({process:{platform},windowButtons,BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});';if(!s.includes(n))throw Error('VM anchor');fs.writeFileSync(p,s.replace(n,'const context=vm.createContext({process:{platform},windowButtons,setVideoAspectLocked:()=>{},BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});'))" $t
+          if($LASTEXITCODE -ne 0){throw 'window test adapter failed'}
+          $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName});& node --test @tests;$exit=$LASTEXITCODE;Set-Content $t -Value $orig -NoNewline
+          if($exit -ne 0){throw 'upstream 278 tests failed'}
+          Write-Host 'R2Z_V3_REGRESSION_OK upstream=278'
+
+      - name: Final architecture and native identity gate
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $pre=Get-Content electron/preload-libmpv-shared.generated.cjs -Raw;$bridge=Get-Content electron/libmpv-shared-main.cjs -Raw;$css=Get-Content src/player-android.css -Raw
+          foreach($m in @('direct-receive-webgpu-copy','copyExternalImageToTexture','receiveCadenceTracker')){if(-not $pre.Contains($m)){throw "direct marker missing $m"}}
+          foreach($m in @('stagingTexture','copyTextureToTexture','ensureGpuPresentLoop','requestAnimationFrame(')){if($pre.Contains($m)){throw "forbidden marker $m"}}
+          foreach($m in @('ACTIVE_PUMP_RETRY_MS = 2','pumpExpectedFps','refreshPumpTimingState')){if(-not $bridge.Contains($m)){throw "pump marker missing $m"}}
+          if(-not $css.Contains('.immersive-player .player-top { padding-right: 28px; }') -or -not $css.Contains('.immersive-player .player-settings { right: 16px; }')){throw 'fixed UI CSS missing'}
+          if($css.Contains('.immersive-player.windowed .player-top') -or $css.Contains('.immersive-player.windowed .player-settings')){throw 'fullscreen-dependent UI survived'}
+          $ah=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ah -ne $env:QUALIFIED_ADDON_SHA256 -or $dh -ne $env:QUALIFIED_DLL_SHA256){throw 'native identity changed'}
+          Write-Host 'R2Z_V3_PROBE_QUALIFIED direct=1 rafGate=0 uiToggleInvariant=1 phasePump=1 nativeDiff=0 upstream=278'
