@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('node:fs');const path=require('node:path');
+const file=path.resolve(__dirname,'..','src','index.html');let source=fs.readFileSync(file,'utf8');
+const row='<div class="ps-row"><span><b>자막 글꼴</b><small id="psFontName">기본 글꼴 사용 중</small></span><button id="psChooseFont" type="button">글꼴 파일 선택</button></div>';
+const count=source.split(row).length-1;if(count!==1)throw new Error(`R2U font row expected exactly 1, found ${count}`);
+const rowAt=source.indexOf(row);const before=source.slice(0,rowAt);const after=source.slice(rowAt+row.length);
+const headingRe=/\s*<p class="ps-group">글꼴<\/p>\s*$/;
+const normalizedBefore=before.replace(headingRe,'\n');
+source=normalizedBefore+'                <p class="ps-group">글꼴</p>\n                '+row+after;
+const anchor='                <p class="ps-group">글꼴</p>\n                '+row;
+if(source.split(anchor).length-1!==1)throw new Error('R2U normalized font anchor is not unique');
+fs.writeFileSync(file,source);
+console.log('LIBMPV_R2U_FONT_ANCHOR_NORMALIZED heading=1 row=1');
