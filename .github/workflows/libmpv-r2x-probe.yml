@@ -74,15 +74,15 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'R2X static invariant failed'}
           Write-Host 'R2X_STATIC_PROBES_OK'
 
-      - name: Verify Electron aspect and WebGPU staging runtime
+      - name: Verify native aspect and probe hosted WebGPU capability
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
           if($LASTEXITCODE -ne 0){throw 'BrowserWindow aspect runtime failed'}
           & npx.cmd electron scripts/smoke-libmpv-r2x-webgpu-staging-runtime.cjs
-          if($LASTEXITCODE -ne 0){throw 'WebGPU staging runtime failed'}
-          Write-Host 'R2X_ELECTRON_RUNTIME_OK'
+          if($LASTEXITCODE -ne 0){throw 'WebGPU staging capability probe failed unexpectedly'}
+          Write-Host 'R2X_HOSTED_RUNTIME_PROBE_DONE WebGPU may be explicitly unavailable on hosted Windows; hardware validation remains required'
 
       - name: Retain player subtitle mini-player and keyboard behavior
         shell: powershell
