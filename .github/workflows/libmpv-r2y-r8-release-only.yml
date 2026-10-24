@@ -1,0 +1,119 @@
+name: Libmpv R2Y r8 release only
+
+on:
+  push:
+    branches: [libmpv-r2x-vsync-fullscreen]
+    paths: [.github/workflows/libmpv-r2y-r8-release-only.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2y-r8-release-only
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  SOURCE_RUN_ID: '40097773340'
+  ARTIFACT_NAME: r2y-r8-verified-installer
+  R2Y_TESTED_SHA: ccdabdd876737dd52ee2a301fc39ea68fd7e423f
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r8
+  INSTALLER_NAME: LilacAnime-Libmpv-R2Y-Setup.exe
+  MANIFEST_NAME: r2y-release-manifest.json
+  INSTALLER_SHA256: c25b08ca2748fda4dc68814c2887dc6c964f31b6b842eed2e4a05ab8867f92c9
+  INSTALLER_SIZE: '182521470'
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download previously verified artifact
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path verified | Out-Null
+          & gh run download $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --name $env:ARTIFACT_NAME --dir verified
+          if($LASTEXITCODE -ne 0){throw "artifact download failed exit=$LASTEXITCODE"}
+          $installer=Join-Path verified $env:INSTALLER_NAME
+          $manifest=Join-Path verified $env:MANIFEST_NAME
+          if(-not (Test-Path $installer) -or -not (Test-Path $manifest)){throw 'verified artifact files missing'}
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant();$size=(Get-Item $installer).Length
+          if($hash -ne $env:INSTALLER_SHA256 -or $size -ne [long]$env:INSTALLER_SIZE){throw "verified artifact installer mismatch hash=$hash size=$size"}
+          $m=Get-Content $manifest -Raw|ConvertFrom-Json
+          if($m.testedCommit -ne $env:R2Y_TESTED_SHA -or $m.installerSha256 -ne $hash -or [long]$m.installerSize -ne $size -or $m.addonSha256 -ne $env:QUALIFIED_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256){throw 'verified artifact manifest mismatch'}
+          Write-Host "R2Y_RELEASE_ONLY_ARTIFACT_OK sha256=$hash size=$size"
+
+      - name: Create R2Y r8 prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          @"
+          R2Y r8 fixes the R2X hardware-observed final-presentation bottleneck and restores the original right-side OP/ED/settings layout.
+
+          Basis: the user's R2X diagnostic showed native/receive near 23.98 fps but final presentation at 19.9 fps with 737 coalesced frames.
+
+          R2Y changes:
+          - warm rAF WebGPU staging presenter instead of one cold rAF request per source frame
+          - immediate source VideoFrame/shared-texture release remains unchanged
+          - fixed 16 ms producer poll replaced by FPS/phase-aware near-boundary polling
+          - OP/ED text and settings gear restored to the original right-side layout
+          - R2X fullscreen aspect-suspension and contain behavior retained
+
+          Verification completed before publication:
+          - deterministic 23.976 fps -> 144 Hz presenter model: 240 received / 240 presented / 0 coalesced / ~23.983 fps
+          - corrected adaptive-pump hard gate passed
+          - qualified native addon/DLL hashes unchanged
+          - Windows/runtime retained-player checks passed
+          - upstream 0.5.50 regression suite 278/278 passed
+          - NSIS installer unpacked and app.asar/native/UI/presenter/pump internals verified
+          - verified installer was preserved as workflow artifact before this release step
+
+          Installer SHA-256: $env:INSTALLER_SHA256
+          Installer size: $env:INSTALLER_SIZE bytes
+          "@ | Set-Content release-notes-r2y.md -Encoding utf8
+
+          # The release is known not to exist. Do not probe it first: on Windows
+          # PowerShell, gh's expected 'release not found' stderr can become a
+          # terminating NativeCommandError under ErrorActionPreference=Stop.
+          & gh release create $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:R2Y_TESTED_SHA --title 'LilacAnime libmpv R2Y r8' --notes-file release-notes-r2y.md
+          if($LASTEXITCODE -ne 0){throw "release create failed exit=$LASTEXITCODE"}
+          Write-Host 'R2Y_RELEASE_ONLY_CREATED'
+
+      - name: Upload verified installer and manifest
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=(Resolve-Path "verified/$env:INSTALLER_NAME").Path
+          $manifest=(Resolve-Path "verified/$env:MANIFEST_NAME").Path
+          & gh release upload $env:CUSTOM_RELEASE_TAG $installer $manifest --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE -ne 0){throw "release upload failed exit=$LASTEXITCODE"}
+          Write-Host 'R2Y_RELEASE_ONLY_UPLOADED'
+
+      - name: Re-download and verify published bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path published | Out-Null
+          & gh release download $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir published --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE -ne 0){throw "published download failed exit=$LASTEXITCODE"}
+          $installer=Join-Path published $env:INSTALLER_NAME
+          $manifest=Join-Path published $env:MANIFEST_NAME
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant();$size=(Get-Item $installer).Length;$m=Get-Content $manifest -Raw|ConvertFrom-Json
+          if($hash -ne $env:INSTALLER_SHA256 -or $size -ne [long]$env:INSTALLER_SIZE){throw "published installer mismatch hash=$hash size=$size"}
+          if($m.testedCommit -ne $env:R2Y_TESTED_SHA -or $m.installerSha256 -ne $hash -or [long]$m.installerSize -ne $size -or $m.addonSha256 -ne $env:QUALIFIED_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256){throw 'published manifest mismatch'}
+          Write-Host "R2Y_RELEASE_ONLY_PUBLISHED_OK tag=$env:CUSTOM_RELEASE_TAG sha256=$hash size=$size"
