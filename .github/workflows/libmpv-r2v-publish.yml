@@ -13,7 +13,8 @@ permissions:
 env:
   SOURCE_RUN_ID: '40084621335'
   SOURCE_ARTIFACT: LilacAnime-Libmpv-R2V-r5
-  TARGET_SHA: 89f170a1b245313204ee23e6dbe711e41f9241ba
+  QUALIFIED_SOURCE_SHA: 89f170a1b245313204ee23e6dbe711e41f9241ba
+  RELEASE_TARGET: main
   TAG: libmpv-r2k-v0.5.50-r5
   INSTALLER: LilacAnime-Libmpv-R2V-Setup.exe
   EXPECTED_BYTES: '182516197'
@@ -49,13 +50,13 @@ jobs:
           $checksumText=(Get-Content $checksum -Raw).Trim()
           if($checksumText -ne "$env:EXPECTED_SHA256  $env:INSTALLER"){throw "checksum file mismatch: $checksumText"}
           $a=Get-Content $attestation -Raw|ConvertFrom-Json
-          if($a.tag -ne $env:TAG -or $a.sourceSha -ne $env:TARGET_SHA -or $a.installerSha256 -ne $env:EXPECTED_SHA256 -or [int64]$a.installerBytes -ne [int64]$env:EXPECTED_BYTES){throw 'attestation identity mismatch'}
+          if($a.tag -ne $env:TAG -or $a.sourceSha -ne $env:QUALIFIED_SOURCE_SHA -or $a.installerSha256 -ne $env:EXPECTED_SHA256 -or [int64]$a.installerBytes -ne [int64]$env:EXPECTED_BYTES){throw 'attestation identity mismatch'}
           "INSTALLER_PATH=$installer"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CHECKSUM_PATH=$checksum"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "ATTESTATION_PATH=$attestation"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "R2V_VERIFIED_ARTIFACT_OK bytes=$bytes sha=$sha sourceRun=$env:SOURCE_RUN_ID"
+          Write-Host "R2V_VERIFIED_ARTIFACT_OK bytes=$bytes sha=$sha sourceRun=$env:SOURCE_RUN_ID qualifiedSource=$env:QUALIFIED_SOURCE_SHA"
 
-      - name: Publish prerelease using notes file
+      - name: Publish prerelease using default-branch tag target
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,12 +65,11 @@ jobs:
           $existing=$null
           try{$existing=gh release view $env:TAG --repo $env:GITHUB_REPOSITORY --json tagName 2>$null}catch{}
           if($existing){throw "release already exists: $env:TAG"}
-          git cat-file -e "$env:TARGET_SHA^{commit}"
-          if($LASTEXITCODE -ne 0){throw 'target source commit unavailable'}
           $notesFile=Join-Path $env:RUNNER_TEMP 'r2v-release-notes.md'
           $notes=@(
             'LilacAnime libmpv R2V r5 · calibrated subtitle parity + hardened mini-player',
             '',
+            "- Qualified application source: $env:QUALIFIED_SOURCE_SHA (the release tag itself targets main only because GitHub Actions cannot create a release tag pointing at a commit that modifies workflow files without Workflows:write).",
             '- Based on exact upstream Lilac v0.5.50.',
             '- Keeps the hardware-qualified libmpv/D3D11 shared-texture/WebGPU playback pipeline and exact native addon/DLL payload unchanged.',
             '- Recalibrates ordinary VTT/SRT Lilac original against the saved original screenshot: size 105%, position 10%, line spacing 130%, Malgun Gothic 400, outline 3, width 100%, shadow 0, file colours/styles on.',
@@ -82,6 +82,6 @@ jobs:
             '- Existing user subtitle settings remain preserved unless a preset or font choice is explicitly selected.'
           )
           $notes|Set-Content $notesFile -Encoding utf8
-          gh release create $env:TAG $env:INSTALLER_PATH $env:CHECKSUM_PATH $env:ATTESTATION_PATH --repo $env:GITHUB_REPOSITORY --target $env:TARGET_SHA --title 'LilacAnime libmpv R2V r5 - subtitle parity + mini-player runtime fix' --notes-file $notesFile --prerelease
+          gh release create $env:TAG $env:INSTALLER_PATH $env:CHECKSUM_PATH $env:ATTESTATION_PATH --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_TARGET --title 'LilacAnime libmpv R2V r5 - subtitle parity + mini-player runtime fix' --notes-file $notesFile --prerelease
           if($LASTEXITCODE -ne 0){throw 'R2V release publish failed'}
-          Write-Host "R2V_RELEASE_PUBLISHED tag=$env:TAG target=$env:TARGET_SHA sha=$env:EXPECTED_SHA256 bytes=$env:EXPECTED_BYTES"
+          Write-Host "R2V_RELEASE_PUBLISHED tag=$env:TAG releaseTarget=$env:RELEASE_TARGET qualifiedSource=$env:QUALIFIED_SOURCE_SHA sha=$env:EXPECTED_SHA256 bytes=$env:EXPECTED_BYTES"
