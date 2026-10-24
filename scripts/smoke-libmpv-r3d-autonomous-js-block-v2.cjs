@@ -103,7 +103,11 @@ async function main(){
     if(producedDelta<2) throw new Error(`native producer did not advance during JS block: ${producedDelta}`);
     if(renderCallDelta<producedDelta) throw new Error(`render-call delta smaller than produced delta: ${renderCallDelta}/${producedDelta}`);
     if(readyDelta<producedDelta) throw new Error(`ready queue did not retain produced frames: ${readyDelta}/${producedDelta}`);
-    if(backpressureDelta!==0) throw new Error(`unexpected backpressure during 350ms JS block: ${backpressureDelta}`);
+    // One bounded backpressure observation is expected if a hostile hosted runner
+    // produces quickly enough to fill all 24 retained slots during the 350ms JS
+    // freeze. It is only acceptable when the queue is actually saturated.
+    if(backpressureDelta>1) throw new Error(`excessive backpressure during JS block: ${backpressureDelta}`);
+    if(backpressureDelta===1 && Number(after.readyFrames||0)<24) throw new Error(`backpressure occurred before all 24 slots were full: ready=${after.readyFrames}`);
     // One already-entered render may finish while stop is being requested, but the
     // old behavior of draining an entire additional burst is not allowed.
     if(stopOvershoot>1) throw new Error(`autonomous stop overshot by ${stopOvershoot} frames`);
