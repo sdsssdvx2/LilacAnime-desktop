@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  R3C_SOURCE_SHA: 8536863e07fa31b4139eaf928045588ce1ab5c7c
+  R3C_SOURCE_SHA: 02cbba96b03c96d02951255e796d1c359c0b45c1
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
   LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
@@ -24,7 +24,7 @@ env:
 jobs:
   probe:
     runs-on: windows-latest
-    timeout-minutes: 80
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -93,9 +93,10 @@ jobs:
         run: |
           $ErrorActionPreference='Stop';$env:ELECTRON_RUN_AS_NODE='1'
           & npx.cmd electron scripts/smoke-libmpv-r3c-callback-signal.cjs;if($LASTEXITCODE-ne0){throw 'callback hint smoke failed'}
-          & npx.cmd electron scripts/smoke-libmpv-r3c-poll-latency.cjs;$exit=$LASTEXITCODE
+          & npx.cmd electron scripts/smoke-libmpv-r3c-poll-latency.cjs;if($LASTEXITCODE-ne0){throw 'poll latency smoke failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r3c-fhd-render-latency.cjs;$exit=$LASTEXITCODE
           Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          if($exit-ne0){throw 'poll latency smoke failed'}
+          if($exit-ne0){throw 'FHD render latency smoke failed'}
           Write-Host 'R3C_NATIVE_PROBES_OK'
 
       - name: Hybrid cadence under delayed transport and event-loop stalls
