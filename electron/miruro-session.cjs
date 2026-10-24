@@ -1,4 +1,5 @@
 const PARTITION = 'persist:lilac-miruro';
+const { createMiruroBrowser } = require('./miruro-browser.cjs');
 
 function isChallenge(response, body) {
   return response.headers.get('cf-mitigated') === 'challenge' ||
@@ -11,19 +12,13 @@ function isBlocked(response, body) {
     /Sorry, you have been blocked|You are unable to access/i.test(body.toString('utf8'));
 }
 
-function createMiruroSession({ session, BrowserWindow, parent = () => null }) {
+function createMiruroSession({ session, BrowserWindow, parent = () => null, requestTransport }) {
   let browserSession;
   const pending = new Map(), cooldowns = new Map();
   const stopped = message => Object.assign(new Error(message), { permanent: true });
   const blockedError = () => stopped('Miruro가 현재 접속을 Cloudflare로 차단했습니다. 인증으로 해제할 수 있는 화면이 아니므로 다른 소스를 선택하거나 잠시 후 다시 시도해 주세요.');
   const getSession = () => browserSession ||= session.fromPartition(PARTITION);
-  async function request(url) {
-    const response = await getSession().fetch(String(url), {
-      credentials: 'include', signal: AbortSignal.timeout(15000),
-      headers: { Accept: '*/*', Referer: `${new URL(url).origin}/` }
-    });
-    return { response, body: Buffer.from(await response.arrayBuffer()) };
-  }
+  const request = requestTransport || createMiruroBrowser({ BrowserWindow });
   function authenticate(url) {
     const origin = new URL(url).origin;
     if (pending.has(origin)) return pending.get(origin);
@@ -80,7 +75,7 @@ function createMiruroSession({ session, BrowserWindow, parent = () => null }) {
     pending.set(origin, job);
     return job;
   }
-  return async function miruroRequest(url) {
+  async function miruroRequest(url) {
     const origin = new URL(url).origin;
     if (pending.has(origin)) await pending.get(origin);
     let result = await request(url);
@@ -93,7 +88,9 @@ function createMiruroSession({ session, BrowserWindow, parent = () => null }) {
       if (isChallenge(result.response, result.body)) throw stopped('Miruro 보안 인증이 계속 요구됩니다. 다른 소스를 선택해 주세요.');
     }
     return result;
-  };
+  }
+  miruroRequest.close = () => request.close?.();
+  return miruroRequest;
 }
 
 module.exports = { createMiruroSession, isChallenge, isBlocked };

@@ -2373,7 +2373,7 @@ function createWindow() {
   });
   mainWindow = win;
   desktopState.attach(win);
-  win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
+  win.on('closed', () => { if (mainWindow === win) { mainWindow = null; miruroRequest.close(); } });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 }
 

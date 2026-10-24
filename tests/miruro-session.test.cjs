@@ -12,7 +12,7 @@ function fixture({cancel=false,blocked=false,fail=false,download=false}={}){
    async loadURL(url){loadedUrl=url;setImmediate(()=>{if(cancel)this.destroy();else if(fail)this.webContents.emit('did-fail-load',{},-105,'ERR_NAME_NOT_RESOLVED',url,true);else{verified=true;if(download)ses.emit('will-download',{preventDefault(){prevented=true}}, {},this.webContents);else this.webContents.emit('did-finish-load')}})}
  }
  const ses=Object.assign(new EventEmitter(),{fetch:async(url,options)=>{calls++;assert.equal(options.credentials,'include');return verified&&!blocked?new Response('catalog bytes'):challenge()}});
- const request=createMiruroSession({session:{fromPartition:p=>{assert.equal(p,'persist:lilac-miruro');return ses}},BrowserWindow:Window});
+ const request=createMiruroSession({session:{fromPartition:p=>{assert.equal(p,'persist:lilac-miruro');return ses}},BrowserWindow:Window,requestTransport:async url=>{const response=await ses.fetch(url,{credentials:'include'});return {response,body:Buffer.from(await response.arrayBuffer())}}});
  return {request,windows:()=>windows,calls:()=>calls,loadedUrl:()=>loadedUrl,prevented:()=>prevented,ses};
 }
 test('detect challenge without treating all 403 responses as verification',()=>{
@@ -22,7 +22,7 @@ test('detect challenge without treating all 403 responses as verification',()=>{
 });
 test('a Cloudflare block page does not open an unsolvable verification window',async()=>{
  let windows=0;
- const request=createMiruroSession({session:{fromPartition:()=>({fetch:async()=>new Response('Sorry, you have been blocked',{status:403,headers:{'content-type':'text/html'}})})},BrowserWindow:class{constructor(){windows++}}});
+ const request=createMiruroSession({session:{},requestTransport:async()=>({response:new Response('',{status:403,headers:{'content-type':'text/html'}}),body:Buffer.from('Sorry, you have been blocked')}),BrowserWindow:class{constructor(){windows++}}});
  await assert.rejects(request('https://www.miruro.to/api/v1/anime'),e=>e.permanent&&/인증으로 해제할 수/.test(e.message));
  assert.equal(windows,0);
 });
