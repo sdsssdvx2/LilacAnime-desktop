@@ -1,0 +1,18 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const player=fs.readFileSync(path.join(__dirname,'..','src','player.js'),'utf8');
+const start=player.indexOf('function handlePlayerKey(event) {');
+const end=player.indexOf('\n// 스크린샷',start);
+if(start<0||end<=start)throw new Error('handlePlayerKey block missing');
+const block=player.slice(start,end);
+const guard=block.indexOf('if (playerSettingsOpen()) {');
+const seek=block.indexOf("if (arrow === 'left' || arrow === 'right') {");
+const pip=block.indexOf("if (letter === 'p' && event.shiftKey)");
+const shot=block.indexOf("if (letter === 'p') { takeScreenshot(); return; }");
+if(guard<0||seek<0||guard>seek)throw new Error('settings guard must precede player seek');
+if(!block.includes("document.activeElement?.type === 'range' && (arrow === 'left' || arrow === 'right')"))throw new Error('range native arrow handling missing');
+if(!block.includes("moveFocus(arrow, $('#playerSettings'))"))throw new Error('keyboard settings focus navigation missing');
+if(pip<0||shot<0||pip>shot)throw new Error('Shift+P PiP must precede P screenshot');
+if(!block.includes('all\n    // global player shortcuts are suppressed while the sheet is open.'))throw new Error('settings global-shortcut suppression marker missing');
+console.log('LIBMPV_R2S_KEY_POLICY_PASS settingsArrow=noSeek range=native P=screenshot ShiftP=pip');
