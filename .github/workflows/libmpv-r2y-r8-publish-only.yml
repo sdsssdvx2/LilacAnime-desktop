@@ -1,0 +1,102 @@
+name: Libmpv R2Y r8 publish only
+
+on:
+  push:
+    branches: [libmpv-r2y-publish-only]
+    paths: [.github/workflows/libmpv-r2y-r8-publish-only.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  SOURCE_RUN_ID: 40097773340
+  ARTIFACT_NAME: r2y-r8-verified-installer
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r8
+  TESTED_SHA: ccdabdd876737dd52ee2a301fc39ea68fd7e423f
+  INSTALLER_NAME: LilacAnime-Libmpv-R2Y-Setup.exe
+  MANIFEST_NAME: r2y-release-manifest.json
+  QUALIFIED_ADDON_SHA256: ee1790a87dd75a9d058ff5fc10a9e96ed2ab6863f03c3973a2c88d8eef72fe2b
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download already-verified installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: recovered
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Verify recovered installer and manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Join-Path 'recovered' $env:INSTALLER_NAME
+          $manifestPath=Join-Path 'recovered' $env:MANIFEST_NAME
+          if(-not (Test-Path $installer) -or -not (Test-Path $manifestPath)){throw 'verified artifact payload missing'}
+          $m=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $installer).Length
+          if($m.releaseTag -ne $env:CUSTOM_RELEASE_TAG){throw 'manifest release tag mismatch'}
+          if($m.testedCommit -ne $env:TESTED_SHA){throw 'manifest tested commit mismatch'}
+          if($m.installer -ne $env:INSTALLER_NAME){throw 'manifest installer name mismatch'}
+          if($m.installerSha256 -ne $hash -or [long]$m.installerSize -ne $size){throw 'installer hash/size mismatch'}
+          if($m.addonSha256 -ne $env:QUALIFIED_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256){throw 'qualified native hash mismatch'}
+          if($m.presentationMode -ne 'raf-warm-staged-copy' -or $m.sourceFrameLifetime -ne 'immediate-release' -or $m.topRightUiPolicy -ne 'original-right'){throw 'R2Y manifest policy mismatch'}
+          "INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "INSTALLER_SIZE=$size"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R2Y_PUBLISH_ONLY_ARTIFACT_OK sha256=$hash size=$size"
+
+      - name: Create prerelease robustly
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          cat > release-notes-r2y.md <<'EOF'
+          R2Y r8 fixes the R2X hardware-observed presentation bottleneck and restores the original right-side OP/ED/settings layout.
+
+          The user's R2X diagnostic showed native/receive near 23.98 fps but final presentation at 19.9 fps with 737 coalesced frames. R2Y replaces the one-shot rAF presenter with a warm rAF staging presenter, uses FPS/phase-aware near-boundary producer polling instead of the fixed 16 ms poll, preserves immediate VideoFrame/shared-texture release, restores the original right-side OP/ED text and settings gear, and retains the fullscreen/aspect fixes.
+
+          Exact R2Y source: ccdabdd876737dd52ee2a301fc39ea68fd7e423f. Qualified native addon/DLL are unchanged. Windows/native regressions and upstream 278/278 tests passed before this artifact was built and unpack-verified.
+          EOF
+          gh release create "$CUSTOM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$TESTED_SHA" --title 'LilacAnime libmpv R2Y r8' --notes-file release-notes-r2y.md
+          echo R2Y_PUBLISH_ONLY_RELEASE_CREATED
+
+      - name: Upload verified assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$CUSTOM_RELEASE_TAG" "recovered/$INSTALLER_NAME" "recovered/$MANIFEST_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+          echo R2Y_PUBLISH_ONLY_ASSETS_UPLOADED
+
+      - name: Re-download and verify published bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $verify=Join-Path $env:RUNNER_TEMP 'published-r2y';New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE -ne 0){throw 'published download failed'}
+          $installer=Join-Path $verify $env:INSTALLER_NAME;$manifestPath=Join-Path $verify $env:MANIFEST_NAME
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant();$size=(Get-Item $installer).Length;$m=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          if($hash -ne $env:INSTALLER_SHA256 -or $size -ne [long]$env:INSTALLER_SIZE){throw 'published installer bytes mismatch'}
+          if($m.installerSha256 -ne $hash -or [long]$m.installerSize -ne $size -or $m.testedCommit -ne $env:TESTED_SHA){throw 'published manifest mismatch'}
+          Write-Host "R2Y_PUBLISH_ONLY_OK tag=$env:CUSTOM_RELEASE_TAG sha256=$hash size=$size"
