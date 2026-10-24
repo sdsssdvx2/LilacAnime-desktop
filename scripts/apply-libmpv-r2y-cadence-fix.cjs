@@ -89,6 +89,13 @@ bridge = replaceOnce(
   'R2Y near-boundary polling'
 );
 
+bridge = replaceOnce(
+  bridge,
+  `        gpuCoalescedFrames: numeric('gpuCoalescedFrames'),\n        avgGpuPresentSubmitMs: numeric('avgGpuPresentSubmitMs'),`,
+  `        gpuCoalescedFrames: numeric('gpuCoalescedFrames'),\n        gpuPresentLoopTicks: numeric('gpuPresentLoopTicks'),\n        gpuPresentLoopStarts: numeric('gpuPresentLoopStarts'),\n        gpuPresentLoopStops: numeric('gpuPresentLoopStops'),\n        avgGpuPresentSubmitMs: numeric('avgGpuPresentSubmitMs'),`,
+  'R2Y bridge warm-loop diagnostics'
+);
+
 // Restore the top-right controls/settings positioning to the pre-R2X behavior.
 // The user explicitly prefers OP/ED text and the gear at the original right side.
 playerCss = replaceOnce(
@@ -115,7 +122,7 @@ pkg.build.win.artifactName = 'LilacAnime-Libmpv-R2Y-Setup.${ext}';
 for (const marker of ["presentationMode = 'raf-warm-staged-copy'", 'ensureGpuPresentLoop', 'GPU_PRESENT_IDLE_STOP_MS = 500', 'gpuPresentLoopTicks', 'lastSourceAtMs = performance.now()']) {
   if (!preload.includes(marker)) throw new Error(`R2Y preload marker missing: ${marker}`);
 }
-for (const marker of ['ACTIVE_PUMP_RETRY_MS = 2', 'ACTIVE_PUMP_LEAD_MS = 6', 'nextActivePumpDelay', 'lastNativeFramePerfAt = performance.now()']) {
+for (const marker of ['ACTIVE_PUMP_RETRY_MS = 2', 'ACTIVE_PUMP_LEAD_MS = 6', 'nextActivePumpDelay', 'lastNativeFramePerfAt = performance.now()', "gpuPresentLoopTicks: numeric('gpuPresentLoopTicks')"]) {
   if (!bridge.includes(marker)) throw new Error(`R2Y bridge marker missing: ${marker}`);
 }
 if (bridge.includes('let nextDelay = 16;') || bridge.includes('nextDelay = 16;')) throw new Error('R2Y fixed 16ms active pump survived');
