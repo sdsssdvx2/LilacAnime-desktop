@@ -31,6 +31,9 @@ assert.match(bridge, /ACTIVE_PUMP_RETRY_MS = 2/);
 assert.match(bridge, /ACTIVE_PUMP_LEAD_MS = 6/);
 assert.match(bridge, /nextActivePumpDelay/);
 assert.match(bridge, /lastNativeFramePerfAt = performance\.now\(\)/);
+assert.match(bridge, /lastNativeTimestampUs/);
+assert.match(bridge, /predictedNativeIntervalMs/);
+assert.match(bridge, /measuredIntervalMs/);
 assert.match(bridge, /gpuPresentLoopTicks: numeric\('gpuPresentLoopTicks'\)/);
 assert.doesNotMatch(bridge, /let nextDelay = 16;/);
 assert.doesNotMatch(bridge, /nextDelay = 16;/);
@@ -41,4 +44,4 @@ assert.equal(pkg.version, '0.5.50-libmpv-r2y.rc1');
 assert.equal(pkg.lilacCustomTag, 'libmpv-r2k-v0.5.50-r8');
 assert.equal(pkg.build.win.artifactName, 'LilacAnime-Libmpv-R2Y-Setup.${ext}');
 
-console.log('LIBMPV_R2Y_CADENCE_FIX_SMOKE_OK presenter=warm-rAF pump=phase-aware ui=original-right immediateLifetime=1');
+console.log('LIBMPV_R2Y_CADENCE_FIX_SMOKE_OK presenter=warm-rAF pump=timestamp-phase-aware ui=original-right immediateLifetime=1');
