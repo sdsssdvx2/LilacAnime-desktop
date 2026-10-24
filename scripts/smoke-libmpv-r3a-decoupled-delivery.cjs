@@ -2,6 +2,7 @@
 
 const Module = require('node:module');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const realSetTimeout = global.setTimeout;
 const sleep = ms => new Promise(resolve => realSetTimeout(resolve, ms));
@@ -15,6 +16,7 @@ function busyWait(ms) {
 
 async function main() {
   const originalLoad = Module._load;
+  const originalExistsSync = fs.existsSync;
   let nextFrameId = 1;
   let sourceEpochMs = Date.now();
   let lastDeliveredSourceIndex = -1;
@@ -114,6 +116,15 @@ async function main() {
     return originalLoad.call(this, request, parent, isMain);
   };
 
+  // libmpv-shared-main intentionally verifies that both native payload files
+  // exist before requiring the addon. This test injects a fake addon, so make
+  // only those two existence probes succeed without creating/overwriting files.
+  fs.existsSync = function(candidate) {
+    const value = String(candidate || '');
+    if (value.endsWith(`${path.sep}lilac-libmpv-player-bridge.node`) || value.endsWith(`${path.sep}libmpv-2.dll`)) return true;
+    return originalExistsSync.call(fs, candidate);
+  };
+
   const ipcMain = { handle() {}, on() {} };
   const app = { isPackaged: false };
   const fakeWindow = {
@@ -187,6 +198,7 @@ async function main() {
     console.log('LIBMPV_R3A_DECOUPLED_DELIVERY_OK sourceClock=independent transport=async timerStall=recovered');
   } finally {
     try { await bridge?.dispose?.(); } catch {}
+    fs.existsSync = originalExistsSync;
     Module._load = originalLoad;
   }
 }
