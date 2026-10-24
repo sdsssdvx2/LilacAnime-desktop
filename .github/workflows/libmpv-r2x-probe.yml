@@ -1,0 +1,170 @@
+name: Libmpv R2X vsync and fullscreen probe
+
+on:
+  push:
+    branches: [libmpv-r2x-vsync-fullscreen]
+    paths:
+      - electron/window-aspect.cjs
+      - scripts/apply-libmpv-r2x-vsync-fullscreen.cjs
+      - scripts/smoke-libmpv-r2x-*.cjs
+      - .github/workflows/libmpv-r2x-probe.yml
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2x-probe
+  cancel-in-progress: true
+
+env:
+  R2W_BRANCH_HEAD: 7aeb89c41c6779edc1c564c401651bf02404641a
+  R2W_APP_SOURCE: d416a3ed3cefe0726803b933e73338393556fcdd
+  R2V_QUALIFIED_APP: 89f170a1b245313204ee23e6dbe711e41f9241ba
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify R2W ancestry and native source isolation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git merge-base --is-ancestor $env:R2W_BRANCH_HEAD HEAD
+          if($LASTEXITCODE -ne 0){throw 'R2X branch is not based on published R2W head'}
+          git merge-base --is-ancestor $env:R2W_APP_SOURCE HEAD
+          if($LASTEXITCODE -ne 0){throw 'probe-qualified R2W application source is not an ancestor'}
+          git merge-base --is-ancestor $env:R2V_QUALIFIED_APP HEAD
+          if($LASTEXITCODE -ne 0){throw 'qualified R2V source is not an ancestor'}
+          git diff --quiet $env:R2W_BRANCH_HEAD HEAD -- native
+          if($LASTEXITCODE -ne 0){throw 'R2X changed native sources'}
+          Write-Host 'R2X_SOURCE_ISOLATION_OK nativeDiff=0'
+
+      - name: Overlay exact upstream Lilac 0.5.50
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.50'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
+          $sha=(git -C $up rev-parse HEAD).Trim()
+          if($sha -ne $env:UPSTREAM_SHA){throw "upstream tag moved: $sha"}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+
+      - name: Apply exact transform chain through R2X
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs',
+            'scripts/apply-libmpv-r2-runtime-fixes.cjs',
+            'scripts/apply-libmpv-r2b-command-import-diagnostics.cjs',
+            'scripts/apply-libmpv-r2c-texture-pool.cjs',
+            'scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs',
+            'scripts/apply-libmpv-r2g-electron44-releasefix.cjs',
+            'scripts/apply-libmpv-r2h-webgpu-copy.cjs',
+            'scripts/apply-libmpv-r2i-pipeline-headroom.cjs',
+            'scripts/apply-libmpv-r2h-bundle-marker-fix.cjs',
+            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
+            'scripts/apply-libmpv-r2k-upstream-polish.cjs',
+            'scripts/apply-libmpv-r2l-player-polish.cjs',
+            'scripts/apply-libmpv-r2m-open-race-key-ui.cjs',
+            'scripts/apply-libmpv-shared-texture.cjs',
+            'scripts/apply-libmpv-r2e-native-command-gates.cjs',
+            'scripts/apply-libmpv-r2m-finalize.cjs',
+            'scripts/apply-libmpv-r2n-webgpu-pip.cjs',
+            'scripts/normalize-libmpv-r2p-subtitle-anchor.cjs',
+            'scripts/apply-libmpv-r2p-subtitle-ui.cjs',
+            'scripts/apply-libmpv-r2p-metadata-finalize.cjs',
+            'scripts/apply-libmpv-r2q-tenrai-metadata.cjs',
+            'scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs',
+            'scripts/normalize-libmpv-r2s-key-anchor.cjs',
+            'scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs',
+            'scripts/apply-libmpv-r2s-null-default-fix.cjs',
+            'scripts/apply-libmpv-r2s-test-expectations.cjs',
+            'scripts/normalize-libmpv-r2t-subtitle-anchor.cjs',
+            'scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs',
+            'scripts/apply-libmpv-r2u-v2.cjs',
+            'scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs',
+            'scripts/apply-libmpv-r2w-aspect-cadence.cjs',
+            'scripts/apply-libmpv-r2x-vsync-fullscreen.cjs'
+          )
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
+          node scripts/rebundle-libmpv-r2v.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed after R2X'}
+          npm install --no-audit --no-fund
+          $version=node -p "require('./package.json').version"
+          $tag=node -p "require('./package.json').lilacCustomTag"
+          $electron=node -p "require('electron/package.json').version"
+          if($version -ne '0.5.50-libmpv-r2x.rc1' -or $tag -ne 'libmpv-r2k-v0.5.50-r7' -or $electron -ne '44.9.3'){throw "R2X identity mismatch version=$version tag=$tag electron=$electron"}
+          Write-Host 'R2X_TRANSFORMS_OK'
+
+      - name: Verify staged presentation and fullscreen invariants
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/smoke-libmpv-r2w-cadence.cjs
+          if($LASTEXITCODE -ne 0){throw 'retained cadence math failed'}
+          node scripts/smoke-libmpv-r2w-pipeline-invariant.cjs
+          if($LASTEXITCODE -ne 0){throw 'retained pipeline invariant failed'}
+          node scripts/smoke-libmpv-r2x-aspect-suspend.cjs
+          if($LASTEXITCODE -ne 0){throw 'fullscreen aspect suspension failed'}
+          node scripts/smoke-libmpv-r2x-presentation.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2X presentation invariant failed'}
+          Write-Host 'R2X_STATIC_PROBES_OK'
+
+      - name: Verify Electron native aspect and WebGPU staging runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2w-window-aspect-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'native BrowserWindow aspect runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2x-webgpu-staging-runtime.cjs
+          if($LASTEXITCODE -ne 0){throw 'WebGPU staged presenter runtime failed'}
+          Write-Host 'R2X_ELECTRON_RUNTIME_OK'
+
+      - name: Retain player UI subtitle and mini-player behavior
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & npx.cmd electron scripts/smoke-libmpv-r2v-subtitle-controls.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2V subtitle controls failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2v-subtitle-visual.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2V subtitle visual failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2v-miniplayer-fallback.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2V miniplayer fallback failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs
+          if($LASTEXITCODE -ne 0){throw 'direct miniplayer interaction failed'}
+          node scripts/smoke-libmpv-r2t-miniplayer-window.cjs
+          if($LASTEXITCODE -ne 0){throw 'miniplayer lifecycle failed'}
+          node scripts/smoke-libmpv-r2m-key-ui.cjs
+          if($LASTEXITCODE -ne 0){throw 'keyboard UI failed'}
+          Write-Host 'R2X_RETAINED_BEHAVIOR_OK'
+
+      - name: Run complete upstream 0.5.50 regression suite
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $windowButtonsTest='tests/window-buttons.test.cjs'
+          $original=Get-Content $windowButtonsTest -Raw
+          node -e "const fs=require('fs');const p=process.argv[1];const src=fs.readFileSync(p,'utf8');const needle='const context=vm.createContext({process:{platform},windowButtons,BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});';if(!src.includes(needle))throw new Error('window-buttons VM anchor missing');fs.writeFileSync(p,src.replace(needle,'const context=vm.createContext({process:{platform},windowButtons,setVideoAspectLocked:()=>{},BrowserWindow:{fromWebContents:()=>win},ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}});'))" $windowButtonsTest
+          if($LASTEXITCODE -ne 0){throw 'window-buttons VM adapter failed'}
+          $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName})
+          & node --test @tests
+          $exit=$LASTEXITCODE
+          Set-Content $windowButtonsTest -Value $original -NoNewline
+          if($exit -ne 0){throw 'upstream regression suite failed'}
+          Write-Host 'R2X_PROBE_PASS upstreamTests=278'
