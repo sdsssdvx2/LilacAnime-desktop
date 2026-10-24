@@ -76,11 +76,11 @@ function installFixtureFetch(media) {
   return () => { global.fetch = original; };
 }
 
-async function waitForState(bridge, label, predicate, timeoutMs = 5000) {
+async function waitForState(bridge, label, predicate, timeoutMs = 5000, fullDiagnostics = false) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = bridge.state();
+    last = fullDiagnostics ? bridge.state({ fullDiagnostics: true }) : bridge.state();
     if (predicate(last)) return last;
     await sleep(25);
   }
@@ -168,11 +168,11 @@ async function main() {
 
     result = bridge.command(['set_property', 'volume', 37]);
     if (!result?.ok) throw new Error(`volume command rejected: ${JSON.stringify(result)}`);
-    const volumeState = await waitForState(bridge, 'volume readback', state => Math.abs(Number(state.volume) - 37) <= 0.5);
+    const volumeState = await waitForState(bridge, 'volume readback', state => Math.abs(Number(state.volume) - 37) <= 0.5, 5000, true);
 
     result = bridge.command(['set_property', 'speed', 1.5]);
     if (!result?.ok) throw new Error(`speed command rejected: ${JSON.stringify(result)}`);
-    const speedState = await waitForState(bridge, 'speed readback', state => Math.abs(Number(state.speed) - 1.5) <= 0.02);
+    const speedState = await waitForState(bridge, 'speed readback', state => Math.abs(Number(state.speed) - 1.5) <= 0.02, 5000, true);
 
     result = bridge.command(['set_property', 'time-pos', 4]);
     if (!result?.ok) throw new Error(`seek command rejected: ${JSON.stringify(result)}`);
@@ -189,7 +189,7 @@ async function main() {
       throw new Error(`playback clock did not advance after play: delta=${playAdvance}`);
     }
 
-    const finalState = bridge.state();
+    const finalState = bridge.state({ fullDiagnostics: true });
     if (Number(finalState.metrics?.commandFailures || 0) !== 0) {
       throw new Error(`native command failure recorded: ${JSON.stringify(finalState.metrics?.lastCommandError || null)}`);
     }
