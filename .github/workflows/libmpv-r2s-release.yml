@@ -1,0 +1,215 @@
+name: Libmpv R2S PiP subtitle controls
+
+on:
+  push:
+    branches: [libmpv-r2s-pip-subtitle-controls]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2s-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_TAG: v0.5.50
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  QUALIFIED_SOURCE_COMMIT: 78e643838b168ac961dd9631d1225b5ac8fc8ec6
+  QUALIFICATION_RELEASE_TAG: libmpv-hwq-r2i-pipeline-78e643838b16
+  QUALIFICATION_EXE_SHA256: 6d06dcf1543c7ec69488ce0718d846a2e525e04ee56ad17dbc686fef54ebb395
+  QUALIFICATION_MANIFEST_SHA256: c18543c10de436dd66544aed5fca6879fca258f1bd875a91b4d7bf17ea738b8e
+  CUSTOM_RELEASE_TAG: libmpv-r2k-v0.5.50-r2
+
+jobs:
+  build-r2s:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Overlay exact upstream Lilac 0.5.50
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.50'
+          Remove-Item $up -Recurse -Force -ErrorAction SilentlyContinue
+          git clone --depth 1 --branch $env:UPSTREAM_TAG https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
+          $sha=(git -C $up rev-parse HEAD).Trim();if($sha -ne $env:UPSTREAM_SHA){throw "upstream tag moved: $sha"}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          if((node -p "require('./package.json').version") -ne '0.5.50'){throw 'upstream version mismatch'}
+          if(-not (Test-Path electron/miruro-session.cjs)){throw '0.5.50 Miruro session module missing'}
+          Write-Host "R2S_UPSTREAM_05050_OVERLAY_OK sha=$sha"
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+
+      - name: Syntax-check R2S transforms and tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($s in @(
+            'scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/rebundle-libmpv-r2s.cjs',
+            'scripts/smoke-libmpv-r2s-subtitle-semantics.cjs','scripts/smoke-libmpv-r2s-pip-runtime.cjs','scripts/smoke-libmpv-r2s-key-policy.cjs','scripts/smoke-libmpv-r2s-updater.cjs')){
+            node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}
+          }
+          Write-Host 'R2S_PATCH_SYNTAX_OK'
+
+      - name: Apply qualified R2I through R2S transforms
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs')
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"};node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
+          node scripts/rebundle-libmpv-r2s.cjs;if($LASTEXITCODE -ne 0){throw 'R2S renderer rebundle failed'}
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $electron=node -p "require('electron/package.json').version";$version=node -p "require('./package.json').version";$tag=node -p "require('./package.json').lilacCustomTag"
+          if($electron -ne $env:ELECTRON_VERSION){throw "Electron mismatch: $electron"}
+          if($version -ne '0.5.50-libmpv-r2s.rc1' -or $tag -ne $env:CUSTOM_RELEASE_TAG){throw "R2S metadata mismatch: $version / $tag"}
+          foreach($s in @('electron/main.cjs','electron/updater.cjs','electron/miruro-session.cjs','src/libmpv-shared-entry.js','src/libmpv-shared.generated.js','src/player.js','src/app.js')){node --check $s;if($LASTEXITCODE -ne 0){throw "post-transform syntax failed: $s"}}
+          Write-Host 'R2S_TRANSFORMS_APPLIED_OK upstream=0.5.50'
+
+      - name: Bind exact real-hardware-qualified native payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $q=Join-Path $env:RUNNER_TEMP 'qualified-r2i';New-Item -ItemType Directory -Force -Path $q|Out-Null
+          & gh release download $env:QUALIFICATION_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $q --pattern 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe' --pattern 'qualification-manifest.json'
+          if($LASTEXITCODE -ne 0){throw 'qualification download failed'}
+          $exe=Join-Path $q 'LilacLibmpvHardwareQualification-WebGPUPipeline-Electron44.exe';$manifest=Join-Path $q 'qualification-manifest.json'
+          if((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_EXE_SHA256){throw 'qualification EXE SHA mismatch'}
+          if((Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFICATION_MANIFEST_SHA256){throw 'qualification manifest SHA mismatch'}
+          $m=Get-Content $manifest -Raw|ConvertFrom-Json
+          if($m.commitSha -ne $env:QUALIFIED_SOURCE_COMMIT -or $m.electronVersion -ne $env:ELECTRON_VERSION){throw 'qualification provenance mismatch'}
+          $raw=Join-Path $env:RUNNER_TEMP 'q-extract';$nested=Join-Path $env:RUNNER_TEMP 'q-nested';New-Item -ItemType Directory -Force -Path $raw,$nested|Out-Null
+          & 7z.exe x $exe "-o$raw" -y|Out-Null
+          function FindPayload([string]$name){Get-ChildItem $raw,$nested -Recurse -File -Filter $name -ErrorAction SilentlyContinue|Select-Object -First 1}
+          $addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll'
+          if(-not $addon -or -not $dll){$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'})){$i++;$out=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $out|Out-Null;& 7z.exe x $a.FullName "-o$out" -y|Out-Null;$addon=FindPayload 'lilac-libmpv-player-bridge.node';$dll=FindPayload 'libmpv-2.dll';if($addon -and $dll){break}}}
+          if(-not $addon -or -not $dll){throw 'qualified native payload missing'}
+          $expectedAddon=[string]$m.payloadSha256.PSObject.Properties['electron/lilac-libmpv-player-bridge.node'].Value;$expectedDll=[string]$m.payloadSha256.PSObject.Properties['electron/libmpv-2.dll'].Value
+          $addonHash=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dllHash=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($addonHash -ne $expectedAddon -or $dllHash -ne $expectedDll){throw 'qualified native hash mismatch'}
+          Copy-Item $addon.FullName electron/lilac-libmpv-player-bridge.node -Force;Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          "QUALIFIED_ADDON_SHA256=$addonHash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"QUALIFIED_DLL_SHA256=$dllHash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R2S_EXACT_NATIVE_REUSED addon=$addonHash dll=$dllHash"
+
+      - name: Prove R2S UI subtitles PiP keys metadata and updater
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/smoke-libmpv-r2q-metadata-api.cjs;if($LASTEXITCODE -ne 0){throw 'live metadata API smoke failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2r-full-ui-startup.cjs;if($LASTEXITCODE -ne 0){throw 'full UI startup interaction failed'}
+          foreach($s in @('scripts/smoke-libmpv-vtt-overlay.cjs','scripts/smoke-libmpv-r2m-open-race.cjs','scripts/smoke-libmpv-r2l-vtt-position.cjs','scripts/smoke-libmpv-r2s-subtitle-semantics.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "Electron UI smoke failed: $s"}}
+          node scripts/smoke-libmpv-r2s-key-policy.cjs;if($LASTEXITCODE -ne 0){throw 'R2S key policy failed'}
+          node scripts/smoke-libmpv-r2m-key-ui.cjs;if($LASTEXITCODE -ne 0){throw 'retained R2M key UI failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2s-pip-runtime.cjs;if($LASTEXITCODE -ne 0){throw 'R2S PiP runtime failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2n-webgpu-pip.cjs;if($LASTEXITCODE -ne 0){throw 'retained WebGPU PiP E2E failed'}
+          node scripts/smoke-libmpv-r2p-pipeline-untouched.cjs;if($LASTEXITCODE -ne 0){throw 'playback pipeline invariant failed'}
+          node scripts/smoke-libmpv-r2s-updater.cjs;if($LASTEXITCODE -ne 0){throw 'R2S updater smoke failed'}
+          Write-Host 'R2S_BEHAVIOR_SMOKES_OK fullUi=1 metadata=live subtitleSemantics=1 settingsKeys=isolated pip=runtime+webgpu ShiftP=pip P=screenshot pipeline=untouched'
+
+      - name: Run retained native and upstream 0.5.50 regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path;$env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path;$env:ELECTRON_RUN_AS_NODE='1'
+          foreach($s in @('scripts/smoke-libmpv-native-retention-fhd.cjs','scripts/smoke-libmpv-native-command-roundtrip.cjs','scripts/smoke-libmpv-r2-pump-sim.cjs','scripts/smoke-libmpv-relay-av.cjs')){& npx.cmd electron $s;if($LASTEXITCODE -ne 0){throw "runtime regression failed: $s"}}
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-renderer-input-stress.cjs;if($LASTEXITCODE -ne 0){throw 'renderer input regression failed'}
+          $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName})
+          if(-not $tests.Count){throw 'no upstream tests found'}
+          & node --test @tests
+          if($LASTEXITCODE -ne 0){throw '0.5.50 regression suite failed'}
+          node scripts/smoke-flix-proxy-fixture.cjs;if($LASTEXITCODE -ne 0){throw 'Flix fixture regression failed'}
+          Write-Host "R2S_05050_REGRESSIONS_OK tests=$($tests.Count)"
+
+      - name: Verify architecture and exact native identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $entry=Get-Content src/libmpv-shared-entry.js -Raw;$bundle=Get-Content src/libmpv-shared.generated.js -Raw;$player=Get-Content src/player.js -Raw;$app=Get-Content src/app.js -Raw;$index=Get-Content src/index.html -Raw;$main=Get-Content electron/main.cjs -Raw
+          foreach($required in @('copyExternalImageToTexture','state.fileLoaded !== true','this._loadConfirmed = true','this._ended = this._loadConfirmed &&','this._ended && !previousEnded')){if(-not $entry.Contains($required) -or -not $bundle.Contains($required)){throw "core marker missing: $required"}}
+          foreach($required in @('function libmpvPipSurface(',"canvas[data-lilac-libmpv-surface]",'surface.captureStream(30)','async function playPipSource(video)',"event.shiftKey) { event.preventDefault(); togglePictureInPicture()")){if(-not $player.Contains($required)){throw "PiP marker missing: $required"}}
+          $pipStart=$player.IndexOf("if (real.tagName === 'LILAC-MPV-VIDEO') {");$pipEnd=$player.IndexOf('    } else {',$pipStart);if($pipStart -lt 0 -or $pipEnd -le $pipStart){throw 'libmpv PiP branch bounds missing'};$pip=$player.Substring($pipStart,$pipEnd-$pipStart)
+          foreach($forbidden in @('drawPipFrame(','getImageData(','toDataURL(','readPixels(','mapAsync(','copyTextureToBuffer(','getContext(')){if($pip.Contains($forbidden)){throw "forbidden libmpv PiP path: $forbidden"}}
+          foreach($required in @('psSubtitleOriginalPreset','psSubtitleBestPreset','psVttWeight','psVttMaxWidth','psVttShadow','psSubtitleLineHeight')){if(-not $index.Contains($required)){throw "subtitle UI marker missing: $required"}}
+          foreach($required in @('vttWeight: 700','vttOutline: 1.75','vttMaxWidth: 84','subtitleLineHeight: 120','vttShadow: 35')){if(-not $player.Contains($required)){throw "recommended preset marker missing: $required"}}
+          foreach($required in @("localStorage.getItem('vttMaxWidth') || 100",'storedLineHeight : 160',"localStorage.getItem('vttShadow') || 0","localStorage.getItem('vttStyle') !== 'false'")){if(-not $entry.Contains($required) -or -not $bundle.Contains($required)){throw "default subtitle marker missing: $required"}}
+          if(-not $player.Contains("if (playerSettingsOpen()) {")){throw 'settings keyboard isolation missing'}
+          if(-not $main.Contains("const API = 'https://api.tenrai.org/v1';") -or $main.Contains('api.jikan.moe')){throw 'metadata policy mismatch'}
+          if((Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256){throw 'addon identity changed'}
+          if((Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'DLL identity changed'}
+          Write-Host 'R2S_ARCHITECTURE_IDENTITY_OK upstream=0.5.50 pip=direct-webgpu subtitleDefault=100/12/700/2/100/default160/0 recommended=95/10/700/1.75/84/120/35 native=exact'
+
+      - name: Build Windows R2S installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Verify packaged installer payload and R2S features
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Get-ChildItem dist -File -Filter 'LilacAnime-Libmpv-R2S-Setup.exe'|Select-Object -First 1;if(-not $installer){throw 'R2S installer missing'}
+          $raw=Join-Path $env:RUNNER_TEMP 'r2s-installer';$nested=Join-Path $env:RUNNER_TEMP 'r2s-nested';$asarOut=Join-Path $env:RUNNER_TEMP 'r2s-asar';New-Item -ItemType Directory -Force -Path $raw,$nested,$asarOut|Out-Null
+          & 7z.exe x $installer.FullName "-o$raw" -y|Out-Null;$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'})){$i++;$out=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $out|Out-Null;& 7z.exe x $a.FullName "-o$out" -y|Out-Null}
+          $addon=Get-ChildItem $raw,$nested -Recurse -File -Filter 'lilac-libmpv-player-bridge.node'|Select-Object -First 1;$dll=Get-ChildItem $raw,$nested -Recurse -File -Filter 'libmpv-2.dll'|Select-Object -First 1
+          if(-not $addon -or -not $dll){throw 'packaged native payload missing'}
+          if((Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_ADDON_SHA256){throw 'packaged addon mismatch'};if((Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'packaged DLL mismatch'}
+          $asar=Get-ChildItem $raw,$nested -Recurse -File -Filter 'app.asar'|Select-Object -First 1;if(-not $asar){throw 'app.asar missing'};& npx.cmd asar extract $asar.FullName $asarOut;if($LASTEXITCODE -ne 0){throw 'asar extract failed'}
+          $entry=Get-Content (Join-Path $asarOut 'src/libmpv-shared.generated.js') -Raw;$player=Get-Content (Join-Path $asarOut 'src/player.js') -Raw;$index=Get-Content (Join-Path $asarOut 'src/index.html') -Raw;$main=Get-Content (Join-Path $asarOut 'electron/main.cjs') -Raw;$pkg=Get-Content (Join-Path $asarOut 'package.json') -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r2s.rc1' -or $pkg.lilacCustomTag -ne $env:CUSTOM_RELEASE_TAG){throw 'packaged R2S metadata mismatch'}
+          foreach($required in @('state.fileLoaded !== true','this._loadConfirmed = true','copyExternalImageToTexture',"localStorage.getItem('vttMaxWidth') || 100",'storedLineHeight : 160',"localStorage.getItem('vttShadow') || 0")){if(-not $entry.Contains($required)){throw "packaged core/subtitle marker missing: $required"}}
+          foreach($required in @('surface.captureStream(30)','async function playPipSource(video)',"event.shiftKey) { event.preventDefault(); togglePictureInPicture()","if (playerSettingsOpen()) {",'vttMaxWidth: 84','vttShadow: 35')){if(-not $player.Contains($required)){throw "packaged PiP/UI marker missing: $required"}}
+          foreach($required in @('psSubtitleOriginalPreset','psSubtitleBestPreset','psVttWeight','psVttMaxWidth','psVttShadow')){if(-not $index.Contains($required)){throw "packaged subtitle UI missing: $required"}}
+          if(-not $main.Contains("const API = 'https://api.tenrai.org/v1';") -or $main.Contains('api.jikan.moe')){throw 'packaged metadata mismatch'}
+          $hash=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant();"R2S_INSTALLER_PATH=$($installer.FullName)"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"R2S_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R2S_PACKAGED_VERIFY_OK bytes=$($installer.Length) sha=$hash upstream=0.5.50 pip=load-race-fixed subtitle=semantic native=exact"
+
+      - name: Create checksum and attestation
+        shell: powershell
+        run: |
+          $installer=Get-Item $env:R2S_INSTALLER_PATH;$checksum=Join-Path $installer.DirectoryName 'LilacAnime-Libmpv-R2S-Setup.sha256.txt';[IO.File]::WriteAllText($checksum,"$env:R2S_INSTALLER_SHA256  $($installer.Name)`n",(New-Object Text.UTF8Encoding($false)))
+          $att=[ordered]@{schema=1;releaseTag=$env:CUSTOM_RELEASE_TAG;version='0.5.50-libmpv-r2s.rc1';upstream='v0.5.50';upstreamSha=$env:UPSTREAM_SHA;electron=$env:ELECTRON_VERSION;qualifiedSource=$env:QUALIFIED_SOURCE_COMMIT;qualifiedAddonSha256=$env:QUALIFIED_ADDON_SHA256;qualifiedDllSha256=$env:QUALIFIED_DLL_SHA256;installerSha256=$env:R2S_INSTALLER_SHA256;subtitleDefaults=[ordered]@{size=100;position=12;weight=700;outline720p=2;maxWidth=100;lineHeight='browser-default-about-160';shadow=0;fileStyle=$true};recommendedPreset=[ordered]@{size=95;position=10;weight=700;outline720p=1.75;maxWidth=84;lineHeight=120;shadow=35;fileStyle=$false};pip=[ordered]@{mode='direct-webgpu-canvas-capture';playLoadRaceRetry=$true;cpuReadback=$false;canvas2dRedraw=$false;shortcut='Shift+P';screenshotShortcut='P'};fixes=@('fix PiP hidden-video play/load race','isolate settings keyboard arrows and shortcuts from player actions','restore true upstream subtitle default semantics','make weight control honest 400/700 for default Malgun Gothic','verify max width line height weight and shadow with computed renderer geometry','preserve exact qualified native/WebGPU playback pipeline')};$att|ConvertTo-Json -Depth 7|Set-Content (Join-Path $installer.DirectoryName 'LilacAnime-Libmpv-R2S-attestation.json') -Encoding utf8
+          Write-Host 'R2S_ATTESTATION_OK'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lilac-libmpv-r2s-v0.5.50-r2
+          path: |
+            dist/LilacAnime-Libmpv-R2S-Setup.exe
+            dist/LilacAnime-Libmpv-R2S-Setup.sha256.txt
+            dist/LilacAnime-Libmpv-R2S-attestation.json
+          if-no-files-found: error
+
+      - name: Publish R2S 0.5.50-r2 prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release view $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY >nul 2>nul";$exists=($LASTEXITCODE -eq 0)
+          if($exists){gh release delete $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes;if($LASTEXITCODE -ne 0){throw 'existing R2S release delete failed'};git push origin ":refs/tags/$env:CUSTOM_RELEASE_TAG" 2>$null}
+          gh release create $env:CUSTOM_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'LilacAnime libmpv R2S · PiP + subtitle controls' --notes 'Fixes the libmpv PiP hidden-video play/load race reported on real hardware while preserving R2N direct WebGPU canvas capture: no CPU readback and no per-frame Canvas2D video redraw are added. Player settings now isolate arrow/letter keys so Right Arrow on a clicked setting cannot leak into global player seek/media actions. P remains the existing screenshot shortcut; Shift+P toggles PiP. Subtitle controls now reflect the real renderer: the default Malgun Gothic path exposes honest 400/700 weight choices, original Lilac defaults are restored (100% max width, browser-default line spacing around 160%, bold 700, 2px outline at 720p reference, no extra shadow), and an Original Defaults button is added. The revised readability preset is 95% size / 10% height / 700 weight / 1.75px outline at 720p reference / 84% max width / 120% line spacing / 35% shadow. Existing user values are preserved unless a preset is pressed. Exact previously hardware-qualified native/libmpv/WebGPU binaries are reused unchanged.' dist/LilacAnime-Libmpv-R2S-Setup.exe dist/LilacAnime-Libmpv-R2S-Setup.sha256.txt dist/LilacAnime-Libmpv-R2S-attestation.json
+          if($LASTEXITCODE -ne 0){throw 'R2S release publish failed'}
+          Write-Host 'R2S_05050_R2_RELEASE_PUBLISHED'
