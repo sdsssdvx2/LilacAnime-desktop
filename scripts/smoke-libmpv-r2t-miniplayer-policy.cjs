@@ -27,13 +27,14 @@ assert.ok(desktop.includes('win.__lilacMiniPlayer === true'),'desktop bounds per
 console.log('LIBMPV_R2T_MINIPLAYER_POLICY_STATIC_PASS button=shared-toggle ShiftP=shared-toggle captureStream=0 requestPiP=0 subtitleDOM=same-window');
 
 // The real regression was button-vs-shortcut divergence, so static source checks are not enough.
-// Exercise the shipped index/app/player event bindings through Electron on every probe/release run.
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const interaction = spawnSync(npx, ['electron', 'scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs'], {
+// Launch Electron itself (not npx.cmd) so Windows CI exercises the shipped DOM/event bindings.
+const electronBinary = require('electron');
+const interaction = spawnSync(electronBinary, ['scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs'], {
   cwd: root,
   stdio: 'inherit',
   shell: false,
-  env: { ...process.env }
+  env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
 });
+if (interaction.error) throw interaction.error;
 assert.equal(interaction.status, 0, `real mini-player interaction smoke failed with status ${interaction.status}`);
 console.log('LIBMPV_R2T_MINIPLAYER_POLICY_PASS button=real-click ShiftP=real-key repeated=2x captureStream=0 requestPiP=0 subtitleDOM=same-window');
