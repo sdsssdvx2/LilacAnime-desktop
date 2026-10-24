@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const player = fs.readFileSync(path.join(root,'src/player.js'),'utf8');
 const appSource = fs.readFileSync(path.join(root,'src/app.js'),'utf8');
@@ -23,4 +24,16 @@ for(const forbidden of ['captureStream(','requestPictureInPicture(','playPipSour
 for(const marker of ["ipcMain.handle('player:miniplayer'",'MiniPlayerWindowController']) assert.ok(main.includes(marker),`main missing ${marker}`);
 assert.ok(preload.includes("setMiniPlayer: enabled => ipcRenderer.invoke('player:miniplayer'"));
 assert.ok(desktop.includes('win.__lilacMiniPlayer === true'),'desktop bounds persistence guard missing');
-console.log('LIBMPV_R2T_MINIPLAYER_POLICY_PASS button=shared-toggle ShiftP=shared-toggle captureStream=0 requestPiP=0 subtitleDOM=same-window');
+console.log('LIBMPV_R2T_MINIPLAYER_POLICY_STATIC_PASS button=shared-toggle ShiftP=shared-toggle captureStream=0 requestPiP=0 subtitleDOM=same-window');
+
+// The real regression was button-vs-shortcut divergence, so static source checks are not enough.
+// Exercise the shipped index/app/player event bindings through Electron on every probe/release run.
+const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const interaction = spawnSync(npx, ['electron', 'scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  shell: false,
+  env: { ...process.env }
+});
+assert.equal(interaction.status, 0, `real mini-player interaction smoke failed with status ${interaction.status}`);
+console.log('LIBMPV_R2T_MINIPLAYER_POLICY_PASS button=real-click ShiftP=real-key repeated=2x captureStream=0 requestPiP=0 subtitleDOM=same-window');
