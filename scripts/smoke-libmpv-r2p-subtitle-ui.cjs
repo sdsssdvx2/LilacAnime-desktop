@@ -15,10 +15,11 @@ function fail(message, details = null) { failed = true; console.error(`LIBMPV_R2
 (async () => {
   await app.whenReady();
   const index = read('src/index.html'), player = read('src/player.js'), appJs = read('src/app.js'), entry = read('src/libmpv-shared-entry.js');
-  for (const marker of ['psSubtitleBestPreset','psVttWeight','psVttMaxWidth','psVttLineHeight','psVttShadow']) if (!index.includes(marker)) fail(`index marker missing: ${marker}`);
-  for (const marker of ['subtitleSize: 95','subtitlePosition: 10','vttWeight: 650','vttOutline: 2.25','vttMaxWidth: 82','vttLineHeight: 120','vttShadow: 55']) if (!player.includes(marker)) fail(`preset marker missing: ${marker}`);
-  for (const marker of ["subtitleStyleNumber('vttWeight',650","subtitleStyleNumber('vttLineHeight',120","subtitleStyleNumber('vttShadow',55"]) if (!appJs.includes(marker)) fail(`cue renderer marker missing: ${marker}`);
-  for (const marker of ["localStorage.getItem('vttWeight') || 650","localStorage.getItem('vttMaxWidth') || 82","localStorage.getItem('vttLineHeight') || 120","localStorage.getItem('vttShadow') || 55"]) if (!entry.includes(marker)) fail(`libmpv overlay marker missing: ${marker}`);
+  for (const marker of ['psSubtitleBestPreset','psVttWeight','psVttMaxWidth','psVttShadow','psSubtitleLineHeight']) if (!index.includes(marker)) fail(`index marker missing: ${marker}`);
+  if (index.includes('id="psVttLineHeight"')) fail('duplicate custom line-height UI survived');
+  for (const marker of ['subtitleSize: 95','subtitlePosition: 10','subtitleLineHeight: 120','vttWeight: 650','vttOutline: 2.25','vttMaxWidth: 82','vttShadow: 55']) if (!player.includes(marker)) fail(`preset marker missing: ${marker}`);
+  for (const marker of ["subtitleStyleNumber('vttWeight',650",'const lineHeight=subtitleLineHeight()',"subtitleStyleNumber('vttShadow',55"]) if (!appJs.includes(marker)) fail(`cue renderer marker missing: ${marker}`);
+  for (const marker of ["localStorage.getItem('vttWeight') || 650","localStorage.getItem('vttMaxWidth') || 82","localStorage.getItem('subtitleLineHeight')","localStorage.getItem('vttShadow') || 55"]) if (!entry.includes(marker)) fail(`libmpv overlay marker missing: ${marker}`);
   if (index.includes('id="psVttBold"') || player.includes("$('#psVttBold')")) fail('legacy boolean bold UI survived');
   if (!fs.existsSync(bundlePath)) fail('generated shared renderer bundle missing');
   if (failed) return app.exit(1);
@@ -44,10 +45,10 @@ function fail(message, details = null) { failed = true; console.error(`LIBMPV_R2
       localStorage.clear();
       localStorage.setItem('subtitleSize', '95');
       localStorage.setItem('subtitlePosition', '10');
+      localStorage.setItem('subtitleLineHeight', '120');
       localStorage.setItem('vttWeight', '650');
       localStorage.setItem('vttOutline', '2.25');
       localStorage.setItem('vttMaxWidth', '82');
-      localStorage.setItem('vttLineHeight', '120');
       localStorage.setItem('vttShadow', '55');
       localStorage.setItem('vttStyle', 'false');
       const video = document.createElement('lilac-mpv-video');
@@ -75,7 +76,7 @@ function fail(message, details = null) { failed = true; console.error(`LIBMPV_R2
       approx(result.left, 115.2, 3) && approx(result.right, 115.2, 3) && approx(result.width, 1049.6, 7) &&
       result.textShadow && result.textShadow !== 'none';
     if (!ok) fail('rendered preset style mismatch', result);
-    else console.log(`LIBMPV_R2P_SUBTITLE_UI_PASS weight=${result.fontWeight} size=${result.fontSize.toFixed(2)} line=${result.lineHeight.toFixed(2)} width=${result.width.toFixed(2)} shadow=1 bottom=${result.bottom}`);
+    else console.log(`LIBMPV_R2P_SUBTITLE_UI_PASS weight=${result.fontWeight} size=${result.fontSize.toFixed(2)} line=${result.lineHeight.toFixed(2)} width=${result.width.toFixed(2)} shadow=1 bottom=${result.bottom} lineHeightKey=subtitleLineHeight`);
   } catch (error) { fail(String(error?.stack || error)); }
   finally { if (!win.isDestroyed()) win.destroy(); try { fs.rmSync(fixturePath, { force: true }); } catch {} app.exit(failed ? 1 : 0); }
 })().catch(error => { fail(String(error?.stack || error)); try { fs.rmSync(fixturePath, { force: true }); } catch {} app.exit(1); });
