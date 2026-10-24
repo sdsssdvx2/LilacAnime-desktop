@@ -1,0 +1,81 @@
+name: Libmpv R2U probe v2
+
+on:
+  push:
+    branches: [libmpv-r2u-subtitle-font-miniplayer-fix]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r2u-probe-v2
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Overlay exact upstream Lilac 0.5.50
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $up=Join-Path $env:RUNNER_TEMP 'lilac-upstream-0.5.50'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0){throw 'clone failed'}
+          $sha=(git -C $up rev-parse HEAD).Trim();if($sha -ne '5fa931e4dbede97dc7d586864417b62bde5d7ea0'){throw "upstream moved: $sha"}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src\*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Syntax check R2U additions
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($s in @('scripts/normalize-libmpv-r2u-font-anchor.cjs','scripts/apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs','scripts/rebundle-libmpv-r2u.cjs','scripts/smoke-libmpv-r2u-subtitle-visual.cjs','scripts/smoke-libmpv-r2u-preload-miniplayer.cjs','scripts/smoke-libmpv-r2u-miniplayer-policy.cjs')){node --check $s;if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}}
+      - name: Apply R2I through R2U transforms
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/normalize-libmpv-r2u-font-anchor.cjs','scripts/apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs')
+          foreach($s in $scripts){node $s;if($LASTEXITCODE -ne 0){throw "transform failed: $s"}}
+          node scripts/rebundle-libmpv-r2u.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2U rebundle failed'}
+          $v=node -p "require('./package.json').version";$t=node -p "require('./package.json').lilacCustomTag"
+          if($v -ne '0.5.50-libmpv-r2u.rc1' -or $t -ne 'libmpv-r2k-v0.5.50-r4'){throw "metadata mismatch $v / $t"}
+      - name: Verify actual preload and mini player paths
+        shell: powershell
+        run: |
+          node scripts/smoke-libmpv-r2t-miniplayer-window.cjs
+          if($LASTEXITCODE -ne 0){throw 'window lifecycle failed'}
+          node scripts/smoke-libmpv-r2u-miniplayer-policy.cjs
+          if($LASTEXITCODE -ne 0){throw 'mini player policy failed'}
+          & npx.cmd electron scripts/smoke-libmpv-r2u-preload-miniplayer.cjs
+          if($LASTEXITCODE -ne 0){throw 'actual preload bridge failed'}
+      - name: Verify screenshot-calibrated subtitle geometry and fonts
+        shell: powershell
+        run: |
+          & npx.cmd electron scripts/smoke-libmpv-r2u-subtitle-visual.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2U subtitle visual geometry failed'}
+      - name: Verify retained full UI, keys and playback invariant
+        shell: powershell
+        run: |
+          & npx.cmd electron scripts/smoke-libmpv-r2r-full-ui-startup.cjs
+          if($LASTEXITCODE -ne 0){throw 'full UI failed'}
+          node scripts/smoke-libmpv-r2s-key-policy.cjs
+          if($LASTEXITCODE -ne 0){throw 'key policy failed'}
+          node scripts/smoke-libmpv-r2m-key-ui.cjs
+          if($LASTEXITCODE -ne 0){throw 'retained key UI failed'}
+          node scripts/smoke-libmpv-r2p-pipeline-untouched.cjs
+          if($LASTEXITCODE -ne 0){throw 'playback pipeline invariant failed'}
+          Write-Host 'R2U_PROBE_V2_PASS miniplayer=actual-preload+capability subtitle=screenshot-calibrated fonts=selectable fullUi=1 pipeline=untouched'
