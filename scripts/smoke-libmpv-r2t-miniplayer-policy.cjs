@@ -29,11 +29,13 @@ console.log('LIBMPV_R2T_MINIPLAYER_POLICY_STATIC_PASS button=shared-toggle Shift
 // The real regression was button-vs-shortcut divergence, so static source checks are not enough.
 // Launch Electron itself (not npx.cmd) so Windows CI exercises the shipped DOM/event bindings.
 const electronBinary = require('electron');
+const childEnv = { ...process.env };
+delete childEnv.ELECTRON_RUN_AS_NODE;
 const interaction = spawnSync(electronBinary, ['scripts/smoke-libmpv-r2t-miniplayer-interaction.cjs'], {
   cwd: root,
   stdio: 'inherit',
   shell: false,
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
+  env: childEnv
 });
 if (interaction.error) throw interaction.error;
 assert.equal(interaction.status, 0, `real mini-player interaction smoke failed with status ${interaction.status}`);
