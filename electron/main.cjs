@@ -14,6 +14,7 @@ const { createWeeklySchedule } = require('./weekly-schedule.cjs');
 const { createProviderSchedule } = require('./provider-schedule.cjs');
 const subtitleSource = require('../src/subtitle-source.js');
 const { selectMiruroServer } = require('./miruro-playback.cjs');
+const { createMiruroSession } = require('./miruro-session.cjs');
 const { createCatalogUpdates } = require('./catalog-updates.cjs');
 const { createTmdbClient } = require('./tmdb-client.cjs');
 const { DesktopState } = require('./desktop-state.cjs');
@@ -484,6 +485,7 @@ function animenosubServers(html,pageUrl){
 // The site's own catalog API (AniList data under Miruro ids). Answers are gzip XORed with "miruro/catalog"; lists take
 // 12 or 15 entries a page and are paged with a cursor.
 const MIRURO_KEY=Buffer.from('miruro/catalog');
+const miruroRequest=createMiruroSession({session,BrowserWindow,parent:()=>mainWindow});
 async function miruroApi(pathname,params={}){
   // These mirrors share catalog IDs and media providers. Keep .to primary; retry a
   // compatible mirror only for connection/server failures, never a bad catalog query.
@@ -492,8 +494,7 @@ async function miruroApi(pathname,params={}){
     const url=new URL(`/api/v1/${pathname}`,origin);
     for(const [key,value] of Object.entries(params))if(value!==undefined&&value!==null&&value!=='')url.searchParams.set(key,String(value));
     try{
-      const response=await fetch(url,{signal:AbortSignal.timeout(8000),headers:{'User-Agent':LINKKF_UA,Accept:'*/*',Referer:`${origin}/`}});
-      const data=Buffer.from(await response.arrayBuffer());
+      const {response,body:data}=await miruroRequest(url);
       if(!response.ok){const error=new Error(`Miruro HTTP ${response.status}`);error.permanent=response.status>=400&&response.status<500&&![403,408,429].includes(response.status);throw error}
       for(let i=0;i<data.length;i++)data[i]^=MIRURO_KEY[i%MIRURO_KEY.length];
       return JSON.parse(zlib.gunzipSync(data).toString('utf8'));

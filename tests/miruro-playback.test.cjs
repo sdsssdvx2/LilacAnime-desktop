@@ -28,7 +28,7 @@ test('if every playable server is slow, the fastest available one is used',async
   assert.equal(result.server.label,'two');
 });
 const source=fs.readFileSync(path.resolve(__dirname,'../electron/main.cjs'),'utf8');
-function isolate(name,end,fetch){const context=vm.createContext({fetch,AbortSignal,URL,Buffer,zlib,Date,LINKKF_UA:'test',MIRURO_WEB:'https://www.miruro.to',MIRURO_KEY:Buffer.from('miruro/catalog')});const at=source.indexOf(`async function ${name}(`);vm.runInContext(source.slice(at,source.indexOf(end,at)),context);return context[name];}
+function isolate(name,end,fetch){const context=vm.createContext({miruroRequest:async url=>{const response=await fetch(url);return {response,body:Buffer.from(await response.arrayBuffer())}},fetch,AbortSignal,URL,Buffer,zlib,Date,LINKKF_UA:'test',MIRURO_WEB:'https://www.miruro.to',MIRURO_KEY:Buffer.from('miruro/catalog')});const at=source.indexOf(`async function ${name}(`);vm.runInContext(source.slice(at,source.indexOf(end,at)),context);return context[name];}
 const encode=value=>{const data=zlib.gzipSync(JSON.stringify(value)),key=Buffer.from('miruro/catalog');for(let i=0;i<data.length;i++)data[i]^=key[i%key.length];return data;};
 test('catalog connection failures retry compatible mirrors with the same query; permanent errors do not',async()=>{
   const calls=[];
