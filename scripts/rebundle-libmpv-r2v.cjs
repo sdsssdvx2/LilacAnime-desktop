@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),{buildSync}=require('esbuild');
+const root=path.resolve(__dirname,'..'),entryPath=path.join(root,'src/libmpv-shared-entry.js'),bundlePath=path.join(root,'src/libmpv-shared.generated.js');
+const source=fs.readFileSync(entryPath,'utf8');
+const markers=["localStorage.getItem('vttWeight')","localStorage.getItem('vttMaxWidth') || 100","localStorage.getItem('subtitleLineHeight')",' : 1.3;','browserVisualBottom','.lilac-vtt-cue{max-width:100%;',"localStorage.getItem('vttShadow') || 0","localStorage.getItem('vttFontPreset')",'Pretendard Variable','fontVariationSettings'];
+for(const marker of markers)if(!source.includes(marker))throw new Error(`R2V subtitle source marker missing: ${marker}`);
+if(source.includes('browserBottomInset'))throw new Error('obsolete browserBottomInset survived R2V');
+buildSync({entryPoints:[entryPath],outfile:bundlePath,bundle:true,platform:'browser',format:'iife',target:'chrome150',logLevel:'info'});
+fs.appendFileSync(bundlePath,`\n/* R2V_SUBTITLE_SOURCE_ATTEST\n${markers.join('\n')}\n*/\n`,'utf8');
+console.log('LIBMPV_R2V_REBUNDLE_OK visualBottom=position-1.25 autoLine=1.3 fontPresets=availability-aware');
