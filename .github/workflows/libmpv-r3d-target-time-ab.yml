@@ -1,0 +1,82 @@
+name: Libmpv R3D target-time A-B
+
+on:
+  push:
+    branches: [libmpv-r3b-update-callback]
+    paths: [.github/workflows/libmpv-r3d-target-time-ab.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r3d-target-time-ab
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 1d6e9bcd17decbc4328644c7f27467f70774ef6d
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
+
+      - name: Reproduce exact R3D worker with target-time control
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';git checkout --detach $env:SOURCE_SHA
+          if((git rev-parse HEAD).Trim()-ne$env:SOURCE_SHA){throw 'source mismatch'}
+          $up=Join-Path $env:RUNNER_TEMP 'upstream';git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE-ne0 -or (git -C $up rev-parse HEAD).Trim()-ne$env:UPSTREAM_SHA){throw 'upstream mismatch'}
+          Copy-Item (Join-Path $up 'electron\*') electron -Recurse -Force;Copy-Item (Join-Path $up 'src\*') src -Recurse -Force;Copy-Item (Join-Path $up 'tests\*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force;Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force;Copy-Item (Join-Path $up 'scripts\anime4k-entry.mjs') scripts\anime4k-entry.mjs -Force
+          npm ci --no-audit --no-fund;npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          $scripts=@('scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs','scripts/apply-libmpv-r3a-decoupled-delivery.cjs','scripts/apply-libmpv-r3a-poll-cadence-fix.cjs','scripts/apply-libmpv-r3a-phase-deadline.cjs','scripts/apply-libmpv-r3b-update-callback.cjs','scripts/apply-libmpv-r3b-pending-wake.cjs','scripts/apply-libmpv-r3c-hotpath-state.cjs','scripts/apply-libmpv-r3d-advanced-control-probe.cjs','scripts/apply-libmpv-r3d-render-worker.cjs','scripts/apply-libmpv-r3d-target-time.cjs')
+          foreach($s in $scripts){node --check $s;if($LASTEXITCODE-ne0){throw "syntax $s"};node $s;if($LASTEXITCODE-ne0){throw "transform $s"}}
+          npm install --no-audit --no-fund;npm install --no-save --no-audit --no-fund node-gyp@12.2.0
+          $n=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          foreach($m in @('renderWorkerBlockForTargetTime','LILAC_LIBMPV_WORKER_BLOCK_TARGET','player->renderWorkerBlockForTargetTime ? 1 : 0')){if(-not$n.Contains($m)){throw "target-time marker $m"}}
+          Write-Host 'R3D_TARGET_TIME_REPRODUCE_OK'
+
+      - name: Build exact-DLL worker addon
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$a=Join-Path $env:RUNNER_TEMP 'libmpv.7z';$x=Join-Path $env:RUNNER_TEMP 'sdk';curl.exe -L --fail --retry 3 -o $a $env:LIBMPV_SDK_URL
+          if($LASTEXITCODE-ne0){throw 'SDK download'};if((Get-FileHash $a -Algorithm SHA256).Hash.ToLowerInvariant()-ne$env:LIBMPV_SDK_SHA256){throw 'SDK hash'};New-Item -ItemType Directory -Force -Path $x|Out-Null;7z.exe x $a "-o$x" -y|Out-Null
+          $c=Get-ChildItem $x -Recurse -File -Filter client.h|Where-Object{$_.FullName-match'[\\/]mpv[\\/]client\.h$'}|Select-Object -First 1;$hd=Split-Path $c.FullName -Parent;$vd=Join-Path $PWD 'native\libmpv-d3d11-bridge\vendor\include\mpv';New-Item -ItemType Directory -Force -Path $vd|Out-Null;Copy-Item (Join-Path $hd '*') $vd -Recurse -Force
+          $dll=Get-ChildItem $x -Recurse -File|Where-Object{$_.Name-in@('libmpv-2.dll','mpv-2.dll')}|Select-Object -First 1;Copy-Item $dll.FullName electron/libmpv-2.dll -Force;$dh=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant();if($dh-ne$env:QUALIFIED_DLL_SHA256){throw "DLL $dh"}
+          & (Join-Path $PWD 'node_modules\.bin\node-gyp.cmd') rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers;if($LASTEXITCODE-ne0){exit $LASTEXITCODE};Copy-Item (Resolve-Path 'native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node').Path electron/lilac-libmpv-player-bridge.node -Force
+          "LILAC_LIBMPV_PLAYER_ADDON=$((Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path)"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"LILAC_LIBMPV_DLL=$((Resolve-Path 'electron/libmpv-2.dll').Path)"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append;"LILAC_R3D_FIXTURE=$env:RUNNER_TEMP\r3d-target-fhd.mp4"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host 'R3D_TARGET_TIME_NATIVE_OK'
+
+      - name: Worker block-target OFF legacy control
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$env:ELECTRON_RUN_AS_NODE='1';$env:LILAC_R3D_MODE='worker-block0-legacy';$env:LILAC_LIBMPV_ADVANCED_CONTROL='0';$env:LILAC_LIBMPV_WORKER_BLOCK_TARGET='0';Remove-Item Env:LILAC_LIBMPV_FORCE_DR -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-r3d-worker-fhd.cjs;$exit=$LASTEXITCODE;Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue;if($exit-ne0){throw 'block0 worker failed'}
+
+      - name: Worker mpv target-time ON legacy renderer
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$env:ELECTRON_RUN_AS_NODE='1';$env:LILAC_R3D_MODE='worker-block1-legacy';$env:LILAC_LIBMPV_ADVANCED_CONTROL='0';$env:LILAC_LIBMPV_WORKER_BLOCK_TARGET='1';Remove-Item Env:LILAC_LIBMPV_FORCE_DR -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-r3d-worker-fhd.cjs;$exit=$LASTEXITCODE;Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue;if($exit-ne0){throw 'block1 legacy worker failed'}
+
+      - name: Worker target-time ON advanced-control auto-DR
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$env:ELECTRON_RUN_AS_NODE='1';$env:LILAC_R3D_MODE='worker-block1-advanced-auto';$env:LILAC_LIBMPV_ADVANCED_CONTROL='1';$env:LILAC_LIBMPV_WORKER_BLOCK_TARGET='1';Remove-Item Env:LILAC_LIBMPV_FORCE_DR -ErrorAction SilentlyContinue
+          & npx.cmd electron scripts/smoke-libmpv-r3d-worker-fhd.cjs;$exit=$LASTEXITCODE;Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue;if($exit-ne0){throw 'block1 advanced worker failed'}
+          Write-Host 'R3D_TARGET_TIME_AB_COMPLETE'
