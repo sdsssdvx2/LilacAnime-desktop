@@ -20,6 +20,8 @@ for (const source of [preload, generated]) {
   assert.match(source, /stagingTexture/);
   assert.match(source, /copyTextureToTexture/);
   assert.match(source, /scheduleGpuPresent/);
+  assert.match(source, /receiveCadenceTracker/);
+  assert.match(source, /lastReceiveCadence/);
   assert.doesNotMatch(source, /setSharedTextureReceiver\(async/);
   assert.doesNotMatch(source, /await requestAnimationFrame/);
 }
@@ -28,8 +30,9 @@ assert.equal((preload.match(/getCurrentTexture\(\)/g) || []).length, 1, 'swapcha
 assert.match(preload, /\{ texture: gpu\.stagingTexture \}/, 'source frame must copy into private GPU staging texture');
 assert.match(preload, /frame\?\.close\?\.\(\)/, 'VideoFrame immediate close must remain');
 assert.match(preload, /importedSharedTexture\?\.release\?\.\(\)/, 'shared texture immediate release must remain');
-assert.match(bridge, /gpuPresentFrames/);
-assert.match(bridge, /gpuCoalescedFrames/);
+for (const marker of ['gpuPresentFrames', 'gpuCoalescedFrames', 'avgSendSharedTextureMs', 'sendSharedTextureMaxMs', 'nativeCadenceTracker', 'receiveCadence']) {
+  assert.ok(bridge.includes(marker), `bridge diagnostic marker missing: ${marker}`);
+}
 assert.match(entry, /object-fit:contain/);
 assert.match(css, /\.immersive-player \.player-top \{ padding-right: 158px; \}/);
 assert.match(css, /\.immersive-player \.player-settings \{ right: 16px; \}/);
@@ -40,4 +43,4 @@ assert.equal(pkg.version, '0.5.50-libmpv-r2x.rc1');
 assert.equal(pkg.lilacCustomTag, 'libmpv-r2k-v0.5.50-r7');
 assert.equal(pkg.build.win.artifactName, 'LilacAnime-Libmpv-R2X-Setup.${ext}');
 
-console.log('LIBMPV_R2X_PRESENTATION_SMOKE_OK sourceCopy=immediate-staging finalPresent=rAF canvasAspect=contain uiSafeArea=stable');
+console.log('LIBMPV_R2X_PRESENTATION_SMOKE_OK sourceCopy=immediate-staging finalPresent=rAF diagnostics=native-send-receive-present canvasAspect=contain uiSafeArea=stable');
