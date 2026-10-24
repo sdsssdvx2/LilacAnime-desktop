@@ -31,6 +31,7 @@ assert.match(bridge, /ACTIVE_PUMP_RETRY_MS = 2/);
 assert.match(bridge, /ACTIVE_PUMP_LEAD_MS = 6/);
 assert.match(bridge, /nextActivePumpDelay/);
 assert.match(bridge, /lastNativeFramePerfAt = performance\.now\(\)/);
+assert.match(bridge, /gpuPresentLoopTicks: numeric\('gpuPresentLoopTicks'\)/);
 assert.doesNotMatch(bridge, /let nextDelay = 16;/);
 assert.doesNotMatch(bridge, /nextDelay = 16;/);
 assert.match(css, /\.immersive-player\.windowed \.player-top \{ padding-right: 158px; \}/);
