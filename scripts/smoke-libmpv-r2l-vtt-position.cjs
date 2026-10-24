@@ -1,6 +1,7 @@
 'use strict';
-// R2P keeps the R2L position geometry but intentionally changes the readability style
-// from the old >=700 bold assumption to numeric weight 650, 82% width and weak shadow.
-// Delegate the historical test entry point to the stricter R2P test so release workflows
-// retain the same position-edge coverage without treating the intended style as a regression.
-require('./smoke-libmpv-r2p-vtt-position.cjs');
+// R2P changed the readability defaults; R2S restores true upstream subtitle defaults.
+// Keep the historical release-workflow entry point, but dispatch to the semantic test
+// that matches the transformed package version so position coverage remains strict.
+const pkg = require('../package.json');
+if (pkg.version === '0.5.50-libmpv-r2s.rc1') require('./smoke-libmpv-r2s-vtt-position.cjs');
+else require('./smoke-libmpv-r2p-vtt-position.cjs');
