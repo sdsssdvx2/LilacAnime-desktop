@@ -53,8 +53,11 @@ const stagedConfigure = `function configureGpu(state, canvas, width, height) {\n
 const directConfigure = `function configureGpu(state, canvas, width, height) {\n  if (!state || state.status !== 'ready' || !state.device || !state.context) return false;\n  if (state.width === width && state.height === height) return true;\n  const usage = globalThis.GPUTextureUsage;\n  if (!usage) throw new Error('GPUTextureUsage unavailable');\n  state.context.configure({\n    device: state.device,\n    format: state.format,\n    alphaMode: 'opaque',\n    usage: usage.COPY_DST | usage.RENDER_ATTACHMENT\n  });\n  state.width = width;\n  state.height = height;\n  return true;\n}`;
 preload = replaceOnce(preload, stagedConfigure, directConfigure, 'restore direct WebGPU configure');
 
+// gpuStateFor/configureGpu live between findSurface and sendStats. R2X appended
+// its staged presenter there and R2Y replaced that presenter in-place, so sendStats
+// is the stable structural boundary after the entire warm-rAF block.
 const warmPresenterStart = preload.indexOf('const GPU_PRESENT_IDLE_STOP_MS = 500;');
-const warmPresenterEnd = preload.indexOf('\nfunction observePresentationCadence', warmPresenterStart);
+const warmPresenterEnd = preload.indexOf('\nfunction sendStats(', warmPresenterStart);
 if (warmPresenterStart < 0 || warmPresenterEnd <= warmPresenterStart) throw new Error('R2Y warm presenter block not found');
 preload = preload.slice(0, warmPresenterStart) + preload.slice(warmPresenterEnd + 1);
 
