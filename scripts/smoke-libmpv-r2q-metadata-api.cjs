@@ -16,9 +16,14 @@ for (const marker of [
   "api(`/anime?q=${encodeURIComponent(query)}&limit=24&sfw=true&order_by=popularity`)",
   "api(`/anime/${Number(id)}/full`)"
 ]) assert.ok(main.includes(marker), `missing runtime route ${marker}`);
-assert.equal(pkg.version, '0.5.49-libmpv-r2q.rc1');
-assert.equal(pkg.lilacCustomTag, 'libmpv-r2k-v0.5.49-r7');
-assert.equal(pkg.build.win.artifactName, 'LilacAnime-Libmpv-R2Q-Setup.${ext}');
+
+const expected = {
+  '0.5.49-libmpv-r2q.rc1': { tag: 'libmpv-r2k-v0.5.49-r7', installer: 'LilacAnime-Libmpv-R2Q-Setup.${ext}' },
+  '0.5.50-libmpv-r2r.rc1': { tag: 'libmpv-r2k-v0.5.50-r1', installer: 'LilacAnime-Libmpv-R2R-Setup.${ext}' }
+}[pkg.version];
+assert.ok(expected, `unexpected Tenrai-enabled version ${pkg.version}`);
+assert.equal(pkg.lilacCustomTag, expected.tag);
+assert.equal(pkg.build.win.artifactName, expected.installer);
 
 const BASE = 'https://api.tenrai.org/v1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,7 +33,7 @@ async function request(pathname) {
     try {
       const response = await fetch(`${BASE}${pathname}`, {
         signal: AbortSignal.timeout(15000),
-        headers: { Accept: 'application/json', 'User-Agent': 'LilacAnime-R2Q-CI/0.5.49' }
+        headers: { Accept: 'application/json', 'User-Agent': `LilacAnime-Tenrai-CI/${pkg.version}` }
       });
       if (response.status === 429 || response.status >= 500) {
         lastError = new Error(`HTTP ${response.status}`);
@@ -69,5 +74,5 @@ function validateAnime(item, label) {
   const detail = await request(`/anime/${Number(search.data[0].mal_id)}/full`);
   validateAnime(detail.data, 'detail');
 
-  console.log(`LIBMPV_R2Q_METADATA_API_PASS top=${top.data.length} search=${search.data.length} season=${season.data.length} detail=${detail.data.mal_id} base=${BASE}`);
+  console.log(`LIBMPV_R2Q_METADATA_API_PASS version=${pkg.version} top=${top.data.length} search=${search.data.length} season=${season.data.length} detail=${detail.data.mal_id} base=${BASE}`);
 })().catch(error => { console.error(error?.stack || error); process.exitCode = 1; });
