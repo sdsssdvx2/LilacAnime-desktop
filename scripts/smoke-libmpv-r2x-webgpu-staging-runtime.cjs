@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { app, BrowserWindow } = require('electron');
 
 // GitHub-hosted Windows runners expose no physical graphics adapter. Chromium
@@ -15,8 +16,21 @@ app.commandLine.appendSwitch('use-vulkan', 'swiftshader');
 app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
 app.commandLine.appendSwitch('disable-vulkan-surface');
 
+function listenLocalhost() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end('<!doctype html><meta charset="utf-8"><body style="margin:0;background:black"><canvas id="c" width="64" height="64"></canvas></body>');
+    });
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
 (async () => {
+  const server = await listenLocalhost();
   await app.whenReady();
+  const address = server.address();
   const win = new BrowserWindow({
     show: false,
     width: 640,
@@ -24,16 +38,17 @@ app.commandLine.appendSwitch('disable-vulkan-surface');
     webPreferences: { contextIsolation: true, sandbox: true }
   });
   try {
-    await win.loadURL('data:text/html,<meta charset=utf-8><body style="margin:0;background:black"><canvas id=c width=64 height=64></canvas></body>');
+    await win.loadURL(`http://127.0.0.1:${address.port}/`);
     const result = await win.webContents.executeJavaScript(`(async()=>{
-      if(!navigator.gpu)return {ok:false,error:'navigator.gpu unavailable'};
+      const contextInfo={isSecureContext,origin:location.origin,protocol:location.protocol};
+      if(!navigator.gpu)return {ok:false,error:'navigator.gpu unavailable',contextInfo};
       const adapter=await navigator.gpu.requestAdapter();
-      if(!adapter)return {ok:false,error:'adapter unavailable'};
+      if(!adapter)return {ok:false,error:'adapter unavailable',contextInfo};
       const info=adapter.info?{vendor:adapter.info.vendor,architecture:adapter.info.architecture,device:adapter.info.device,description:adapter.info.description}:{};
       const device=await adapter.requestDevice();
       const canvas=document.querySelector('#c');
       const context=canvas.getContext('webgpu');
-      if(!context)return {ok:false,error:'webgpu context unavailable'};
+      if(!context)return {ok:false,error:'webgpu context unavailable',contextInfo};
       const format=navigator.gpu.getPreferredCanvasFormat();
       const usage=GPUTextureUsage;
       context.configure({device,format,alphaMode:'opaque',usage:usage.COPY_DST|usage.RENDER_ATTACHMENT});
@@ -53,14 +68,16 @@ app.commandLine.appendSwitch('disable-vulkan-surface');
       await device.queue.onSubmittedWorkDone();
       const elapsed=performance.now()-before;
       staging.destroy();
-      return {ok:true,rafAt,elapsed,format,adapter:info};
+      return {ok:true,rafAt,elapsed,format,adapter:info,contextInfo};
     })()`);
+    assert.equal(result?.contextInfo?.isSecureContext, true, `probe origin was not secure: ${JSON.stringify(result?.contextInfo)}`);
     assert.equal(result?.ok, true, result?.error || 'WebGPU staged presentation failed');
     assert.ok(Number.isFinite(result.rafAt));
     assert.ok(Number.isFinite(result.elapsed));
     console.log('LIBMPV_R2X_WEBGPU_STAGING_RUNTIME_OK', JSON.stringify(result));
   } finally {
     if (!win.isDestroyed()) win.destroy();
+    await new Promise(resolve => server.close(resolve));
     app.quit();
   }
 })().catch(error => {
