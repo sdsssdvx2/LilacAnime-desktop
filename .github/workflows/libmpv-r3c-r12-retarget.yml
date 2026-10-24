@@ -1,0 +1,44 @@
+name: Retarget R3C r12 finalizer
+
+on:
+  push:
+    branches: [libmpv-r3c-release-r12]
+    paths: [.github/workflows/libmpv-r3c-r12-retarget.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  retarget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: libmpv-r3c-release-r12
+          fetch-depth: 0
+      - name: Retarget exact test commit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path='.github/workflows/libmpv-r3c-r12-finalize.yml'
+          $old='R3C_TEST_SHA: b5016610948537da489903dc1af40b59079d4f92'
+          $new='R3C_TEST_SHA: 8f11871e8d685f45d4a62c90aa33dedc4e76c66a'
+          $text=Get-Content $path -Raw
+          $count=([regex]::Matches($text,[regex]::Escape($old))).Count
+          if($count -ne 1){throw "expected exactly one old test SHA, found $count"}
+          Set-Content $path -Value ($text.Replace($old,$new)) -NoNewline
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add $path
+          git commit -m 'ci: retarget R3C finalizer to command diagnostics test'
+          git push origin HEAD:libmpv-r3c-release-r12
+      - name: Dispatch full finalizer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run libmpv-r3c-r12-finalize.yml --repo "$GITHUB_REPOSITORY" --ref libmpv-r3c-release-r12
+          echo R3C_FINALIZER_DISPATCHED
