@@ -25,7 +25,7 @@ const r2uV2 = path.join(root, 'scripts', 'apply-libmpv-r2u-v2.cjs');
 const r2uLegacy = path.join(root, 'scripts', 'apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs');
 if (!fs.existsSync(r2uV2)) throw new Error('authoritative R2U v2 transform missing');
 const v2 = fs.readFileSync(r2uV2, 'utf8');
-for (const marker of ['VTT_FONT_FAMILIES', 'LilacMiniPlayerDiagnostics', "pkg.version='0.5.50-libmpv-r2u.rc1'"]) {
+for (const marker of ['VTT_FONT_FAMILIES', 'function libmpvSurface(', 'browserVisualBottom', "pkg.version='0.5.50-libmpv-r2u.rc1'", "pkg.lilacCustomTag='libmpv-r2k-v0.5.50-r4'"]) {
   if (!v2.includes(marker)) throw new Error(`R2U v2 marker missing: ${marker}`);
 }
 fs.writeFileSync(r2uLegacy, v2);
