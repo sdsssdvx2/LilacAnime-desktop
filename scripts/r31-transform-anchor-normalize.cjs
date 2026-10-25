@@ -22,10 +22,20 @@ replaceBlock('R31 state diagnostics fields', 'bridge', `bridge = replaceOnce(
   'R31 state diagnostics fields'
 );`);
 
+// R2B normalizes set_property to mpv input-command `set` inside a try/catch.
+// Anchor only the unique native command call so R31 remains compatible with the
+// existing error-reporting wrapper and invalidate after successful timing writes.
+replaceBlock('R31 invalidate state cache on timing commands', 'bridge', `bridge = replaceOnce(
+  bridge,
+  \`      addon.command(playerId, commandArray);\`,
+  \`      addon.command(playerId, commandArray);\\n      if (commandArray[0] === 'set' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\\n        r31LastPlaybackPollPerfMs = -Infinity;\\n      }\`,
+  'R31 invalidate state cache on timing commands'
+);`);
+
 replaceBlock('R31 renderer clock fields', 'renderer', `renderer = replaceOnce(
   renderer,
   \`    this._canvas = this._root.querySelector('canvas');\\n    this._time = 0;\\n    this._duration = 0;\`,
-  \`    this._canvas = this._root.querySelector('canvas');\\n    this._time = 0;\\n    this._stateClockTime = 0; // LILAC_R31_STATE_CLOCK\\n    this._stateSampleWallMs = 0;\\n    this._duration = 0;\`,
+  \`    this._canvas = this._root.querySelector('canvas');\\n    this._time = 0;\\n    this._r31StateClockMode = 'LILAC_R31_STATE_CLOCK';\\n    this._stateClockTime = 0;\\n    this._stateSampleWallMs = 0;\\n    this._duration = 0;\`,
   'R31 renderer clock fields'
 );`);
 
@@ -37,4 +47,4 @@ replaceBlock('R31 reset renderer clock', 'renderer', `renderer = replaceOnce(
 );`);
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R31_TRANSFORM_ANCHORS_OK state=spread-scoped constructor=canvas-scoped reset=method-scoped');
+console.log('R31_TRANSFORM_ANCHORS_OK state=spread-scoped command=native-call-scoped constructor=canvas-scoped bundleMarker=semantic reset=method-scoped');
