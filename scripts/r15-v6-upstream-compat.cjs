@@ -46,6 +46,12 @@ if (mode === 'apply') {
   let startup = state.tests['tests/startup.test.cjs'];
   startup = replaceOnce(
     startup,
+    "constructor() { super(); windows.push(this); this.webContents = { send() {}, id: windows.length }; }",
+    "constructor() { super(); windows.push(this); this.webContents = { send() {}, once() {}, isDestroyed: () => false, mainFrame: {}, id: windows.length }; }",
+    'startup webContents lifecycle sandbox fixture'
+  );
+  startup = replaceOnce(
+    startup,
     "require: name => name === 'electron' ? electron : name === './updater.cjs' ? load(path.resolve(__dirname, '../electron/updater.cjs')) : realRequire(name),",
     "require: name => name === 'electron' ? electron : name === './updater.cjs' ? load(path.resolve(__dirname, '../electron/updater.cjs')) : name === './libmpv-shared-main.cjs' ? { createLibmpvSharedBridge: () => ({ ensure: async () => ({ ok: true }), attachWindow: async () => ({ ok: true }), dispose: async () => {} }) } : realRequire(name),",
     'startup libmpv bridge sandbox fixture'
@@ -55,7 +61,7 @@ if (mode === 'apply') {
   for (const file of productFiles) {
     if (sha256(file) !== state.productHashes[file]) throw new Error(`qualification helper changed product file: ${file}`);
   }
-  console.log('R3F_R15_V6_UPSTREAM_COMPAT_APPLY nativeVtt=100x50 startupBridgeStub=1 productSource=unchanged');
+  console.log('R3F_R15_V6_UPSTREAM_COMPAT_APPLY nativeVtt=100x50 startupBridgeStub=1 startupWebContentsLifecycle=1 productSource=unchanged');
 } else if (mode === 'restore') {
   if (!fs.existsSync(statePath)) throw new Error(`compatibility state missing: ${statePath}`);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
