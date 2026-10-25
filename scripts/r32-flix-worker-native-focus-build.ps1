@@ -39,6 +39,10 @@ if (-not $nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native
 if ($nativeSource -notmatch 'producerCv\.wait_for\([\s\S]{0,240}?std::chrono::milliseconds\(250\)') { throw 'R32 native producer 250ms watchdog waiter missing' }
 if ($nativeSource -match 'producerCv\.wait_for\([\s\S]{0,240}?std::chrono::milliseconds\(6\)') { throw 'R32 legacy native producer 6ms waiter survived' }
 '@
+# Here-string above is deliberately normalized after construction because PowerShell
+# single-quoted here-strings do not consume backslashes. The generated gate must have
+# one regex escape, not two.
+$newNativeGates = $newNativeGates.Replace('\\','\')
 $core = $core.Substring(0, $legacyGateStart) + $newNativeGates + $core.Substring($legacyGateEnd)
 
 $core = Replace-Once $core `
@@ -54,19 +58,22 @@ $core = Replace-Once $core `
 # Strengthen the existing source qualification so a green build also proves the
 # producer thread no longer touches HWND geometry/visibility and renderer geometry
 # contains physical x/y for the exact video element rather than whole BrowserWindow.
-$core = Replace-Once $core `
-  "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000'" `
-  ("`$entry = Get-Content 'src/libmpv-shared-entry.js' -Raw" + "`n" +
+$extraGates = ("`$entry = Get-Content 'src/libmpv-shared-entry.js' -Raw" + "`n" +
    "`$appSource = Get-Content 'src/app.js' -Raw" + "`n" +
    "if (`$nativeSource -notmatch 'LILAC_R32_PRESENTER_BOUNDS_MAIN_THREAD' -or `$nativeSource -notmatch 'SetNativePresenterBounds') { throw 'R32 bounded presenter source gate failed' }" + "`n" +
    "`$presentStart = `$nativeSource.IndexOf('void R32PresentNativeFrame('); `$presentEnd = `$nativeSource.IndexOf('napi_value ConfigureNativePresenter(', `$presentStart)" + "`n" +
    "if (`$presentStart -lt 0 -or `$presentEnd -le `$presentStart) { throw 'R32 presenter hotpath audit boundary missing' }" + "`n" +
    "`$presentBody = `$nativeSource.Substring(`$presentStart, `$presentEnd - `$presentStart)" + "`n" +
-   "if (`$presentBody -match 'SetWindowPos\\(' -or `$presentBody -match 'ShowWindow\\(' -or `$presentBody -match 'GetClientRect\\(') { throw 'R32 producer thread still mutates HWND state' }" + "`n" +
+   "if (`$presentBody -match 'SetWindowPos\(' -or `$presentBody -match 'ShowWindow\(' -or `$presentBody -match 'GetClientRect\(') { throw 'R32 producer thread still mutates HWND state' }" + "`n" +
    "if (`$bridge -notmatch 'setNativePresenterBounds' -or `$bridge -notmatch 'r32SyncNativePresenterBounds' -or `$bridge -notmatch 'sub-visibility.*useNative') { throw 'R32 bounds/subtitle bridge gate failed' }" + "`n" +
-   "if (`$entry -notmatch 'LILAC_R32_NATIVE_SUBTITLE_FALLBACK' -or `$entry -notmatch 'rect\\.left \\* dpr' -or `$entry -notmatch 'rect\\.top \\* dpr' -or `$entry -notmatch 'sub-add') { throw 'R32 video-rect/native-subtitle renderer gate failed' }" + "`n" +
+   "if (`$entry -notmatch 'LILAC_R32_NATIVE_SUBTITLE_FALLBACK' -or `$entry -notmatch 'rect\.left \* dpr' -or `$entry -notmatch 'rect\.top \* dpr' -or `$entry -notmatch 'sub-add') { throw 'R32 video-rect/native-subtitle renderer gate failed' }" + "`n" +
    "if (`$appSource -notmatch 'lilacNativePath') { throw 'R32 native subtitle source path gate failed' }" + "`n" +
-   "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000 videoRect=physical hwndOps=main-only subtitleFallback=libmpv-unfocused'") `
+   "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000 videoRect=physical hwndOps=main-only subtitleFallback=libmpv-unfocused'")
+# Same normalization for regex fragments embedded in PowerShell double-quoted strings.
+$extraGates = $extraGates.Replace('\\','\')
+$core = Replace-Once $core `
+  "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000'" `
+  $extraGates `
   'R32 strengthen source qualification'
 
 $tempScript = Join-Path $env:RUNNER_TEMP 'r32-watchdog-qualified-build.ps1'
