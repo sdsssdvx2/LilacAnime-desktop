@@ -91,8 +91,7 @@ jobs:
           p.version=process.env.APP_VERSION;p.build=p.build||{};p.build.appId=process.env.STABLE_APP_ID;p.build.productName=process.env.STABLE_PRODUCT_NAME;p.build.win=p.build.win||{};p.build.win.executableName=process.env.PREPACKAGED_EXE_BASE;p.build.win.target='nsis';p.build.win.artifactName='LilacAnime-Libmpv-Setup.${ext}';p.build.nsis={...(p.build.nsis||{}),oneClick:false,allowToChangeInstallationDirectory:true,createDesktopShortcut:'always',createStartMenuShortcut:true,shortcutName:process.env.STABLE_SHORTCUT_NAME,uninstallDisplayName:process.env.STABLE_PRODUCT_NAME,include:'build/stable-installer.nsh'};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');
           '@|node
           if($LASTEXITCODE -ne 0){throw 'stable metadata patch failed'}
-          $old=Get-Content build/installer.nsh -Raw
-          $prefix=@'
+          $hooks=@'
           !macro preInit
             ReadEnvStr $0 "LILAC_INSTALL_ROOT"
             StrCmp $0 "" 0 lilacStableRootReady
@@ -115,9 +114,10 @@ jobs:
             Delete "$DESKTOP\LilacAnime Libmpv R2J Subtitle Fix.lnk"
           !macroend
           '@
-          Set-Content build/stable-installer.nsh -Value ($prefix+$old) -Encoding utf8
+          Set-Content build/stable-installer.nsh -Value $hooks -Encoding utf8
           $p=Get-Content package.json -Raw|ConvertFrom-Json;if($p.name -ne 'lilacanime-desktop' -or $p.build.appId -ne $env:STABLE_APP_ID -or $p.build.nsis.shortcutName -ne $env:STABLE_SHORTCUT_NAME -or $p.build.win.executableName -ne $env:PREPACKAGED_EXE_BASE){throw 'stable identity verification failed'}
-          Write-Host "R16_INSTALL_IDENTITY_OK visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' appExe=$($env:PREPACKAGED_EXE_NAME) profile=lilacanime-desktop"
+          $nsh=Get-Content build/stable-installer.nsh -Raw;if($nsh.Contains('customUnWelcomePage') -or $nsh.Contains('BUILD_UNINSTALLER')){throw 'stable hook include unexpectedly contains nested uninstall macros'}
+          Write-Host "R16_INSTALL_IDENTITY_OK visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' appExe=$($env:PREPACKAGED_EXE_NAME) profile=lilacanime-desktop hooks=standalone"
 
       - name: Build installer around exact R15 application
         shell: powershell
