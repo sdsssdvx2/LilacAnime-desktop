@@ -14,18 +14,10 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
   return $Source.Replace($Needle,$Replacement)
 }
 
-$needle = @'
-  'r32-flix-worker-smoke.cjs',
-  'r32-native-presenter-smoke.cjs'
-)
-'@
-$replacement = @'
-  'r32-flix-worker-smoke.cjs',
-  'r32-native-presenter-smoke.cjs',
-  'r32-native-producer-watchdog-smoke.cjs'
-)
-'@
-$core = Replace-Once $core $needle $replacement 'R32 watchdog smoke support list'
+$core = Replace-Once $core `
+  "  'r32-native-presenter-smoke.cjs'" `
+  ("  'r32-native-presenter-smoke.cjs'," + "`n" + "  'r32-native-producer-watchdog-smoke.cjs'") `
+  'R32 watchdog smoke support entry'
 
 $core = Replace-Once $core `
   '& node_modules/.bin/electron.cmd scripts/smoke-libmpv-r3e-native-producer.cjs' `
