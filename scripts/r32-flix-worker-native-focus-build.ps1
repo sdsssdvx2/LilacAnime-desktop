@@ -16,12 +16,12 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 
 $core = Replace-Once $core `
   "  'r32-native-presenter-smoke.cjs'" `
-  ("  'r32-native-presenter-smoke.cjs'," + "`n" + "  'r32-native-producer-watchdog-smoke.cjs'," + "`n" + "  'r32-presenter-bounds-subtitle-fix.cjs'") `
+  ("  'r32-native-presenter-smoke.cjs'," + "`n" + "  'r32-native-producer-watchdog-smoke.cjs'," + "`n" + "  'r32-presenter-bounds-subtitle-fix.cjs'," + "`n" + "  'r32-presenter-safety-source-sanitize.cjs'") `
   'R32 watchdog/safety support entry'
 
 $core = Replace-Once $core `
   "node scripts/r32-flix-worker-native-focus-fix.cjs`nAssert-Exit 'R32 transform'" `
-  ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
+  ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer syntax'" + "`n" + "node scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
   'R32 apply presenter safety pass'
 
 $core = Replace-Once $core `
