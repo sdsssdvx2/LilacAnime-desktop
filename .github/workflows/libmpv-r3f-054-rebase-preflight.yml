@@ -8,6 +8,7 @@ on:
       - scripts/r3f-054-rebase-preflight.cjs
       - scripts/r3f-port-r2q-tenrai-0554.cjs
       - scripts/r3f-bridge-r2r-metadata-0554.cjs
+      - scripts/r3f-patch-r2t-transform-0554.cjs
   workflow_dispatch:
 
 concurrency:
@@ -36,10 +37,13 @@ jobs:
           $ErrorActionPreference='Stop'
           $r2qPort=Join-Path $env:RUNNER_TEMP 'r3f-port-r2q-tenrai-0554.cjs'
           $r2rBridge=Join-Path $env:RUNNER_TEMP 'r3f-bridge-r2r-metadata-0554.cjs'
+          $r2tPatch=Join-Path $env:RUNNER_TEMP 'r3f-patch-r2t-transform-0554.cjs'
           Copy-Item scripts/r3f-port-r2q-tenrai-0554.cjs $r2qPort -Force
           Copy-Item scripts/r3f-bridge-r2r-metadata-0554.cjs $r2rBridge -Force
+          Copy-Item scripts/r3f-patch-r2t-transform-0554.cjs $r2tPatch -Force
           "R3F_R2Q_PORT=$r2qPort"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "R3F_R2R_BRIDGE=$r2rBridge"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "R3F_R2T_PATCH=$r2tPatch"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           node scripts/r3f-054-rebase-preflight.cjs
           if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
           node --check scripts/apply-libmpv-r2m-finalize.cjs
@@ -129,6 +133,10 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          node --check $env:R3F_R2T_PATCH
+          if($LASTEXITCODE -ne 0){throw 'R3F R2T patcher syntax failed'}
+          node $env:R3F_R2T_PATCH
+          if($LASTEXITCODE -ne 0){throw 'R3F R2T transform patch failed'}
           node --check scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs
           if($LASTEXITCODE -ne 0){throw 'R2T syntax failed'}
           node scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs
