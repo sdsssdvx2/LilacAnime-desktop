@@ -111,11 +111,14 @@ preload = replaceOnce(
   'R28 receiver diagnostics fields'
 );
 
-bridge = replaceOnce(
-  bridge,
-  `        lastGpuError: payload?.lastGpuError ? String(payload.lastGpuError).slice(0, 160) : null,\n        lastFrameAt: numeric('lastFrameAt'),`,
-  `        lastGpuError: payload?.lastGpuError ? String(payload.lastGpuError).slice(0, 160) : null,\n        r28FocusSafePlayback: payload?.r28FocusSafePlayback ? String(payload.r28FocusSafePlayback).slice(0, 64) : null,\n        r28DirectFrames: numeric('r28DirectFrames'),\n        r28FocusStagedFrames: numeric('r28FocusStagedFrames'),\n        r28FocusStagingFailures: numeric('r28FocusStagingFailures'),\n        r28LastPresentationPath: payload?.r28LastPresentationPath ? String(payload.r28LastPresentationPath).slice(0, 64) : null,\n        lastFrameAt: numeric('lastFrameAt'),`,
-  'bridge R28 renderer diagnostics parser'
+// Do not depend on the older bridge receiverStats schema for R28 proof. R26/R27
+// already has an on-demand renderer diagnostic snapshot, so expose R28 counters
+// directly there. This also avoids any extra per-frame IPC or parser coupling.
+preload = replaceOnce(
+  preload,
+  `    worstTransportFrameId: r26WorstTransportFrameId,\n    r27: {`,
+  `    worstTransportFrameId: r26WorstTransportFrameId,\n    r28: {\n      focusSafePlayback: 'LILAC_R28_FOCUS_SAFE_PLAYBACK',\n      directFrames: r28DirectFrames,\n      focusStagedFrames: r28FocusStagedFrames,\n      focusStagingFailures: r28FocusStagingFailures,\n      lastPresentationPath: r28LastPresentationPath\n    },\n    r27: {`,
+  'R28 on-demand renderer trace diagnostics'
 );
 
 write('electron/libmpv-shared-main.cjs', bridge);
@@ -146,7 +149,7 @@ for (const marker of [
 }
 for (const marker of [
   'LILAC_R28_FOCUS_SAFE_PLAYBACK', 'r28FocusStagingTexture', 'focus-staged-gpu-copy',
-  'copyExternalImageToTexture', 'copyTextureToTexture', 'r28FocusStagedFrames'
+  'copyExternalImageToTexture', 'copyTextureToTexture', 'r28FocusStagedFrames', 'focusStagingFailures'
 ]) {
   if (!finalPreload.includes(marker) || !bundled.includes(marker)) throw new Error(`R28 preload marker missing: ${marker}`);
 }
