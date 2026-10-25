@@ -3,7 +3,6 @@ $ErrorActionPreference = 'Stop'
 # eab226b is the fully reviewed R32 build core with the presenter-smoke callback
 # fix in its history and BOM-free package/manifest writes. Keep that exact core
 # and change only the producer qualification plus the final presenter safety pass.
-# The safety sanitizer rewrites _surfaceSize by method boundaries and emits plain-string diagnostics.
 $baseCommit = 'eab226b788528253da08225d7ca2de8935e1bf39'
 $core = (& git show "$baseCommit`:scripts/r32-flix-worker-native-focus-build.ps1") -join "`n"
 if ($LASTEXITCODE -ne 0 -or -not $core) { throw 'R32 fixed build core could not be loaded' }
@@ -25,18 +24,22 @@ $core = Replace-Once $core `
   ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer syntax'" + "`n" + "node scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
   'R32 apply presenter safety pass'
 
-# The original R32 core had one opaque four-term regex gate. The final safety pass
-# deliberately rewrites presenter source structure, so keep the same semantic
-# requirements but make each one explicit. Runtime cadence is additionally proved
-# by the 750ms callback-authority smoke below, rather than relying only on text.
-$core = Replace-Once $core `
-  "if (`$nativeSource -notmatch 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE' -or `$nativeSource -notmatch 'R32PresentNativeFrame' -or `$nativeSource -notmatch 'ConfigureNativePresenter' -or `$nativeSource -notmatch 'std::chrono::milliseconds\\(250\\)') { throw 'R32 native focus/watchdog source gate failed' }" `
-  ("if (-not `$nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }" + "`n" +
-   "if (-not `$nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }" + "`n" +
-   "if (-not `$nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }" + "`n" +
-   "if (-not `$nativeSource.Contains('LILAC_R32_NATIVE_CALLBACK_WATCHDOG')) { throw 'R32 native producer watchdog marker missing' }" + "`n" +
-   "if (-not `$nativeSource.Contains('std::chrono::milliseconds(250)')) { throw 'R32 native producer 250ms watchdog literal missing' }") `
-  'R32 split native focus/watchdog source gate'
+# Replace the old opaque four-term source gate structurally. Matching the complete
+# regex line is intentionally avoided because PowerShell/JSON escaping of \(250\)
+# is irrelevant to product semantics and caused a false wrapper failure.
+$legacyGatePrefix = "if (`$nativeSource -notmatch 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE'"
+$legacyGateStart = $core.IndexOf($legacyGatePrefix)
+if ($legacyGateStart -lt 0) { throw 'R32 legacy native source gate prefix missing' }
+$legacyGateEnd = $core.IndexOf("`n", $legacyGateStart)
+if ($legacyGateEnd -lt 0) { $legacyGateEnd = $core.Length } else { $legacyGateEnd += 1 }
+$newNativeGates = @'
+if (-not $nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }
+if (-not $nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }
+if (-not $nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }
+if (-not $nativeSource.Contains('LILAC_R32_NATIVE_CALLBACK_WATCHDOG')) { throw 'R32 native producer watchdog marker missing' }
+if (-not $nativeSource.Contains('std::chrono::milliseconds(250)')) { throw 'R32 native producer 250ms watchdog literal missing' }
+'@
+$core = $core.Substring(0, $legacyGateStart) + $newNativeGates + $core.Substring($legacyGateEnd)
 
 $core = Replace-Once $core `
   '& node_modules/.bin/electron.cmd scripts/smoke-libmpv-r3e-native-producer.cjs' `
