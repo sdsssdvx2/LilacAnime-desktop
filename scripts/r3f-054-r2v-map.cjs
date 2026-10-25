@@ -51,6 +51,7 @@ function tempCopy(relative) {
 
 // These branch-only compatibility helpers must survive the preflight's deliberate
 // checkout to the pinned historical tooling commit.
+const sharedBasePort = tempCopy('scripts/r3f-port-libmpv-shared-base-0554.cjs');
 const r2qPort = tempCopy('scripts/r3f-port-r2q-tenrai-0554.cjs');
 const r2rBridge = tempCopy('scripts/r3f-bridge-r2r-metadata-0554.cjs');
 const r2tPrep = tempCopy('scripts/r3f-patch-r2t-transform-0554.cjs');
@@ -58,6 +59,21 @@ const r2tPrep = tempCopy('scripts/r3f-patch-r2t-transform-0554.cjs');
 runNode('scripts/r3f-054-rebase-preflight.cjs', 'R3F_BASE_TO_R2M');
 runNode('scripts/apply-libmpv-r2m-finalize.cjs', 'R2M_FINALIZE');
 identity('0.5.49-libmpv-r2m.rc2', 'libmpv-r2k-v0.5.49-r4', 'R2M');
+
+// The old preflight intentionally kept upstream main/preload/index/app byte-identical
+// and therefore skipped the original shared-texture integration transform. Restore
+// that runtime wiring now, after all R2M module transforms and before any later UI work.
+runNode(sharedBasePort, 'SHARED_BASE_0554_PORT');
+identity('0.5.49-libmpv-r2m.rc2', 'libmpv-r2k-v0.5.49-r4', 'R2M_SHARED_BASE');
+markers(read('electron/main.cjs'), [
+  'LILAC_LIBMPV_SHARED_SOURCE_PATCH',
+  'createLibmpvSharedBridge({',
+  'await libmpvShared.ensure()',
+  'await libmpvShared.attachWindow(win)'
+], 'R2M shared main');
+markers(read('electron/preload.cjs'), ['libmpvSharedOpen','libmpvSharedDiagnostics'], 'R2M shared preload');
+markers(read('src/index.html'), ['<lilac-mpv-video id="video"','libmpv-shared.generated.js'], 'R2M shared renderer');
+preserve054('R2M_SHARED_BASE');
 
 runNode('scripts/apply-libmpv-r2n-webgpu-pip.cjs', 'R2N');
 preserve054('R2N');
@@ -106,9 +122,11 @@ markers(r2vPlayer, [
   'File colours/italics are content semantics'
 ], 'R2V player');
 assert(!r2vPlayer.includes("localStorage.setItem('vttStyle','false')"), 'R2V readability preset disables file styles');
-markers(read('electron/preload.cjs'), ["runtimeBridgeVersion: 'r2v'"], 'R2V preload');
-markers(read('electron/main.cjs'), ["mode==='__lilac_miniplayer_on__'"], 'R2V main fallback');
+markers(read('electron/preload.cjs'), ["runtimeBridgeVersion: 'r2v'", 'libmpvSharedOpen'], 'R2V preload');
+markers(read('electron/main.cjs'), ["mode==='__lilac_miniplayer_on__'", 'createLibmpvSharedBridge({'], 'R2V main fallback');
 markers(read('src/libmpv-shared-entry.js'), [' : 1.3;'], 'R2V overlay line-height');
+markers(read('electron/preload-libmpv-shared.generated.cjs'), ['setSharedTextureReceiver','libmpvSharedOpen'], 'R2V generated preload');
+markers(read('src/libmpv-shared.generated.js'), ['lilac-mpv-video'], 'R2V generated renderer');
 preserve054('R2V', { tenrai: true });
 
-console.log('R3F_0554_R2V_MAP_OK chain=R2M-R2N-R2P-R2Q-R2R-R2S-R2T-R2U-v2-R2V');
+console.log('R3F_0554_R2V_MAP_OK chain=R2M-shared-base-R2N-R2P-R2Q-R2R-R2S-R2T-R2U-v2-R2V runtimeWiring=verified');
