@@ -1,0 +1,89 @@
+name: Generate LilacAnime libmpv R3F 0.5.54 r15 finalizer v6
+
+on:
+  push:
+    branches: [libmpv-r3f-054-release-r15]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r15-generate-v6.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: libmpv-r3f-054-release-r15
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate v6 without changing product source
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const sourcePath = '.github/workflows/libmpv-r3f-054-r15-finalize-v5.yml';
+          const targetPath = '.github/workflows/libmpv-r3f-054-r15-finalize-v6.yml';
+          let text = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n');
+          text = text.replaceAll('V5', 'V6').replaceAll('v5', 'v6');
+          function replaceOnce(needle, replacement, label) {
+            const count = text.split(needle).length - 1;
+            if (count !== 1) throw new Error(`${label}: expected one anchor, found ${count}`);
+            text = text.replace(needle, replacement);
+          }
+          replaceOnce(
+            '          git checkout --detach $env:QUALIFIED_SOURCE_SHA',
+            [
+              "          $compatHelper=Join-Path $env:RUNNER_TEMP 'r15-v6-upstream-compat.cjs'",
+              '          Copy-Item scripts/r15-v6-upstream-compat.cjs $compatHelper -Force',
+              '          node --check $compatHelper',
+              "          if($LASTEXITCODE -ne 0){throw 'v6 compatibility helper syntax failed'}",
+              '          "R15_V6_COMPAT_HELPER=$compatHelper"|Out-File $env:GITHUB_ENV -Append -Encoding utf8',
+              '          git checkout --detach $env:QUALIFIED_SOURCE_SHA'
+            ].join('\n'),
+            'pre-checkout helper retention'
+          );
+          replaceOnce(
+            "            try {\n              $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName})",
+            [
+              '            try {',
+              '              & node $env:R15_V6_COMPAT_HELPER apply',
+              "              if($LASTEXITCODE -ne 0){throw 'upstream compatibility apply failed'}",
+              "              $tests=@(Get-ChildItem tests -File -Filter '*.test.cjs'|Sort-Object Name|ForEach-Object{$_.FullName})"
+            ].join('\n'),
+            'upstream compatibility apply hook'
+          );
+          replaceOnce(
+            '            } finally {if($patched){Set-Content $test -Value $original -NoNewline}}',
+            [
+              '            } finally {',
+              '              if($patched){Set-Content $test -Value $original -NoNewline}',
+              '              & node $env:R15_V6_COMPAT_HELPER restore',
+              "              if($LASTEXITCODE -ne 0){throw 'upstream compatibility restore failed'}",
+              '            }'
+            ].join('\n'),
+            'upstream compatibility restore hook'
+          );
+          replaceOnce(
+            "keySmokeCompat='upstream-0.5.54-showSeekHint-sandbox-only'",
+            "keySmokeCompat='upstream-0.5.54-showSeekHint-sandbox-only';upstreamTestCompat='r2v-vtt92+sharedTexture-startup-sandbox-only'",
+            'manifest compatibility attestation'
+          );
+          replaceOnce(
+            "-or $m.keySmokeCompat -ne 'upstream-0.5.54-showSeekHint-sandbox-only'",
+            "-or $m.keySmokeCompat -ne 'upstream-0.5.54-showSeekHint-sandbox-only' -or $m.upstreamTestCompat -ne 'r2v-vtt92+sharedTexture-startup-sandbox-only'",
+            'published manifest compatibility verification'
+          );
+          fs.writeFileSync(targetPath, text);
+          console.log('R3F_R15_V6_WORKFLOW_GENERATED productSource=unchanged testCompat=sandbox-only');
+          NODE
+          git diff --check
+          git add .github/workflows/libmpv-r3f-054-r15-finalize-v6.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "ci: add r15 release finalizer v6"
+          git push origin HEAD:libmpv-r3f-054-release-r15
