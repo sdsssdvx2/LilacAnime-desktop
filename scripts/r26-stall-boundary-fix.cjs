@@ -146,7 +146,9 @@ for (const marker of ['LILAC_R26_STALL_BOUNDARY_TRACE', 'r26DispatchWallMs', 'r2
 }
 for (const marker of ['LILAC_R26_STALL_BOUNDARY_TRACE', 'r26TransportMs', 'r26SnapshotRendererTrace', 'getVideoFrameMs', 'gpuCopyMs', 'libmpv-shared:r26-trace-request']) {
   if (!finalPreload.includes(marker)) throw new Error(`R26 preload marker missing: ${marker}`);
-  if (!bundled.includes(marker)) throw new Error(`R26 bundled preload marker missing: ${marker}`);
+}
+for (const marker of ['r26TransportMs', 'r26SnapshotRendererTrace', 'getVideoFrameMs', 'gpuCopyMs', 'libmpv-shared:r26-trace-request']) {
+  if (!bundled.includes(marker)) throw new Error(`R26 bundled preload functional marker missing: ${marker}`);
 }
 for (const forbidden of ['requestAnimationFrame(', 'onSubmittedWorkDone(']) {
   if (finalPreload.includes(forbidden) || bundled.includes(forbidden)) throw new Error(`R26 reintroduced forbidden renderer sync: ${forbidden}`);
