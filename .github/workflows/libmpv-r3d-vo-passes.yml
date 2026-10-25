@@ -15,7 +15,7 @@ permissions:
 
 env:
   R3D_PRODUCT_SHA: 79eb1e6bee586e3b3168ab592ca08cc45b8a3470
-  R3D_TEST_SHA: a1fadc3f9bf32d0dcb448d993f101686045d230b
+  R3D_TEST_SHA: 97cac75310c4e7ad042eab67092120a9c3feaa53
   UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
   ELECTRON_VERSION: 44.9.3
   LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
