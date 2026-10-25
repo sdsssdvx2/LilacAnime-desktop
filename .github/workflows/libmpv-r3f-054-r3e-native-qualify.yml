@@ -14,6 +14,7 @@ on:
       - scripts/r3f-port-r2q-tenrai-0554.cjs
       - scripts/r3f-bridge-r2r-metadata-0554.cjs
       - scripts/r3f-patch-r2t-transform-0554.cjs
+      - scripts/run-electron-native-smoke.cjs
   workflow_dispatch:
 
 concurrency:
@@ -140,33 +141,14 @@ jobs:
           $ErrorActionPreference='Stop'
           $electron=$env:ELECTRON_SMOKE_EXE
           if(-not $electron -or !(Test-Path $electron)){throw 'Electron smoke runtime missing'}
-          $env:ELECTRON_RUN_AS_NODE='1'
-          function Invoke-NativeSmoke([string]$script,[string]$okMarker,[int]$timeoutSec=180){
-            $safe=($script -replace '[^A-Za-z0-9_.-]','_')
-            $out=Join-Path $env:RUNNER_TEMP "$safe.out.log"
-            $err=Join-Path $env:RUNNER_TEMP "$safe.err.log"
-            $p=Start-Process -FilePath $electron -ArgumentList @($script) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
-            if(-not $p.WaitForExit($timeoutSec * 1000)){
-              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-              throw "$script timed out"
-            }
-            $exitCode=$p.ExitCode
-            $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
-            $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
-            Write-Host "===== $script ====="
-            Write-Host $stdout
-            if($stderr){Write-Host $stderr}
-            if($exitCode -ne 0){throw "$script failed exit=$exitCode"}
-            if($stdout -notmatch [regex]::Escape($okMarker)){throw "$script missing $okMarker"}
-          }
-          try{
-            Invoke-NativeSmoke 'scripts/smoke-libmpv-r3b-update-callback.cjs' 'LIBMPV_R3B_UPDATE_CALLBACK_OK' 180
-            Invoke-NativeSmoke 'scripts/smoke-libmpv-r3d-native-timing.cjs' 'LIBMPV_R3D_NATIVE_TIMING_OK' 180
-            Invoke-NativeSmoke 'scripts/smoke-libmpv-native-command-roundtrip.cjs' 'LIBMPV_NATIVE_COMMAND_ROUNDTRIP_OK' 180
-            Invoke-NativeSmoke 'scripts/smoke-libmpv-native-retention-fhd.cjs' 'LIBMPV_NATIVE_RETENTION_FHD_AB_OK' 240
-          } finally {
-            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          }
+          node scripts/run-electron-native-smoke.cjs $electron scripts/smoke-libmpv-r3b-update-callback.cjs LIBMPV_R3B_UPDATE_CALLBACK_OK 180
+          if($LASTEXITCODE -ne 0){throw 'R3B callback smoke runner failed'}
+          node scripts/run-electron-native-smoke.cjs $electron scripts/smoke-libmpv-r3d-native-timing.cjs LIBMPV_R3D_NATIVE_TIMING_OK 180
+          if($LASTEXITCODE -ne 0){throw 'R3D timing smoke runner failed'}
+          node scripts/run-electron-native-smoke.cjs $electron scripts/smoke-libmpv-native-command-roundtrip.cjs LIBMPV_NATIVE_COMMAND_ROUNDTRIP_OK 180
+          if($LASTEXITCODE -ne 0){throw 'native command smoke runner failed'}
+          node scripts/run-electron-native-smoke.cjs $electron scripts/smoke-libmpv-native-retention-fhd.cjs LIBMPV_NATIVE_RETENTION_FHD_AB_OK 240
+          if($LASTEXITCODE -ne 0){throw 'native retention smoke runner failed'}
           Write-Host 'R3F_0554_RETAINED_NATIVE_SMOKES_OK callback=1 timing=1 command=1 retention=1'
 
       - name: Run corrected R3E producer qualification three times
@@ -175,27 +157,10 @@ jobs:
           $ErrorActionPreference='Stop'
           $electron=$env:ELECTRON_SMOKE_EXE
           if(-not $electron -or !(Test-Path $electron)){throw 'Electron smoke runtime missing'}
-          $env:ELECTRON_RUN_AS_NODE='1'
-          try {
-            for($i=1;$i -le 3;$i++){
-              $out=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.out.log"
-              $err=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.err.log"
-              $p=Start-Process -FilePath $electron -ArgumentList @('scripts/smoke-libmpv-r3e-native-producer.cjs') -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
-              if(-not $p.WaitForExit(180000)){
-                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-                throw "R3E smoke iteration $i deadlocked"
-              }
-              $exitCode=$p.ExitCode
-              $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
-              $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
-              Write-Host "===== R3F_R3E_ITERATION_$i ====="
-              Write-Host $stdout
-              if($stderr){Write-Host $stderr}
-              if($exitCode -ne 0){throw "R3E smoke iteration $i failed exit=$exitCode"}
-              if($stdout -notmatch 'LIBMPV_R3E_NATIVE_PRODUCER_OK'){throw "R3E iteration $i missing OK marker"}
-            }
-          } finally {
-            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          for($i=1;$i -le 3;$i++){
+            Write-Host "===== R3F_R3E_ITERATION_$i ====="
+            node scripts/run-electron-native-smoke.cjs $electron scripts/smoke-libmpv-r3e-native-producer.cjs LIBMPV_R3E_NATIVE_PRODUCER_OK 180
+            if($LASTEXITCODE -ne 0){throw "R3E smoke iteration $i failed"}
           }
           Write-Host 'R3F_0554_R3E_NATIVE_PRODUCER_3X_OK'
 
@@ -207,7 +172,6 @@ jobs:
           if($pkg.version -ne '0.5.50-libmpv-r3e.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r14'){throw 'post-smoke R3E identity mismatch'}
           $preload=Get-Content electron/libmpv-shared-preload.cjs -Raw
           foreach($m in @('stagingTexture','copyTextureToTexture','ensureGpuPresentLoop','GPU_PRESENT_IDLE_STOP_MS','requestAnimationFrame(')){if($preload.Contains($m)){throw "post-smoke presenter regression: $m"}}
-          $main=Get-Content electron/main.cjs -Raw
           foreach($m in @('playerSeekHint','controlsOnPlaying','showSeekHint')){
             $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
             if(-not $combined.Contains($m)){throw "post-smoke upstream marker missing: $m"}
