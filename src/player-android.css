@@ -132,6 +132,14 @@
 #video::-webkit-media-text-track-display { padding-inline: 5%; box-sizing: border-box; }
 .player-speed-boost { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 8px 18px; border-radius: 20px; background: #000b; color: #fff; font-weight: 700; pointer-events: none; }
 .player-speed-boost.hidden { display: none; }
+/* ← / → seek hint: at the side the seek went (0-9: the middle), gone by itself in under a second. */
+.player-seek-hint { position: absolute; top: 50%; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 18px; border-radius: 16px; background: #000a; color: #fff; pointer-events: none; opacity: 0; transform: translateY(-50%); transition: opacity .25s; }
+.player-seek-hint.back { left: 12%; }
+.player-seek-hint.forward { right: 12%; }
+.player-seek-hint.jump { left: 50%; transform: translate(-50%, -50%); }
+.player-seek-hint.show { opacity: 1; transition: opacity .08s; }
+.player-seek-hint b { font-size: 18px; }
+.player-seek-hint span { font-size: 12px; color: #fffc; font-variant-numeric: tabular-nums; }
 
 /* Picture-in-picture source: composed frames with subtitles; it only has to exist in the page. */
 .pip-source { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }

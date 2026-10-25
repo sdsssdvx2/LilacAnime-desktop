@@ -416,6 +416,18 @@ function seekPlayer(time) {
   autoSkipState.manualSeekTime = time;
   $('#video').currentTime = time;
 }
+// ← / → and 0-9 say where they went with a small hint at that side of the picture (presses in a row add up: +30초)
+// instead of bringing up the whole control bar over the episode.
+let seekHint = null;
+function showSeekHint(seconds, time) {
+  const el = $('#playerSeekHint'); if (!el) return;
+  const now = Date.now(), side = seconds == null ? 'jump' : seconds < 0 ? 'back' : 'forward';
+  const total = side !== 'jump' && seekHint?.side === side && now - seekHint.at < 1000 ? seekHint.total + seconds : seconds;
+  clearTimeout(seekHint?.timer);
+  el.replaceChildren(...(side === 'jump' ? [] : [Object.assign(document.createElement('b'), { textContent: `${total > 0 ? '+' : '−'}${Math.abs(total)}초` })]), Object.assign(document.createElement('span'), { textContent: formatTime(time) }));
+  el.className = `player-seek-hint ${side}`; void el.offsetWidth; el.classList.add('show');
+  seekHint = { side, total, at: now, timer: setTimeout(() => { el.classList.remove('show'); seekHint = null; }, 800) };
+}
 function resetAutoSkipState() {
   Object.assign(autoSkipState, { enteredKey: null, enteredAt: 0, pausedAt: null, skippedKey: null, manualSeekTime: null });
 }
@@ -722,7 +734,8 @@ function handlePlayerKey(event) {
   if (arrow === 'left' || arrow === 'right') {
     event.preventDefault();
     const seconds = Number(localStorage.getItem('seekSeconds') || 10) * (arrow === 'left' ? -1 : 1);
-    seekPlayer(Math.min(video.duration || Infinity, Math.max(0, video.currentTime + seconds))); showPlayerControls(); return;
+    const target = Math.min(video.duration || Infinity, Math.max(0, video.currentTime + seconds));
+    seekPlayer(target); showSeekHint(seconds, target); return;
   }
   // Up / down: the volume by 5 % (설정 > 재생), or into the controls for a remote.
   if (arrow && playerFlag('arrowVolume')) {
@@ -754,7 +767,7 @@ function handlePlayerKey(event) {
   }
   if (letter === 'p') { takeScreenshot(); return; }
   if (letter === 's') { const skip = $('#skipNow'); if (skip && !skip.classList.contains('hidden')) skip.click(); else toast('지금은 건너뛸 OP/ED 구간이 아니에요'); return; }
-  if (/^[0-9]$/.test(letter) && video.duration) { seekPlayer(video.duration * Number(letter) / 10); showPlayerControls(); return; }
+  if (/^[0-9]$/.test(letter) && video.duration) { const target = video.duration * Number(letter) / 10; seekPlayer(target); showSeekHint(null, target); return; }
   if (letter === '[' || letter === ']') {
     finishSpaceHold(false);
     const at = SPEED_OPTIONS.indexOf(video.playbackRate), next = SPEED_OPTIONS[Math.max(0, Math.min(SPEED_OPTIONS.length - 1, (at < 0 ? SPEED_OPTIONS.indexOf(1) : at) + (letter === ']' ? 1 : -1)))];
