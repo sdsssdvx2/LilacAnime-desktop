@@ -37,7 +37,7 @@ const surfaceEnd = entry.indexOf('\n\n  _queueSurfaceResize()', surfaceStart);
 if (surfaceStart < 0 || surfaceEnd <= surfaceStart) throw new Error('R32 renderer _surfaceSize method boundary missing');
 const surfaceSection = entry.slice(surfaceStart, surfaceEnd);
 for (const marker of ['getBoundingClientRect()', 'devicePixelRatio', 'rect.width', 'rect.height']) {
-  if (!surfaceSection.includes(marker)) throw new Error(\`R32 renderer _surfaceSize baseline missing: \${marker}\`);
+  if (!surfaceSection.includes(marker)) throw new Error('R32 renderer _surfaceSize baseline missing: ' + marker);
 }
 const r32SurfaceMethod = [
   "  _surfaceSize() {",
@@ -60,4 +60,4 @@ const newGate = `for (const marker of ['LILAC_R32_NATIVE_SUBTITLE_FALLBACK','dat
 once(oldGate, newGate, 'bundle marker gate');
 
 fs.writeFileSync(target, source);
-console.log('R32_PRESENTER_SAFETY_SOURCE_SANITIZE_OK signedXY=double resize=structural surface=method-boundary bundleGate=runtime-code');
+console.log('R32_PRESENTER_SAFETY_SOURCE_SANITIZE_OK signedXY=double resize=structural surface=method-boundary syntax=no-raw-template bundleGate=runtime-code');
