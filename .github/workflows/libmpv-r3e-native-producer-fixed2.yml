@@ -84,6 +84,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'post-transform install failed'}
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
           if($LASTEXITCODE -ne 0){throw 'post-transform tool install failed'}
+          npm install --no-save --no-audit --no-fund electron@44.9.3
+          if($LASTEXITCODE -ne 0){throw 'Electron runtime install failed'}
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.50-libmpv-r3d.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r13'){throw 'R3D identity mismatch'}
 
