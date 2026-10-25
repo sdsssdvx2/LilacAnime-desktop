@@ -943,11 +943,6 @@ async function resolveLinkaniEpisode(episode){
   return stream;
 }
 
-function openProviderPlayer(episode, title = 'LilacAnime Player') {
-  const player = new BrowserWindow({width:1180,height:760,minWidth:760,minHeight:500,backgroundColor:'#050407',title,autoHideMenuBar:true,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true}});
-  return player.loadURL(episode.url,{httpReferrer:episode.referer||new URL(episode.url).origin+'/'});
-}
-
 function parseFlixSubtitleTracks(html=''){
   // Track names can contain brackets ("English [nedragrevev]"), so find the closing ']' outside strings.
   const text=String(html),start=text.search(/subtitles:\[/);if(start<0)return [];
@@ -2537,22 +2532,6 @@ app.whenReady().then(async () => {
       })))
     })).filter(server => server.episodes.length);
   });
-  ipcMain.handle('linkkf:play', async (_, episode) => {
-    let playerUrl = '';
-    try {
-      const root = await linkkfFetch(`https://emdlinkkf.5imgdarr.top/apilink2.php?data=${encodeURIComponent(episode.token)}`);
-      const links = Array.isArray(root.data) ? root.data : [];
-      playerUrl = (links.find(x => String(x.server).toUpperCase() === 'NR-HD') || links[0] || {}).link || '';
-    } catch { /* Use the watch page while the player-link server is unavailable. */ }
-    if (!playerUrl) playerUrl = `${LINKKF_WEB}/up/${encodeURIComponent(episode.postId)}/watch/?slug=${encodeURIComponent(episode.slug)}`;
-    const player = new BrowserWindow({
-      width: 1180, height: 760, minWidth: 760, minHeight: 500, backgroundColor: '#050407',
-      title: `LilacAnime · ${episode.name}화`, autoHideMenuBar: true,
-      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
-    });
-    await player.loadURL(playerUrl, { httpReferrer: `${LINKKF_WEB}/` });
-    return true;
-  });
   ipcMain.handle('linkkf:resolve', async (_, episode) => { playerStreamHeaders=null; return resolveLinkkfStream(episode); });
   // Home rails, most popular first and only shows that already have episodes (early in a season most are still to
   // air): "2026 가을 신작" (this season; Re:Anime and Miruro filter their catalog by season and year, Animenosub its
@@ -2671,7 +2650,6 @@ app.whenReady().then(async () => {
     if(providerDetails.size>200)providerDetails.delete(providerDetails.keys().next().value);
     return promise;
   });
-  ipcMain.handle('provider:play', (_, episode, title) => openProviderPlayer(episode,title).then(()=>true));
   // The player's own resolves (downloads resolve in the background through resolveProviderEpisode directly).
   ipcMain.handle('provider:resolve', async (_, episode) => {
     playerStreamHeaders = null;
