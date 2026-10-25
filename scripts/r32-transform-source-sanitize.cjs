@@ -12,6 +12,15 @@ function replaceOnce(needle, replacement, label) {
   source = source.replace(needle, replacement);
 }
 
+function replaceTransformBlock(label, assignment, replacement) {
+  const labelAt = source.indexOf(`'${label}'`);
+  if (labelAt < 0) throw new Error(`transform label missing: ${label}`);
+  const start = source.lastIndexOf(`${assignment} = replaceOnce(`, labelAt);
+  const end = source.indexOf('\n);', labelAt);
+  if (start < 0 || end < 0) throw new Error(`transform block missing: ${label}`);
+  source = source.slice(0, start) + replacement + source.slice(end + 3);
+}
+
 // 1) Remove a nested template literal from the generated worker wrapper. The
 // outer R32 transform intentionally uses one large String.raw template.
 replaceOnce(
@@ -55,6 +64,48 @@ replaceOnce(
   'main synchronous Flix diagnostics export'
 );
 
+// 3) R3E/R30/R31 evolve the body of these bridge functions. Do not require an
+// exact two-line body. Insert presenter calls inside explicit method ranges so
+// future diagnostic fields cannot break the transform without changing meaning.
+replaceTransformBlock('R32 configure presenter on player creation', 'bridge', `{
+  const r32EnsureAt = bridge.indexOf('  function ensurePlayer() {');
+  const r32EnsureEnd = bridge.indexOf('  async function open(', r32EnsureAt);
+  const r32Return = '    return playerId;';
+  const r32ReturnAt = bridge.lastIndexOf(r32Return, r32EnsureEnd);
+  if (r32EnsureAt < 0 || r32EnsureEnd < 0 || r32ReturnAt < r32EnsureAt || r32ReturnAt >= r32EnsureEnd) {
+    throw new Error('R32 structural ensurePlayer return anchor missing');
+  }
+  bridge = bridge.slice(0, r32ReturnAt) + '    r32ConfigureNativePresenter();' + String.fromCharCode(10) + bridge.slice(r32ReturnAt);
+}`);
+
+replaceTransformBlock('R32 presenter visibility on open', 'bridge', `{
+  const r32OpenAt = bridge.indexOf('  async function open(');
+  const r32OpenEnd = bridge.indexOf('  function command(', r32OpenAt);
+  const r32Active = '    active = true;';
+  const r32ActiveAt = bridge.indexOf(r32Active, r32OpenAt);
+  if (r32OpenAt < 0 || r32OpenEnd < 0 || r32ActiveAt < r32OpenAt || r32ActiveAt >= r32OpenEnd) {
+    throw new Error('R32 structural open active anchor missing');
+  }
+  const r32OpenInsert = [
+    r32Active,
+    '    r32ConfigureNativePresenter();',
+    "    r32ApplyNativePresenterFocus(typeof attachedWindow?.isFocused === 'function' ? attachedWindow.isFocused() : true);"
+  ].join(String.fromCharCode(10));
+  bridge = bridge.slice(0, r32ActiveAt) + r32OpenInsert + bridge.slice(r32ActiveAt + r32Active.length);
+}`);
+
+replaceTransformBlock('R32 hide presenter on stop', 'bridge', `{
+  const r32StopAt = bridge.indexOf('  async function stopPlayer(');
+  const r32StopEnd = bridge.indexOf('  async function close(', r32StopAt);
+  const r32Inactive = '    active = false;';
+  const r32InactiveAt = bridge.indexOf(r32Inactive, r32StopAt);
+  if (r32StopAt < 0 || r32StopEnd < 0 || r32InactiveAt < r32StopAt || r32InactiveAt >= r32StopEnd) {
+    throw new Error('R32 structural stop active anchor missing');
+  }
+  const r32StopInsert = [r32Inactive, '    r32ApplyNativePresenterFocus(true);'].join(String.fromCharCode(10));
+  bridge = bridge.slice(0, r32InactiveAt) + r32StopInsert + bridge.slice(r32InactiveAt + r32Inactive.length);
+}`);
+
 fs.writeFileSync(target, source, 'utf8');
 
 // The qualified R31 builder intentionally checks out pinned source commits. In
@@ -72,4 +123,4 @@ if (process.env.GITHUB_ACTIONS === 'true') {
   run(['commit','-m','ci: normalize R32 generated transform source'], 'git commit sanitized transform');
 }
 
-console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 ciTree=clean');
+console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 bridgeAnchors=structural ciTree=clean');
