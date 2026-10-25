@@ -1,0 +1,98 @@
+name: Publish verified LilacAnime Libmpv r16
+
+on:
+  push:
+    branches: [libmpv-r3f-054-stable-installer-r16]
+    paths: [.github/workflows/libmpv-r3f-054-r16-publish-only.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  SOURCE_RUN_ID: '40195017185'
+  ARTIFACT_NAME: lilacanime-libmpv-r16-stable-installer-v2
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r16
+  INSTALLER_NAME: LilacAnime-Libmpv-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-installer-manifest.json
+  EXPECTED_INSTALLER_SHA256: 10771d2ae823a7e2f095cd90ed973a43d831d6a6db92fd3b6c2c70adfb6f7be0
+  EXPECTED_INSTALLER_SIZE: '166806412'
+  BASE_INSTALLER_SHA256: fba0d9a2d6c72955c37e5e0ef94b913c0661e4c1a9f2fd784bfafe1278ccd2aa
+  BASE_QUALIFIED_SOURCE: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  BASE_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  BASE_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download already-qualified R16 artifact
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path dist|Out-Null
+          gh run download $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --name $env:ARTIFACT_NAME --dir dist
+          if($LASTEXITCODE -ne 0){throw 'verified R16 artifact download failed'}
+          $exe=Join-Path dist $env:INSTALLER_NAME
+          $mp=Join-Path dist $env:MANIFEST_NAME
+          if(!(Test-Path $exe) -or !(Test-Path $mp)){throw 'verified R16 artifact files missing'}
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          $m=Get-Content $mp -Raw|ConvertFrom-Json
+          if($hash -ne $env:EXPECTED_INSTALLER_SHA256 -or $size -ne [long]$env:EXPECTED_INSTALLER_SIZE){throw "artifact byte mismatch sha=$hash size=$size"}
+          if($m.installerSha256 -ne $hash -or $m.installerSize -ne $size -or $m.visibleProductName -ne 'LilacAnime Libmpv' -or $m.installFolder -ne 'LilacAnime-Libmpv' -or $m.startMenuShortcut -ne 'LilacAnime Libmpv' -or $m.profilePackageName -ne 'lilacanime-desktop' -or $m.profileRetention -ne 'real-r2j-upgrade-sentinel-pass' -or $m.legacyInstallCleanup -ne 'real-r2j-old-folder-removed' -or $m.shortcutRetention -ne 'same-path-reinstall-pass' -or $m.payloadQualification -ne 'byte-identical-to-r15-qualified-app' -or $m.baseInstallerSha256 -ne $env:BASE_INSTALLER_SHA256 -or $m.baseQualifiedSource -ne $env:BASE_QUALIFIED_SOURCE -or $m.addonSha256 -ne $env:BASE_ADDON_SHA256 -or $m.dllSha256 -ne $env:BASE_DLL_SHA256){throw 'verified R16 manifest mismatch'}
+          Write-Host "R16_PUBLISH_SOURCE_OK sourceRun=$env:SOURCE_RUN_ID sha256=$hash size=$size migration=pass profile=pass shortcut=pass exactR15=pass"
+
+      - name: Publish prerelease without release-view stderr trap
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          $deleteExit=$LASTEXITCODE
+          Write-Host "R16_PREVIOUS_RELEASE_CLEANUP exit=$deleteExit (0=deleted, 1=not-present is acceptable)"
+          @"
+          LilacAnime Libmpv stable installer r16 keeps the exact fully-qualified R15 application bytes and fixes only Windows installation identity.
+
+          Visible name: LilacAnime Libmpv
+          Stable folder: LilacAnime-Libmpv
+          Start Menu shortcut: LilacAnime Libmpv
+          Fresh/R2J migration default: D:\Program Files\LilacAnime-Libmpv when D: exists; LocalAppData\Programs\LilacAnime-Libmpv otherwise. Future reinstalls/upgrades keep the registered stable path.
+
+          CI installs the real published R2J installer, upgrades it through electron-builder update mode, proves the old R2J folder and shortcut are removed, proves the unchanged lilacanime-desktop profile survives, verifies the new shortcut target, then performs a second reinstall and proves the shortcut target and profile remain stable.
+
+          Product payload is byte-identical to the fully qualified R15 application.
+          Base qualified source: $env:BASE_QUALIFIED_SOURCE
+          Installer SHA-256: $env:EXPECTED_INSTALLER_SHA256
+          "@|Set-Content release-notes-r16-publish.md -Encoding utf8
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target e0850bfca0576a6fb348ad5ba497e5b43898d9c2 --title 'LilacAnime Libmpv 0.5.54 stable installer r16' --notes-file release-notes-r16-publish.md
+          if($LASTEXITCODE -ne 0){throw 'R16 release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE -ne 0){throw 'R16 release upload failed'}
+
+      - name: Public redownload and final byte verification
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $verify=Join-Path $env:RUNNER_TEMP 'r16-public-verify'
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE -ne 0){throw 'R16 public redownload failed'}
+          $exe=Join-Path $verify $env:INSTALLER_NAME
+          $mp=Join-Path $verify $env:MANIFEST_NAME
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          $m=Get-Content $mp -Raw|ConvertFrom-Json
+          if($hash -ne $env:EXPECTED_INSTALLER_SHA256 -or $size -ne [long]$env:EXPECTED_INSTALLER_SIZE -or $m.installerSha256 -ne $hash -or $m.profileRetention -ne 'real-r2j-upgrade-sentinel-pass' -or $m.legacyInstallCleanup -ne 'real-r2j-old-folder-removed' -or $m.shortcutRetention -ne 'same-path-reinstall-pass' -or $m.payloadQualification -ne 'byte-identical-to-r15-qualified-app'){throw 'R16 public release verification mismatch'}
+          Write-Host "R16_PUBLISHED_OK tag=$env:RELEASE_TAG sha256=$hash size=$size visible='LilacAnime Libmpv' folder=LilacAnime-Libmpv shortcut='LilacAnime Libmpv' oldFolderRemoved=1 profileRetained=1 exactR15=1"
