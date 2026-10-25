@@ -1,0 +1,198 @@
+name: LilacAnime Libmpv stable installer r16 v2
+
+on:
+  push:
+    branches: [libmpv-r3f-054-stable-installer-r16]
+    paths: [.github/workflows/libmpv-r3f-054-r16-stable-installer-v2.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r16-stable-installer-v2
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r15
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R3F-Setup.exe
+  BASE_INSTALLER_SHA256: fba0d9a2d6c72955c37e5e0ef94b913c0661e4c1a9f2fd784bfafe1278ccd2aa
+  BASE_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  BASE_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  BASE_QUALIFIED_SOURCE: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  R2J_RELEASE_TAG: libmpv-r2j-subtitle-fix-b12a77cc5910
+  R2J_INSTALLER_NAME: LilacAnime-Libmpv-R2J-SubtitleFix-Setup.exe
+  R2J_INSTALLER_SHA256: 32a422e10699db63d13c7105bd93e55f63234af529b787104b1e89442ad55ab6
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r16
+  INSTALLER_NAME: LilacAnime-Libmpv-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-installer-manifest.json
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_FOLDER_NAME: LilacAnime-Libmpv
+  APP_VERSION: 0.5.54-libmpv-r3f.rc1
+
+jobs:
+  stable-installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+
+      - name: Install packaging tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm install --no-save --no-audit --no-fund electron-builder@26.0.12 @electron/asar@3.2.18
+          if($LASTEXITCODE -ne 0){throw 'packaging dependency install failed'}
+
+      - name: Recover exact qualified R15 prepackaged application
+        shell: powershell
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          $ErrorActionPreference='Stop'
+          $base=Join-Path $env:RUNNER_TEMP 'r15-base';$raw=Join-Path $base 'raw';$nested=Join-Path $base 'nested'
+          New-Item -ItemType Directory -Force -Path $base,$raw,$nested|Out-Null
+          gh release download $env:BASE_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $base --pattern $env:BASE_INSTALLER_NAME --pattern 'r3f-release-manifest.json'
+          if($LASTEXITCODE -ne 0){throw 'R15 release download failed'}
+          $installer=Join-Path $base $env:BASE_INSTALLER_NAME;$hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne $env:BASE_INSTALLER_SHA256){throw "R15 installer hash mismatch: $hash"}
+          $m=Get-Content (Join-Path $base 'r3f-release-manifest.json') -Raw|ConvertFrom-Json
+          if($m.installerSha256 -ne $env:BASE_INSTALLER_SHA256 -or $m.addonSha256 -ne $env:BASE_ADDON_SHA256 -or $m.dllSha256 -ne $env:BASE_DLL_SHA256 -or $m.qualifiedSourceCommit -ne $env:BASE_QUALIFIED_SOURCE){throw 'R15 manifest provenance mismatch'}
+          7z.exe x $installer "-o$raw" -y|Out-Null;if($LASTEXITCODE -ne 0){throw 'R15 installer extraction failed'}
+          $i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'}|Sort-Object Length -Descending)){$i++;$o=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $o|Out-Null;7z.exe x $a.FullName "-o$o" -y|Out-Null}
+          $roots=@($raw,$nested);$appDir=$null;$appExe=$null
+          foreach($exe in @(Get-ChildItem $roots -Recurse -File -Filter '*.exe' -ErrorAction SilentlyContinue)){
+            $candidate=$exe.Directory.FullName
+            if(Test-Path (Join-Path $candidate 'resources\app.asar')){$appDir=$candidate;$appExe=$exe;break}
+          }
+          if(-not $appDir){
+            Write-Host 'R15_EXTRACTED_FILES_BEGIN';Get-ChildItem $roots -Recurse -File -ErrorAction SilentlyContinue|Select-Object -First 120 FullName,Length|Format-Table -AutoSize|Out-Host;Write-Host 'R15_EXTRACTED_FILES_END'
+            throw 'prepackaged R15 application directory not found'
+          }
+          $addon=Get-ChildItem $appDir -Recurse -File -Filter 'lilac-libmpv-player-bridge.node'|Select-Object -First 1;$dll=Get-ChildItem $appDir -Recurse -File -Filter 'libmpv-2.dll'|Select-Object -First 1
+          if(-not $addon -or -not $dll){throw 'R15 native payload missing'}
+          $ah=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ah -ne $env:BASE_ADDON_SHA256 -or $dh -ne $env:BASE_DLL_SHA256){throw 'R15 native payload mismatch'}
+          $exeHash=(Get-FileHash $appExe.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$asarHash=(Get-FileHash (Join-Path $appDir 'resources\app.asar') -Algorithm SHA256).Hash.ToLowerInvariant();$exeBase=[IO.Path]::GetFileNameWithoutExtension($appExe.Name)
+          "PREPACKAGED_APP_DIR=$appDir"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"PREPACKAGED_EXE_NAME=$($appExe.Name)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"PREPACKAGED_EXE_BASE=$exeBase"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"BASE_APP_EXE_SHA256=$exeHash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"BASE_APP_ASAR_SHA256=$asarHash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R16_BASE_PAYLOAD_OK appExe=$($appExe.Name) exe=$exeHash asar=$asarHash addon=$ah dll=$dh"
+
+      - name: Configure stable visible identity folder and shortcut
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          if(p.name!=='lilacanime-desktop')throw new Error('profile package name changed');
+          p.version=process.env.APP_VERSION;p.build=p.build||{};p.build.appId=process.env.STABLE_APP_ID;p.build.productName=process.env.STABLE_PRODUCT_NAME;p.build.win=p.build.win||{};p.build.win.executableName=process.env.PREPACKAGED_EXE_BASE;p.build.win.target='nsis';p.build.win.artifactName='LilacAnime-Libmpv-Setup.${ext}';p.build.nsis={...(p.build.nsis||{}),oneClick:false,allowToChangeInstallationDirectory:true,createDesktopShortcut:'always',createStartMenuShortcut:true,shortcutName:process.env.STABLE_SHORTCUT_NAME,uninstallDisplayName:process.env.STABLE_PRODUCT_NAME,include:'build/stable-installer.nsh'};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');
+          '@|node
+          if($LASTEXITCODE -ne 0){throw 'stable metadata patch failed'}
+          $old=Get-Content build/installer.nsh -Raw
+          $prefix=@'
+          !macro preInit
+            ReadEnvStr $0 "LILAC_INSTALL_ROOT"
+            StrCmp $0 "" 0 lilacStableRootReady
+            IfFileExists "D:\*.*" 0 lilacStableUseLocal
+            StrCpy $0 "D:\Program Files"
+            Goto lilacStableRootReady
+          lilacStableUseLocal:
+            StrCpy $0 "$LOCALAPPDATA\Programs"
+          lilacStableRootReady:
+            StrCpy $1 "$0\LilacAnime-Libmpv"
+            SetRegView 64
+            WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
+            WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
+            SetRegView 32
+            WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
+            WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
+          !macroend
+          !macro customInstall
+            Delete "$SMPROGRAMS\LilacAnime Libmpv R2J Subtitle Fix.lnk"
+            Delete "$DESKTOP\LilacAnime Libmpv R2J Subtitle Fix.lnk"
+          !macroend
+          '@
+          Set-Content build/stable-installer.nsh -Value ($prefix+$old) -Encoding utf8
+          $p=Get-Content package.json -Raw|ConvertFrom-Json;if($p.name -ne 'lilacanime-desktop' -or $p.build.appId -ne $env:STABLE_APP_ID -or $p.build.nsis.shortcutName -ne $env:STABLE_SHORTCUT_NAME -or $p.build.win.executableName -ne $env:PREPACKAGED_EXE_BASE){throw 'stable identity verification failed'}
+          Write-Host "R16_INSTALL_IDENTITY_OK visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' appExe=$($env:PREPACKAGED_EXE_NAME) profile=lilacanime-desktop"
+
+      - name: Build installer around exact R15 application
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
+          & npx.cmd electron-builder --win nsis --prepackaged "$env:PREPACKAGED_APP_DIR" --publish never
+          if($LASTEXITCODE -ne 0){throw 'stable installer build failed'}
+          $i=Get-ChildItem dist -File -Filter $env:INSTALLER_NAME|Select-Object -First 1;if(-not $i -or $i.Length -lt 10000000){throw 'stable installer missing'}
+          "R16_INSTALLER_PATH=$($i.FullName)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;Write-Host "R16_BUILD_OK size=$($i.Length)"
+
+      - name: Prove packaged application is byte-identical to qualified R15
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$raw=Join-Path $env:RUNNER_TEMP 'r16-raw';$nested=Join-Path $env:RUNNER_TEMP 'r16-nested';New-Item -ItemType Directory -Force -Path $raw,$nested|Out-Null
+          7z.exe x $env:R16_INSTALLER_PATH "-o$raw" -y|Out-Null;$i=0;foreach($a in @(Get-ChildItem $raw -Recurse -File|Where-Object{$_.Name -match '(?i)(\.7z$|\.zip$)'}|Sort-Object Length -Descending)){$i++;$o=Join-Path $nested "a$i";New-Item -ItemType Directory -Force -Path $o|Out-Null;7z.exe x $a.FullName "-o$o" -y|Out-Null}
+          $roots=@($raw,$nested);$appDir=$null;$appExe=$null;foreach($exe in @(Get-ChildItem $roots -Recurse -File -Filter '*.exe' -ErrorAction SilentlyContinue)){if(Test-Path (Join-Path $exe.Directory.FullName 'resources\app.asar')){$appDir=$exe.Directory.FullName;$appExe=$exe;break}}
+          if(-not $appDir){throw 'R16 packaged app not found'}
+          $eh=(Get-FileHash $appExe.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$sh=(Get-FileHash (Join-Path $appDir 'resources\app.asar') -Algorithm SHA256).Hash.ToLowerInvariant();$addon=Get-ChildItem $appDir -Recurse -File -Filter 'lilac-libmpv-player-bridge.node'|Select-Object -First 1;$dll=Get-ChildItem $appDir -Recurse -File -Filter 'libmpv-2.dll'|Select-Object -First 1;$ah=(Get-FileHash $addon.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($eh -ne $env:BASE_APP_EXE_SHA256 -or $sh -ne $env:BASE_APP_ASAR_SHA256 -or $ah -ne $env:BASE_ADDON_SHA256 -or $dh -ne $env:BASE_DLL_SHA256){throw 'packaged application bytes changed'}
+          Write-Host "R16_EXACT_APP_BYTES_OK exe=$eh asar=$sh addon=$ah dll=$dh"
+
+      - name: Prove real R2J migration profile retention and stable shortcut
+        shell: powershell
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          $ErrorActionPreference='Stop';$s=Join-Path $env:RUNNER_TEMP 'r16-migrate';$d=Join-Path $s 'downloads';$legacy=Join-Path $s 'legacy\LilacAnime-Libmpv-R2J-SubtitleFix';$root=Join-Path $s 'stable-root';$stable=Join-Path $root $env:STABLE_FOLDER_NAME;New-Item -ItemType Directory -Force -Path $d,$legacy,$root|Out-Null
+          gh release download $env:R2J_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $d --pattern $env:R2J_INSTALLER_NAME;if($LASTEXITCODE -ne 0){throw 'R2J download failed'}
+          $old=Join-Path $d $env:R2J_INSTALLER_NAME;$oh=(Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant();if($oh -ne $env:R2J_INSTALLER_SHA256){throw 'R2J hash mismatch'}
+          $p=Start-Process $old -ArgumentList @('/S',"/D=$legacy") -Wait -PassThru;if($p.ExitCode -ne 0){throw "R2J install failed $($p.ExitCode)"}
+          $oldExe=Get-ChildItem $legacy -File -Filter '*.exe'|Where-Object{$_.Name -notmatch '(?i)uninstall'}|Select-Object -First 1;if(-not $oldExe){throw 'R2J executable not found'}
+          $profile=Join-Path $env:APPDATA 'lilacanime-desktop';New-Item -ItemType Directory -Force -Path $profile|Out-Null;$sentinel=Join-Path $profile 'r16-profile-retention-sentinel.txt';$value="keep-$([guid]::NewGuid())";Set-Content $sentinel $value -NoNewline
+          $env:LILAC_INSTALL_ROOT=$root;$p=Start-Process $env:R16_INSTALLER_PATH -ArgumentList '/S' -Wait -PassThru;if($p.ExitCode -ne 0){throw "R16 migration failed $($p.ExitCode)"}
+          $newExe=Join-Path $stable $env:PREPACKAGED_EXE_NAME;if(!(Test-Path $newExe)){throw "stable executable missing $newExe"};if(Test-Path $oldExe.FullName){throw 'legacy executable survived'};if(!(Test-Path $sentinel) -or (Get-Content $sentinel -Raw) -ne $value){throw 'profile sentinel lost'}
+          $menu=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs';$newLink=Join-Path $menu 'LilacAnime Libmpv.lnk';$oldLink=Join-Path $menu 'LilacAnime Libmpv R2J Subtitle Fix.lnk';if(!(Test-Path $newLink)){throw 'stable Start shortcut missing'};if(Test-Path $oldLink){throw 'legacy Start shortcut survived'}
+          $ws=New-Object -ComObject WScript.Shell;$target=$ws.CreateShortcut($newLink).TargetPath;if([IO.Path]::GetFullPath($target) -ne [IO.Path]::GetFullPath($newExe)){throw "shortcut target mismatch $target"}
+          $p=Start-Process $env:R16_INSTALLER_PATH -ArgumentList '/S' -Wait -PassThru;if($p.ExitCode -ne 0){throw 'stable reinstall failed'};$target2=$ws.CreateShortcut($newLink).TargetPath;if([IO.Path]::GetFullPath($target2) -ne [IO.Path]::GetFullPath($target)){throw 'shortcut target changed on reinstall'};if((Get-Content $sentinel -Raw) -ne $value){throw 'profile changed on reinstall'}
+          Remove-Item Env:LILAC_INSTALL_ROOT -ErrorAction SilentlyContinue;Write-Host "R16_MIGRATION_OK old=R2J newFolder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' profile=retained reinstall=stable"
+
+      - name: Create manifest and notes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$i=Get-Item $env:R16_INSTALLER_PATH;$h=(Get-FileHash $i.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$z=$i.Length;"R16_INSTALLER_SHA256=$h"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"R16_INSTALLER_SIZE=$z"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          [ordered]@{schema=2;releaseTag=$env:RELEASE_TAG;installer=$env:INSTALLER_NAME;installerSha256=$h;installerSize=[long]$z;visibleProductName=$env:STABLE_PRODUCT_NAME;installFolder=$env:STABLE_FOLDER_NAME;startMenuShortcut=$env:STABLE_SHORTCUT_NAME;installerIdentity=$env:STABLE_APP_ID;upgradeFrom='LilacAnime Libmpv R2J Subtitle Fix';profilePackageName='lilacanime-desktop';profileRetention='real-r2j-upgrade-sentinel-pass';shortcutRetention='same-path-reinstall-pass';baseRelease=$env:BASE_RELEASE_TAG;baseInstallerSha256=$env:BASE_INSTALLER_SHA256;baseQualifiedSource=$env:BASE_QUALIFIED_SOURCE;baseAppExeSha256=$env:BASE_APP_EXE_SHA256;baseAppAsarSha256=$env:BASE_APP_ASAR_SHA256;addonSha256=$env:BASE_ADDON_SHA256;dllSha256=$env:BASE_DLL_SHA256;payloadQualification='byte-identical-to-r15-qualified-app'}|ConvertTo-Json -Depth 4|Set-Content (Join-Path dist $env:MANIFEST_NAME) -Encoding utf8
+          @"
+          LilacAnime Libmpv stable installer r16 keeps the exact fully-qualified R15 application bytes and fixes only Windows installation identity.
+
+          Visible name: LilacAnime Libmpv
+          Stable folder: LilacAnime-Libmpv
+          Start Menu shortcut: LilacAnime Libmpv
+          Default: D:\Program Files\LilacAnime-Libmpv when D: exists; LocalAppData\Programs\LilacAnime-Libmpv otherwise.
+
+          The legacy R2J installer GUID is retained internally so R2J upgrades into this app instead of becoming a duplicate. CI performs a real R2J install, upgrade, profile-sentinel check, old-shortcut removal check, shortcut-target check, and a second reinstall stability check.
+
+          Base release: $env:BASE_RELEASE_TAG
+          Base qualified source: $env:BASE_QUALIFIED_SOURCE
+          Installer SHA-256: $h
+          "@|Set-Content release-notes-r16.md -Encoding utf8;Write-Host "R16_MANIFEST_OK sha256=$h size=$z"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r16-stable-installer-v2
+          path: |
+            dist/LilacAnime-Libmpv-Setup.exe
+            dist/lilacanime-libmpv-installer-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish and reverify public bytes
+        shell: powershell
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          $ErrorActionPreference='Stop';$pref=$PSNativeCommandUseErrorActionPreference;$PSNativeCommandUseErrorActionPreference=$false;gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null;$exists=($LASTEXITCODE -eq 0);$PSNativeCommandUseErrorActionPreference=$pref
+          if($exists){gh release delete $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag;if($LASTEXITCODE -ne 0){throw 'old r16 cleanup failed'}}
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 stable installer r16' --notes-file release-notes-r16.md;if($LASTEXITCODE -ne 0){throw 'release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber;if($LASTEXITCODE -ne 0){throw 'release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r16-public';New-Item -ItemType Directory -Force -Path $v|Out-Null;gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME;if($LASTEXITCODE -ne 0){throw 'public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME;$mp=Join-Path $v $env:MANIFEST_NAME;$h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length;$m=Get-Content $mp -Raw|ConvertFrom-Json;if($h -ne $env:R16_INSTALLER_SHA256 -or $z -ne [long]$env:R16_INSTALLER_SIZE -or $m.installerSha256 -ne $h -or $m.profileRetention -ne 'real-r2j-upgrade-sentinel-pass' -or $m.shortcutRetention -ne 'same-path-reinstall-pass'){throw 'public verification mismatch'}
+          Write-Host "R16_PUBLISHED_OK tag=$env:RELEASE_TAG sha256=$h size=$z visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)'"
