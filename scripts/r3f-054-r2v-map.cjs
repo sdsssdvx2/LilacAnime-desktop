@@ -124,9 +124,16 @@ markers(r2vPlayer, [
 assert(!r2vPlayer.includes("localStorage.setItem('vttStyle','false')"), 'R2V readability preset disables file styles');
 markers(read('electron/preload.cjs'), ["runtimeBridgeVersion: 'r2v'", 'libmpvSharedOpen'], 'R2V preload');
 markers(read('electron/main.cjs'), ["mode==='__lilac_miniplayer_on__'", 'createLibmpvSharedBridge({'], 'R2V main fallback');
-markers(read('src/libmpv-shared-entry.js'), [' : 1.3;'], 'R2V overlay line-height');
+markers(read('src/libmpv-shared-entry.js'), [' : 1.3;', 'browserVisualBottom', 'Pretendard Variable', 'fontVariationSettings'], 'R2V overlay source');
+
+// R2U/R2V mutate the renderer entry after the last R2S bundle. Rebuild here so the
+// shipped generated renderer contains the calibrated position/font/weight behavior.
+// Merely checking that a generated bundle exists can silently preserve stale R2S code.
+runNode('scripts/rebundle-libmpv-r2v.cjs', 'R2V_RENDERER_REBUNDLE');
+const r2vGenerated = read('src/libmpv-shared.generated.js');
+markers(r2vGenerated, ['browserVisualBottom', 'Pretendard Variable', 'fontVariationSettings', 'R2V_SUBTITLE_SOURCE_ATTEST'], 'R2V generated renderer');
+assert(!r2vGenerated.includes('browserBottomInset'), 'R2V generated renderer retained obsolete vertical mapping');
 markers(read('electron/preload-libmpv-shared.generated.cjs'), ['setSharedTextureReceiver','libmpvSharedOpen'], 'R2V generated preload');
-markers(read('src/libmpv-shared.generated.js'), ['lilac-mpv-video'], 'R2V generated renderer');
 preserve054('R2V', { tenrai: true });
 
-console.log('R3F_0554_R2V_MAP_OK chain=R2M-shared-base-R2N-R2P-R2Q-R2R-R2S-R2T-R2U-v2-R2V runtimeWiring=verified');
+console.log('R3F_0554_R2V_MAP_OK chain=R2M-shared-base-R2N-R2P-R2Q-R2R-R2S-R2T-R2U-v2-R2V runtimeWiring=verified rendererBundle=R2V-calibrated');
