@@ -67,7 +67,7 @@ if ($shipPreload -notmatch 'LILAC_R24_CADENCE_LAZY' -or $shipPreload -notmatch '
 '@
 $replacement = @'
 if ($shipPreload -notmatch 'LILAC_R24_CADENCE_LAZY' -or $shipPreload -notmatch 'receiveCadenceTracker\.record') { throw 'packaged lazy cadence missing' }
-if ($shipPreload -notmatch 'LILAC_R26_STALL_BOUNDARY_TRACE' -or $shipPreload -notmatch 'r26SnapshotRendererTrace' -or $shipPreload -notmatch 'r26TransportMs') { throw 'packaged R26 renderer trace missing' }
+if ($shipPreload -notmatch 'r26SnapshotRendererTrace' -or $shipPreload -notmatch 'r26TransportMs' -or $shipPreload -notmatch 'libmpv-shared:r26-trace-request') { throw 'packaged R26 renderer trace missing' }
 '@
 $patched = Replace-Once $patched $needle $replacement 'packaged preload gate'
 
