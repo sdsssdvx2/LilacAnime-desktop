@@ -148,7 +148,7 @@ jobs:
           $runner=$env:NATIVE_SMOKE_RUNNER
           if(!(Test-Path $runner)){throw 'preserved smoke runner missing'}
 
-          $callbackScript=Join-Path $env:RUNNER_TEMP 'smoke-libmpv-r3b-update-callback-hosted.cjs'
+          $callbackScript='scripts/.qualification-r3b-update-callback-hosted.cjs'
           Copy-Item scripts/smoke-libmpv-r3b-update-callback.cjs $callbackScript -Force
           $callback=Get-Content $callbackScript -Raw
           $callbackGate='if (effectiveFps < 15)'
@@ -175,6 +175,7 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'FHD retention failed'}
           } finally {
             Copy-Item $timingBackup $timingScript -Force
+            Remove-Item $callbackScript -Force -ErrorAction SilentlyContinue
           }
           for($i=1;$i -le 3;$i++){
             Write-Host "===== R3F_R15_V4_R3E_ITERATION_$i ====="
