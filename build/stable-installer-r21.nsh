@@ -1,7 +1,5 @@
 !include FileFunc.nsh
 
-Var /GLOBAL lilacDetachedLegacyCleanup
-
 Function LilacCleanupDetachedR2J
   ReadEnvStr $R7 "LILAC_LEGACY_INSTALL_DIR"
   StrCmp $R7 "" 0 lilacLegacyPathReady
@@ -36,7 +34,6 @@ lilacLegacyCleanupDone:
 FunctionEnd
 
 !macro customInit
-  StrCpy $lilacDetachedLegacyCleanup "0"
   ReadRegStr $R9 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   StrCmp $R9 "" 0 lilacHaveExistingInstall
   ReadRegStr $R9 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
@@ -48,7 +45,6 @@ lilacHaveExistingInstall:
   ; The canonical install is already registered. This is the exact state seen
   ; after R18-R20 where a detached R2J folder may still survive separately.
   StrCpy $INSTDIR "$R9"
-  StrCpy $lilacDetachedLegacyCleanup "1"
   Call LilacCleanupDetachedR2J
   Goto lilacStableInitDone
 
