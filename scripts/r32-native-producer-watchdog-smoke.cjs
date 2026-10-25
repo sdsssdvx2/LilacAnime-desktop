@@ -68,9 +68,9 @@ async function main() {
     if(!addon.startFrameProducer(id,1280,720))throw new Error('startFrameProducer failed');
 
     const warmDeadline=Date.now()+10000;
-    while(Date.now()<warmDeadline){const s=addon.frameProducerStats(id);if(Number(s?.producedFrames||0)>=6)break;drain(addon,id);await sleep(20);}
+    while(Date.now()<warmDeadline){const s=addon.frameProducerStats(id);if(Number(s?.producedFrames||0)>=8)break;drain(addon,id);await sleep(20);}
     const warm=addon.frameProducerStats(id);
-    if(Number(warm?.producedFrames||0)<4)throw new Error(`producer warmup failed ${JSON.stringify(warm)}`);
+    if(Number(warm?.producedFrames||0)<6)throw new Error(`producer warmup failed ${JSON.stringify(warm)}`);
     drain(addon,id);
 
     const trials=[];
@@ -88,8 +88,12 @@ async function main() {
       const ready=Number(after.readyFrames||0)-Number(before.readyFrames||0);
       if(blockedMs<700)throw new Error(`trial ${trial} JS block too short ${blockedMs}`);
       if(jsInside!==0)throw new Error(`trial ${trial} JS callback ran inside synchronous block ${jsInside}`);
-      if(produced<2)throw new Error(`trial ${trial} producer did not progress through 750ms JS block ${produced}`);
-      if(rawWake<1)throw new Error(`trial ${trial} raw mpv callback did not wake producer ${rawWake}`);
+      // A 250ms fallback alone could only account for a few frames in this 750ms
+      // interval. Requiring >=10 frames and >=8 raw wakes proves mpv's native update
+      // callback remains the normal ~24fps authority rather than the watchdog becoming
+      // the cadence source under a blocked Electron JS thread.
+      if(produced<10)throw new Error(`trial ${trial} callback-rate producer progress too low during 750ms JS block ${produced}`);
+      if(rawWake<8)throw new Error(`trial ${trial} raw mpv callback cadence too low during JS block ${rawWake}`);
       if(ready<produced)throw new Error(`trial ${trial} ready queue lost block frames ${ready}/${produced}`);
       if(Number(after.readyFrames||0)>24)throw new Error(`trial ${trial} ready queue exceeded slot pool ${after.readyFrames}`);
       const drained=drain(addon,id);
@@ -104,7 +108,7 @@ async function main() {
     const totalProduced=trials.reduce((sum,t)=>sum+t.produced,0);
     const totalRawWake=trials.reduce((sum,t)=>sum+t.rawWake,0);
     console.log(`R32_NATIVE_PRODUCER_WATCHDOG_REPORT=${JSON.stringify({deviceMode:created.deviceMode,trials,finalStats,stopped})}`);
-    console.log(`R32_NATIVE_PRODUCER_WATCHDOG_OK watchdogMs=250 trials=${trials.length} blockMs=750 totalProduced=${totalProduced} totalRawWake=${totalRawWake} jsCallbacksDuringBlocks=0 queueMax=${finalStats.queueMax}`);
+    console.log(`R32_NATIVE_PRODUCER_WATCHDOG_OK watchdogMs=250 callbackAuthority=proved minFramesPer750ms=10 minRawWakePer750ms=8 trials=${trials.length} blockMs=750 totalProduced=${totalProduced} totalRawWake=${totalRawWake} jsCallbacksDuringBlocks=0 queueMax=${finalStats.queueMax}`);
   } finally {
     if(id!=null){try{addon.stopFrameProducer(id);}catch{}try{addon.destroyPlayer(id);}catch{}}
     delete process.env.LILAC_LIBMPV_TEST_AO_NULL;
