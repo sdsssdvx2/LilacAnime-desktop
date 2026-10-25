@@ -17,17 +17,13 @@ if (count !== 1) throw new Error(`R3F R2T authoritative normalize expected one c
 entry = entry.replace(from, to);
 fs.writeFileSync(entryPath, entry);
 
-// The finalized R2Y r8 reproduction chain used apply-libmpv-r2u-v2.cjs, not
-// the earlier apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs. The current
-// compatibility workflow still invokes the historical filename, so alias the
-// tested v2 implementation onto that invocation without changing product code.
+// Fail early if the authoritative R2U v2 transform used by the verified R2Y r8
+// reproduction chain is not present. The workflow invokes this file directly.
 const r2uV2 = path.join(root, 'scripts', 'apply-libmpv-r2u-v2.cjs');
-const r2uLegacy = path.join(root, 'scripts', 'apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs');
 if (!fs.existsSync(r2uV2)) throw new Error('authoritative R2U v2 transform missing');
 const v2 = fs.readFileSync(r2uV2, 'utf8');
 for (const marker of ['VTT_FONT_FAMILIES', 'function libmpvSurface(', 'browserVisualBottom', "pkg.version='0.5.50-libmpv-r2u.rc1'", "pkg.lilacCustomTag='libmpv-r2k-v0.5.50-r4'"]) {
   if (!v2.includes(marker)) throw new Error(`R2U v2 marker missing: ${marker}`);
 }
-fs.writeFileSync(r2uLegacy, v2);
 
-console.log('R3F_0554_R2T_R2U_PREP_OK r2t=authoritative-normalize r2u=verified-v2');
+console.log('R3F_0554_R2T_PREP_OK normalize=authoritative r2u=direct-v2-ready');
