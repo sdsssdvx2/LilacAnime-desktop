@@ -89,34 +89,30 @@ function stageGuard(label) {
   directPresenterInvariant(label);
 }
 
-// Authoritative 0.5.54 reconstruction through R2Z. This child deliberately checks
-// out the pinned historical transform source, leaving a fully reconstructed R2Z
-// working tree behind for the parent process to continue from.
 runNode('scripts/r3f-054-r2z-map.cjs', 'R2Z_AUTHORITATIVE_MAP');
 identity('0.5.50-libmpv-r2z.rc1', 'libmpv-r2k-v0.5.50-r9', 'R2Z_PARENT');
 stageGuard('R2Z_PARENT');
 
-// Transform mapping must never replace packaged native payload bytes. R3B-R3E alter
-// native source and will be compiled/qualified later in a dedicated Windows job.
 const packagedNativeBefore = {
   addon: sha256IfPresent('electron/lilac-libmpv-player-bridge.node'),
   dll: sha256IfPresent('electron/libmpv-2.dll')
 };
 
-// R3A authoritative sequence from the historical r10 probe-v3 workflow.
+// R3A authoritative corrected sequence. The pinned transform uses bounded async
+// delivery (12 pending frames), not the earlier experimental queue/tick constants.
 runNode('scripts/apply-libmpv-r3a-decoupled-delivery.cjs', 'R3A_DECOUPLED');
 identity('0.5.50-libmpv-r3a.rc1', 'libmpv-r2k-v0.5.50-r10', 'R3A_DECOUPLED');
 runNode('scripts/apply-libmpv-r3a-poll-cadence-fix.cjs', 'R3A_POLL_CADENCE');
 runNode('scripts/apply-libmpv-r3a-phase-deadline.cjs', 'R3A_PHASE_DEADLINE');
 let bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, [
-  'TRANSPORT_QUEUE_MAX = 4', 'DELIVERY_TICK_MS = 4',
+  'MAX_PENDING_DELIVERY_FRAMES = 12', 'async function deliverImportedFrame',
+  'void deliverImportedFrame(delivery)', 'sendInvokeMaxMs',
   'nextNativeFrameDeadlinePerfAt', 'pumpPhaseCatchupPeriods', 'pumpPhaseLateMaxMs'
 ], 'R3A bridge');
 runNode('scripts/smoke-libmpv-r3a-decoupled-delivery.cjs', 'R3A_SOURCE_SMOKE');
 stageGuard('R3A');
 
-// R3B: callback-driven wakeup plus the later pending-wake correction required by R3C.
 runNode('scripts/apply-libmpv-r3b-update-callback.cjs', 'R3B_UPDATE_CALLBACK');
 identity('0.5.50-libmpv-r3b.rc1', 'libmpv-r2k-v0.5.50-r11', 'R3B_CALLBACK');
 runNode('scripts/apply-libmpv-r3b-pending-wake.cjs', 'R3B_PENDING_WAKE');
@@ -126,8 +122,6 @@ markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['mpv_render_context
 runNode('scripts/smoke-libmpv-r3b-update-callback.cjs', 'R3B_SOURCE_SMOKE');
 stageGuard('R3B');
 
-// R3C removes expensive full-state polling from the render hot path while retaining
-// callback wakeup + phase timer fallback.
 runNode('scripts/apply-libmpv-r3c-hotpath-state.cjs', 'R3C_HOTPATH_STATE');
 identity('0.5.50-libmpv-r3c.rc1', 'libmpv-r2k-v0.5.50-r12', 'R3C');
 bridge = read('electron/libmpv-shared-main.cjs');
@@ -135,8 +129,6 @@ markers(bridge, ['pollPlayback', 'nativeWakePending', 'nextNativeFrameDeadlinePe
 markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['PollPlayback'], 'R3C native');
 stageGuard('R3C');
 
-// R3D authoritative production path. Do not include any of the historical AB/probe
-// branches (fresh-redraw, gpu-depth/drain, private-target, render-path, step-continuous).
 runNode('scripts/apply-libmpv-r3d-stall-isolation.cjs', 'R3D_STALL_ISOLATION');
 identity('0.5.50-libmpv-r3d.rc1', 'libmpv-r2k-v0.5.50-r13', 'R3D');
 bridge = read('electron/libmpv-shared-main.cjs');
@@ -145,7 +137,6 @@ const r3dNative = read('native/libmpv-d3d11-bridge/player_addon.cc');
 markers(r3dNative, ['nativeUpdateMs', 'nativeEnsureTextureMs', 'nativeRenderMs'], 'R3D native timing');
 stageGuard('R3D');
 
-// Corrected R3E sequence from the pinned historical transform source.
 runNode('scripts/normalize-libmpv-r3e-pending-anchor.cjs', 'R3E_COMPAT_NORMALIZE');
 runNode('scripts/apply-libmpv-r3e-native-producer.cjs', 'R3E_NATIVE_PRODUCER');
 identity('0.5.50-libmpv-r3e.rc1', 'libmpv-r2k-v0.5.50-r14', 'R3E');
