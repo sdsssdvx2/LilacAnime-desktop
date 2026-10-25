@@ -99,7 +99,7 @@ jobs:
           if($pkg.version -ne '0.5.50-libmpv-r3e.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r14'){throw 'R3E identity mismatch'}
           $b=Get-Content electron/libmpv-shared-main.cjs -Raw
           $n=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
-          foreach($m in @('const pending = pendingFrames.get(key);','if (!pending) return;','pending?.producer','addon.releaseProducedFrame','frameProducerStarted','native-callback-worker')){if(-not $b.Contains($m)){throw "bridge marker missing: $m"}}
+          foreach($m in @('const pending = pendingFrames.get(key);','if (!pendingFrames.has(key)) return;','pending?.producer','addon.releaseProducedFrame','frameProducerStarted','native-callback-worker')){if(-not $b.Contains($m)){throw "bridge marker missing: $m"}}
           foreach($m in @('FrameProducerReadyFrame','StartFrameProducerWorker','producerRawWakeSignals','producerCv.notify_one()','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats','the potentially slow libmpv/D3D11 render')){if(-not $n.Contains($m)){throw "native marker missing: $m"}}
           if($n.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control unexpectedly enabled'}
           if($b.Contains('await sharedTexture.sendSharedTexture')){throw 'shared texture delivery regressed to awaited transport'}
