@@ -106,6 +106,14 @@ replaceTransformBlock('R32 hide presenter on stop', 'bridge', `{
   bridge = bridge.slice(0, r32InactiveAt) + r32StopInsert + bridge.slice(r32InactiveAt + r32Inactive.length);
 }`);
 
+// 4) esbuild is free to strip comments and constant-fold the disabled Canvas2D
+// branch. Verify behavior, not the presence of a source comment in the bundle.
+replaceOnce(
+  "if (!checks.preload.includes('const r31UseFocusShield = false') || !checks.bundled.includes('R32_NATIVE_HWND_FOCUS_SURFACE')) throw new Error('R32 renderer shield disable missing');",
+  "if (!checks.preload.includes('const r31UseFocusShield = false') || !checks.preload.includes('const r31MirrorNow = false') || !checks.bundled.includes('copyExternalImageToTexture') || checks.bundled.includes('copyTextureToTexture') || checks.bundled.includes('LILAC_R28_FOCUS_SAFE_PLAYBACK')) throw new Error('R32 renderer routing semantic check failed');",
+  'renderer semantic self-check'
+);
+
 fs.writeFileSync(target, source, 'utf8');
 
 // The qualified R31 builder intentionally checks out pinned source commits. In
@@ -123,4 +131,4 @@ if (process.env.GITHUB_ACTIONS === 'true') {
   run(['commit','-m','ci: normalize R32 generated transform source'], 'git commit sanitized transform');
 }
 
-console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 bridgeAnchors=structural ciTree=clean');
+console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 bridgeAnchors=structural rendererGate=semantic ciTree=clean');
