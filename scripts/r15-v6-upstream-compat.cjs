@@ -37,49 +37,25 @@ if (mode === 'apply') {
   let player = state.tests['tests/player-interactions.test.cjs'];
   player = replaceOnce(
     player,
+    "for (const cue of cues) { assert.equal(cue.size, 82); assert.equal(cue.position, 59);",
     "for (const cue of cues) { assert.equal(cue.size, 100); assert.equal(cue.position, 50);",
-    "for (const cue of cues) { assert.equal(cue.size, 92); assert.equal(cue.position, 50);",
-    'R2V calibrated VTT width expectation'
+    'R2V native VTT full-width expectation'
   );
   write('tests/player-interactions.test.cjs', player);
 
   let startup = state.tests['tests/startup.test.cjs'];
   startup = replaceOnce(
     startup,
-    "constructor() { super(); windows.push(this); this.webContents = { send() {}, id: windows.length }; }",
-    "constructor() { super(); windows.push(this); this.webContents = { send() {}, id: windows.length, once() {}, isDestroyed: () => false, mainFrame: {} }; }",
-    'startup webContents shared bridge fixture'
-  );
-  startup = replaceOnce(
-    startup,
-    "const electron = { app, BrowserWindow: Window, ipcMain: { handle: (name, fn) => handlers.set(name, fn) },",
-    "const electron = { app, BrowserWindow: Window, ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} },",
-    'startup ipcMain shared bridge fixture'
-  );
-  startup = replaceOnce(
-    startup,
-    "dialog: { showErrorBox: (...args) => errors.push(args) }, shell: {} };",
-    "dialog: { showErrorBox: (...args) => errors.push(args) }, shell: {}, sharedTexture: { importSharedTexture: () => ({ release() {} }), sendSharedTexture: async () => {} } };",
-    'startup Electron sharedTexture fixture'
-  );
-  startup = replaceOnce(
-    startup,
-    "vm.runInNewContext(fs.readFileSync(file, 'utf8'), { module, exports: module.exports, require: name => name === 'electron' ? electron : createRequire(file)(name), process, console, Buffer, URL, setTimeout, clearTimeout, __dirname: path.dirname(file) }, { filename: file });",
-    "vm.runInNewContext(fs.readFileSync(file, 'utf8'), { module, exports: module.exports, require: name => name === 'electron' ? electron : createRequire(file)(name), process, console, Buffer, URL, setTimeout, clearTimeout, setInterval, clearInterval, performance, __dirname: path.dirname(file) }, { filename: file });",
-    'startup nested module timer fixture'
-  );
-  startup = replaceOnce(
-    startup,
     "require: name => name === 'electron' ? electron : name === './updater.cjs' ? load(path.resolve(__dirname, '../electron/updater.cjs')) : realRequire(name),",
-    "require: name => name === 'electron' ? electron : name === './updater.cjs' ? load(path.resolve(__dirname, '../electron/updater.cjs')) : name === './libmpv-shared-main.cjs' ? load(path.resolve(__dirname, '../electron/libmpv-shared-main.cjs')) : realRequire(name),",
-    'startup nested libmpv bridge loader fixture'
+    "require: name => name === 'electron' ? electron : name === './updater.cjs' ? load(path.resolve(__dirname, '../electron/updater.cjs')) : name === './libmpv-shared-main.cjs' ? { createLibmpvSharedBridge: () => ({ ensure: async () => ({ ok: true }), attachWindow: async () => ({ ok: true }), dispose: async () => {} }) } : realRequire(name),",
+    'startup libmpv bridge sandbox fixture'
   );
   write('tests/startup.test.cjs', startup);
 
   for (const file of productFiles) {
     if (sha256(file) !== state.productHashes[file]) throw new Error(`qualification helper changed product file: ${file}`);
   }
-  console.log('R3F_R15_V6_UPSTREAM_COMPAT_APPLY vttMaxWidth=92 startupSharedTextureMock=1 nestedBridgeVm=1 productSource=unchanged');
+  console.log('R3F_R15_V6_UPSTREAM_COMPAT_APPLY nativeVtt=100x50 startupBridgeStub=1 productSource=unchanged');
 } else if (mode === 'restore') {
   if (!fs.existsSync(statePath)) throw new Error(`compatibility state missing: ${statePath}`);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
