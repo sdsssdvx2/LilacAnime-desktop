@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 # eab226b is the fully reviewed R32 build core with the presenter-smoke callback
 # fix in its history and BOM-free package/manifest writes. Keep that exact core
-# and change only the producer qualification to match R32's 250 ms native watchdog.
+# and change only the producer qualification plus the final presenter safety pass.
 $baseCommit = 'eab226b788528253da08225d7ca2de8935e1bf39'
 $core = (& git show "$baseCommit`:scripts/r32-flix-worker-native-focus-build.ps1") -join "`n"
 if ($LASTEXITCODE -ne 0 -or -not $core) { throw 'R32 fixed build core could not be loaded' }
@@ -16,8 +16,13 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 
 $core = Replace-Once $core `
   "  'r32-native-presenter-smoke.cjs'" `
-  ("  'r32-native-presenter-smoke.cjs'," + "`n" + "  'r32-native-producer-watchdog-smoke.cjs'") `
-  'R32 watchdog smoke support entry'
+  ("  'r32-native-presenter-smoke.cjs'," + "`n" + "  'r32-native-producer-watchdog-smoke.cjs'," + "`n" + "  'r32-presenter-bounds-subtitle-fix.cjs'") `
+  'R32 watchdog/safety support entry'
+
+$core = Replace-Once $core `
+  "node scripts/r32-flix-worker-native-focus-fix.cjs`nAssert-Exit 'R32 transform'" `
+  ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
+  'R32 apply presenter safety pass'
 
 $core = Replace-Once $core `
   '& node_modules/.bin/electron.cmd scripts/smoke-libmpv-r3e-native-producer.cjs' `
@@ -28,6 +33,24 @@ $core = Replace-Once $core `
   "Assert-Exit 'R32 native producer callback smoke'" `
   "Assert-Exit 'R32 native producer 250ms watchdog smoke'" `
   'R32 watchdog smoke assertion label'
+
+# Strengthen the existing source qualification so a green build also proves the
+# producer thread no longer touches HWND geometry/visibility and renderer geometry
+# contains physical x/y for the exact video element rather than whole BrowserWindow.
+$core = Replace-Once $core `
+  "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000'" `
+  ("`$entry = Get-Content 'src/libmpv-shared-entry.js' -Raw" + "`n" +
+   "`$appSource = Get-Content 'src/app.js' -Raw" + "`n" +
+   "if (`$nativeSource -notmatch 'LILAC_R32_PRESENTER_BOUNDS_MAIN_THREAD' -or `$nativeSource -notmatch 'SetNativePresenterBounds') { throw 'R32 bounded presenter source gate failed' }" + "`n" +
+   "`$presentStart = `$nativeSource.IndexOf('void R32PresentNativeFrame('); `$presentEnd = `$nativeSource.IndexOf('napi_value ConfigureNativePresenter(', `$presentStart)" + "`n" +
+   "if (`$presentStart -lt 0 -or `$presentEnd -le `$presentStart) { throw 'R32 presenter hotpath audit boundary missing' }" + "`n" +
+   "`$presentBody = `$nativeSource.Substring(`$presentStart, `$presentEnd - `$presentStart)" + "`n" +
+   "if (`$presentBody -match 'SetWindowPos\\(' -or `$presentBody -match 'ShowWindow\\(' -or `$presentBody -match 'GetClientRect\\(') { throw 'R32 producer thread still mutates HWND state' }" + "`n" +
+   "if (`$bridge -notmatch 'setNativePresenterBounds' -or `$bridge -notmatch 'r32SyncNativePresenterBounds' -or `$bridge -notmatch 'sub-visibility.*useNative') { throw 'R32 bounds/subtitle bridge gate failed' }" + "`n" +
+   "if (`$entry -notmatch 'LILAC_R32_NATIVE_SUBTITLE_FALLBACK' -or `$entry -notmatch 'rect\\.left \\* dpr' -or `$entry -notmatch 'rect\\.top \\* dpr' -or `$entry -notmatch 'sub-add') { throw 'R32 video-rect/native-subtitle renderer gate failed' }" + "`n" +
+   "if (`$appSource -notmatch 'lilacNativePath') { throw 'R32 native subtitle source path gate failed' }" + "`n" +
+   "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000 videoRect=physical hwndOps=main-only subtitleFallback=libmpv-unfocused'") `
+  'R32 strengthen source qualification'
 
 $tempScript = Join-Path $env:RUNNER_TEMP 'r32-watchdog-qualified-build.ps1'
 [System.IO.File]::WriteAllText($tempScript, $core, (New-Object System.Text.UTF8Encoding($false)))
