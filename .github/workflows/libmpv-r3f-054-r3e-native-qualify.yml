@@ -1,0 +1,215 @@
+name: LilacAnime libmpv R3F 0.5.54 R3E native qualification
+
+on:
+  push:
+    branches: [libmpv-r3f-upstream-0.5.54-rebase]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r3e-native-qualify.yml
+      - .github/workflows/libmpv-r3f-054-r3e-map.yml
+      - scripts/r3f-054-r3e-map.cjs
+      - scripts/r3f-054-r2z-map.cjs
+      - scripts/r3f-054-r2v-map.cjs
+      - scripts/r3f-054-rebase-preflight.cjs
+      - scripts/r3f-port-libmpv-shared-base-0554.cjs
+      - scripts/r3f-port-r2q-tenrai-0554.cjs
+      - scripts/r3f-bridge-r2r-metadata-0554.cjs
+      - scripts/r3f-patch-r2t-transform-0554.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r3f-054-r3e-native-qualification
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_VERSION: 44.9.3
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  ELECTRON_ZIP_SHA256: 41a1ffa0541cb0f2c9b9fe920dd2cef1793ad0ea2ada1a9582958880f4d1b23c
+
+jobs:
+  qualify-native:
+    runs-on: windows-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Reconstruct exact 0.5.54 through corrected R3E
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r3f-054-r3e-map.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3F R3E map syntax failed'}
+          node scripts/r3f-054-r3e-map.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3F R3E reconstruction failed'}
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r3e.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r14'){throw 'R3E reconstructed identity mismatch'}
+          $main=Get-Content electron/main.cjs -Raw
+          foreach($m in @('LILAC_LIBMPV_SHARED_SOURCE_PATCH','createLibmpvSharedBridge({','await libmpvShared.ensure()','await libmpvShared.attachWindow(win)',"const API = 'https://api.tenrai.org/v1';")){if(-not $main.Contains($m)){throw "runtime wiring marker missing: $m"}}
+          $preload=Get-Content electron/libmpv-shared-preload.cjs -Raw
+          foreach($m in @("presentationMode = 'direct-receive-webgpu-copy'",'copyExternalImageToTexture','gpu.context.getCurrentTexture()')){if(-not $preload.Contains($m)){throw "direct presenter marker missing: $m"}}
+          foreach($m in @('stagingTexture','copyTextureToTexture','ensureGpuPresentLoop','GPU_PRESENT_IDLE_STOP_MS','requestAnimationFrame(')){if($preload.Contains($m)){throw "forbidden presenter marker survived: $m"}}
+          $bridge=Get-Content electron/libmpv-shared-main.cjs -Raw
+          foreach($m in @('frameProducerStarted','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats')){if(-not $bridge.Contains($m)){throw "R3E bridge marker missing: $m"}}
+          $native=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          foreach($m in @('FrameProducerReadyFrame','StartFrameProducerWorker','producerRawWakeSignals','producerWakePending','producerReady','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats')){if(-not $native.Contains($m)){throw "R3E native marker missing: $m"}}
+          if($native.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control unexpectedly enabled'}
+          Write-Host 'R3F_0554_R3E_RECONSTRUCTION_OK direct=1 runtimeWiring=1 producer=1'
+
+      - name: Download pinned libmpv SDK and qualified DLL
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $archive=Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract=Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $env:LIBMPV_SDK_URL
+          if($LASTEXITCODE -ne 0){throw 'SDK download failed'}
+          $sdkHash=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sdkHash -ne $env:LIBMPV_SDK_SHA256){throw "SDK hash mismatch actual=$sdkHash"}
+          New-Item -ItemType Directory -Force -Path $extract|Out-Null
+          7z.exe x $archive "-o$extract" -y|Out-Null
+          if($LASTEXITCODE -ne 0){throw 'SDK extraction failed'}
+          $client=Get-ChildItem $extract -Recurse -File -Filter client.h|Where-Object{(Split-Path (Split-Path $_.FullName -Parent) -Leaf) -eq 'mpv'}|Select-Object -First 1
+          if(-not $client){throw 'libmpv client.h missing'}
+          $vendor=Join-Path $PWD 'native/libmpv-d3d11-bridge/vendor/include/mpv'
+          New-Item -ItemType Directory -Force -Path $vendor|Out-Null
+          Copy-Item (Join-Path (Split-Path $client.FullName -Parent) '*') $vendor -Recurse -Force
+          $dll=Get-ChildItem $extract -Recurse -File|Where-Object{$_.Name -in @('libmpv-2.dll','mpv-2.dll')}|Select-Object -First 1
+          if(-not $dll){throw 'libmpv DLL missing'}
+          Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          $dllHash=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($dllHash -ne $env:QUALIFIED_DLL_SHA256){throw "qualified DLL hash mismatch actual=$dllHash"}
+          Write-Host "LIBMPV_SDK_SHA256=$sdkHash"
+          Write-Host "LIBMPV_DLL_SHA256=$dllHash"
+
+      - name: Build R3E addon for Electron 44.9.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(!(Test-Path node_modules/.bin/node-gyp.cmd)){
+            npm install --no-save --no-audit --no-fund node-gyp@12.2.0
+            if($LASTEXITCODE -ne 0){throw 'node-gyp install failed'}
+          }
+          & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
+          if($LASTEXITCODE -ne 0){throw 'R3E addon build failed'}
+          $built='native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node'
+          if(!(Test-Path $built)){throw 'built R3E addon missing'}
+          Copy-Item $built electron/lilac-libmpv-player-bridge.node -Force
+          $addon=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+          $dll=(Resolve-Path 'electron/libmpv-2.dll').Path
+          $addonHash=(Get-FileHash $addon -Algorithm SHA256).Hash.ToLowerInvariant()
+          "LILAC_LIBMPV_PLAYER_ADDON=$addon"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "LILAC_LIBMPV_DLL=$dll"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "R3F_ADDON_SHA256=$addonHash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R3F_R3E_ADDON_SHA256=$addonHash"
+
+      - name: Install verified official Electron runtime for native smokes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $zip=Join-Path $env:RUNNER_TEMP 'electron-v44.9.3-win32-x64.zip'
+          $dir=Join-Path $env:RUNNER_TEMP 'electron-runtime-direct'
+          $url='https://github.com/electron/electron/releases/download/v44.9.3/electron-v44.9.3-win32-x64.zip'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $zip $url
+          if($LASTEXITCODE -ne 0){throw 'official Electron download failed'}
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $env:ELECTRON_ZIP_SHA256){throw "Electron ZIP hash mismatch actual=$actual"}
+          New-Item -ItemType Directory -Force -Path $dir|Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $exe=Join-Path $dir 'electron.exe'
+          if(!(Test-Path $exe)){throw "official Electron binary missing: $exe"}
+          "ELECTRON_SMOKE_EXE=$exe"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ELECTRON_ZIP_SHA256=$actual"
+
+      - name: Run callback, timing, command and retention native smokes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $electron=$env:ELECTRON_SMOKE_EXE
+          if(-not $electron -or !(Test-Path $electron)){throw 'Electron smoke runtime missing'}
+          $env:ELECTRON_RUN_AS_NODE='1'
+          function Invoke-NativeSmoke([string]$script,[string]$okMarker,[int]$timeoutSec=180){
+            $safe=($script -replace '[^A-Za-z0-9_.-]','_')
+            $out=Join-Path $env:RUNNER_TEMP "$safe.out.log"
+            $err=Join-Path $env:RUNNER_TEMP "$safe.err.log"
+            $p=Start-Process -FilePath $electron -ArgumentList @($script) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+            try{Wait-Process -Id $p.Id -Timeout $timeoutSec -ErrorAction Stop}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue;throw "$script timed out"}
+            $p.Refresh()
+            $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
+            $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
+            Write-Host "===== $script ====="
+            Write-Host $stdout
+            if($stderr){Write-Host $stderr}
+            if($p.ExitCode -ne 0){throw "$script failed exit=$($p.ExitCode)"}
+            if($stdout -notmatch [regex]::Escape($okMarker)){throw "$script missing $okMarker"}
+          }
+          try{
+            Invoke-NativeSmoke 'scripts/smoke-libmpv-r3b-update-callback.cjs' 'LIBMPV_R3B_UPDATE_CALLBACK_OK' 180
+            Invoke-NativeSmoke 'scripts/smoke-libmpv-r3d-native-timing.cjs' 'LIBMPV_R3D_NATIVE_TIMING_OK' 180
+            Invoke-NativeSmoke 'scripts/smoke-libmpv-native-command-roundtrip.cjs' 'LIBMPV_NATIVE_COMMAND_ROUNDTRIP_OK' 180
+            Invoke-NativeSmoke 'scripts/smoke-libmpv-native-retention-fhd.cjs' 'LIBMPV_NATIVE_RETENTION_FHD_AB_OK' 240
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+          Write-Host 'R3F_0554_RETAINED_NATIVE_SMOKES_OK callback=1 timing=1 command=1 retention=1'
+
+      - name: Run corrected R3E producer qualification three times
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $electron=$env:ELECTRON_SMOKE_EXE
+          if(-not $electron -or !(Test-Path $electron)){throw 'Electron smoke runtime missing'}
+          $env:ELECTRON_RUN_AS_NODE='1'
+          try {
+            for($i=1;$i -le 3;$i++){
+              $out=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.out.log"
+              $err=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.err.log"
+              $p=Start-Process -FilePath $electron -ArgumentList @('scripts/smoke-libmpv-r3e-native-producer.cjs') -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+              try{Wait-Process -Id $p.Id -Timeout 180 -ErrorAction Stop}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue;throw "R3E smoke iteration $i deadlocked"}
+              $p.Refresh()
+              $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
+              $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
+              Write-Host "===== R3F_R3E_ITERATION_$i ====="
+              Write-Host $stdout
+              if($stderr){Write-Host $stderr}
+              if($p.ExitCode -ne 0){throw "R3E smoke iteration $i failed exit=$($p.ExitCode)"}
+              if($stdout -notmatch 'LIBMPV_R3E_NATIVE_PRODUCER_OK'){throw "R3E iteration $i missing OK marker"}
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+          Write-Host 'R3F_0554_R3E_NATIVE_PRODUCER_3X_OK'
+
+      - name: Verify native qualification did not alter R3F source invariants
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r3e.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r14'){throw 'post-smoke R3E identity mismatch'}
+          $preload=Get-Content electron/libmpv-shared-preload.cjs -Raw
+          foreach($m in @('stagingTexture','copyTextureToTexture','ensureGpuPresentLoop','GPU_PRESENT_IDLE_STOP_MS','requestAnimationFrame(')){if($preload.Contains($m)){throw "post-smoke presenter regression: $m"}}
+          $main=Get-Content electron/main.cjs -Raw
+          foreach($m in @('playerSeekHint','controlsOnPlaying','showSeekHint')){
+            $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+            if(-not $combined.Contains($m)){throw "post-smoke upstream marker missing: $m"}
+          }
+          if(Test-Path electron/miruro-session.cjs){throw 'obsolete Miruro session resurrected'}
+          if(!(Test-Path electron/miruro-browser.cjs)){throw 'Miruro browser missing'}
+          $dllHash=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          $addonHash=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($dllHash -ne $env:QUALIFIED_DLL_SHA256){throw 'post-smoke DLL hash changed'}
+          if($addonHash -ne $env:R3F_ADDON_SHA256){throw 'post-smoke addon hash changed'}
+          Write-Host "R3F_0554_NATIVE_QUALIFICATION_OK addon=$addonHash dll=$dllHash sourceInvariant=1"
