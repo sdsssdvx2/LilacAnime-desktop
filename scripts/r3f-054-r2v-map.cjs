@@ -24,15 +24,15 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 function markers(text, expected, label) {
   for (const marker of expected) assert(text.includes(marker), `${label} missing marker: ${marker}`);
 }
-function preserve054(label) {
+function preserve054(label, { tenrai = false } = {}) {
   const ui = read('src/app.js') + read('src/player.js') + read('src/index.html');
   markers(ui, ['playerSeekHint', 'controlsOnPlaying', 'showSeekHint'], `${label} upstream UI`);
   const updater = read('electron/updater.cjs');
   markers(updater, ['CUSTOM_RELEASES_API', 'checkCustom()', "!MAC && !DEB && this.state.status === 'ready'"], `${label} updater`);
   assert(!fs.existsSync(path.join(root, 'electron/miruro-session.cjs')), `${label} resurrected obsolete Miruro session`);
   assert(fs.existsSync(path.join(root, 'electron/miruro-browser.cjs')), `${label} removed 0.5.54 Miruro browser`);
-  markers(read('electron/main.cjs'), ["const API = 'https://api.tenrai.org/v1';"], `${label} Tenrai`);
-  console.log(`R3F_0554_PRESERVE_OK=${label}`);
+  if (tenrai) markers(read('electron/main.cjs'), ["const API = 'https://api.tenrai.org/v1';"], `${label} Tenrai`);
+  console.log(`R3F_0554_PRESERVE_OK=${label} tenrai=${tenrai}`);
 }
 function identity(version, tag, label) {
   const pkg = json('package.json');
@@ -69,7 +69,7 @@ preserve054('R2P');
 
 runNode(r2qPort, 'R2Q_0554_PORT');
 identity('0.5.49-libmpv-r2q.rc1', 'libmpv-r2k-v0.5.49-r7', 'R2Q');
-preserve054('R2Q');
+preserve054('R2Q', { tenrai: true });
 
 runNode(r2rBridge, 'R2R_0554_BRIDGE');
 for (const script of [
@@ -79,12 +79,12 @@ for (const script of [
   'scripts/rebundle-libmpv-r2s.cjs'
 ]) runNode(script, `R2S:${path.basename(script)}`);
 identity('0.5.50-libmpv-r2s.rc1', 'libmpv-r2k-v0.5.50-r2', 'R2S');
-preserve054('R2S');
+preserve054('R2S', { tenrai: true });
 
 runNode(r2tPrep, 'R2T_AUTHORITATIVE_NORMALIZE');
 runNode('scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs', 'R2T');
 identity('0.5.50-libmpv-r2t.rc1', 'libmpv-r2k-v0.5.50-r3', 'R2T');
-preserve054('R2T');
+preserve054('R2T', { tenrai: true });
 
 runNode('scripts/apply-libmpv-r2u-v2.cjs', 'R2U_V2');
 identity('0.5.50-libmpv-r2u.rc1', 'libmpv-r2k-v0.5.50-r4', 'R2U');
@@ -92,7 +92,7 @@ const r2uPlayer = read('src/player.js');
 markers(r2uPlayer, ['VTT_FONT_FAMILIES', 'function libmpvSurface(', 'vttFontPreset()'], 'R2U player');
 const r2uEntry = read('src/libmpv-shared-entry.js');
 markers(r2uEntry, ['browserVisualBottom', 'const fontFamilies=', 'fontVariationSettings'], 'R2U entry');
-preserve054('R2U');
+preserve054('R2U', { tenrai: true });
 
 runNode('scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs', 'R2V');
 identity('0.5.50-libmpv-r2v.rc1', 'libmpv-r2k-v0.5.50-r5', 'R2V');
@@ -106,6 +106,6 @@ assert(!r2vPlayer.includes("localStorage.setItem('vttStyle','false')"), 'R2V rea
 markers(read('electron/preload.cjs'), ["runtimeBridgeVersion: 'r2v'"], 'R2V preload');
 markers(read('electron/main.cjs'), ["mode==='__lilac_miniplayer_on__'"], 'R2V main fallback');
 markers(read('src/libmpv-shared-entry.js'), [' : 1.3;'], 'R2V overlay line-height');
-preserve054('R2V');
+preserve054('R2V', { tenrai: true });
 
 console.log('R3F_0554_R2V_MAP_OK chain=R2M-R2N-R2P-R2Q-R2R-R2S-R2T-R2U-v2-R2V');
