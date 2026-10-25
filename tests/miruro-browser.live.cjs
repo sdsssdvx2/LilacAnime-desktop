@@ -1,13 +1,12 @@
 // Read-only end-to-end check of the actual document transport and catalog codec.
-const {app,BrowserWindow,session}=require('electron');
-require('../electron/popup-policy.cjs').installPopupBlocker(app);
+const {app,BrowserWindow}=require('electron');
 const assert=require('node:assert/strict'),zlib=require('node:zlib');
-const {createMiruroSession}=require('../electron/miruro-session.cjs');
+const {createMiruroBrowser}=require('../electron/miruro-browser.cjs');
 if(process.argv.includes('--fresh'))app.setPath('userData',require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'miruro-document-check-')));
 app.whenReady().then(async()=>{
  const deadline=setTimeout(()=>{console.error('Miruro live check timed out');app.exit(1)},60000);
  try {
-  const request=createMiruroSession({session,BrowserWindow});
+  const request=createMiruroBrowser({BrowserWindow});
   const urls=['https://www.miruro.to/api/v1/anime?sort=-popularity&limit=15','https://www.miruro.to/api/v1/anime?sort=-score&limit=15'];
   let animeId;
   const read=async url=>{
