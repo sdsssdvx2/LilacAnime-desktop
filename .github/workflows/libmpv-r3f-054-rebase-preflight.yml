@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/libmpv-r3f-054-rebase-preflight.yml
       - scripts/r3f-054-rebase-preflight.cjs
+      - scripts/r3f-port-r2q-tenrai-0554.cjs
   workflow_dispatch:
 
 concurrency:
@@ -32,6 +33,9 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          $r2qPort=Join-Path $env:RUNNER_TEMP 'r3f-port-r2q-tenrai-0554.cjs'
+          Copy-Item scripts/r3f-port-r2q-tenrai-0554.cjs $r2qPort -Force
+          "R3F_R2Q_PORT=$r2qPort"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           node scripts/r3f-054-rebase-preflight.cjs
           if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
           node --check scripts/apply-libmpv-r2m-finalize.cjs
@@ -90,14 +94,16 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          node --check scripts/apply-libmpv-r2q-tenrai-metadata.cjs
-          if($LASTEXITCODE -ne 0){throw 'R2Q syntax failed'}
-          node scripts/apply-libmpv-r2q-tenrai-metadata.cjs
-          if($LASTEXITCODE -ne 0){throw 'R2Q compatibility failed'}
+          node --check $env:R3F_R2Q_PORT
+          if($LASTEXITCODE -ne 0){throw 'R3F R2Q porter syntax failed'}
+          node $env:R3F_R2Q_PORT
+          if($LASTEXITCODE -ne 0){throw 'R3F R2Q 0.5.54 port failed'}
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.49-libmpv-r2q.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r7'){throw 'R2Q metadata mismatch'}
           $main=Get-Content electron/main.cjs -Raw
-          if(-not $main.Contains("const API = 'https://api.tenrai.org/v1';")){throw 'R2Q Tenrai base missing'}
+          foreach($marker in @("const API = 'https://api.tenrai.org/v1';",'AbortSignal.timeout(15000)',"Accept: 'application/json'")){
+            if(-not $main.Contains($marker)){throw "R2Q metadata marker missing: $marker"}
+          }
           if($main.Contains('api.jikan.moe')){throw 'R2Q Jikan runtime URL survived'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
           foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){
