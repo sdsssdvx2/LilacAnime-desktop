@@ -27,7 +27,8 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const sourcePath = '.github/workflows/libmpv-r3f-054-r15-finalize-v5.yml';
-          const targetPath = '.github/workflows/libmpv-r3f-054-r15-finalize-v6.yml';
+          const targetPath = '.ci/libmpv-r3f-054-r15-finalize-v6.yml';
+          fs.mkdirSync('.ci', { recursive: true });
           let text = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n');
           text = text.replaceAll('V5', 'V6').replaceAll('v5', 'v6');
           function replaceOnce(needle, replacement, label) {
@@ -82,8 +83,8 @@ jobs:
           console.log('R3F_R15_V6_WORKFLOW_GENERATED productSource=unchanged testCompat=sandbox-only');
           NODE
           git diff --check
-          git add .github/workflows/libmpv-r3f-054-r15-finalize-v6.yml
+          git add .ci/libmpv-r3f-054-r15-finalize-v6.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "ci: add r15 release finalizer v6"
+          git commit -m "ci: stage r15 release finalizer v6"
           git push origin HEAD:libmpv-r3f-054-release-r15
