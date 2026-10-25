@@ -7,10 +7,12 @@ on:
       - .github/workflows/libmpv-r3f-054-r32-flix-worker-focus-surface.yml
       - scripts/r32-flix-worker-native-focus-build.ps1
       - scripts/r32-flix-worker-native-focus-fix.cjs
+      - scripts/r32-presenter-bounds-subtitle-fix.cjs
       - scripts/r32-transform-source-sanitize.cjs
       - scripts/r32-worker-unpack-fix.cjs
       - scripts/r32-flix-worker-smoke.cjs
       - scripts/r32-native-presenter-smoke.cjs
+      - scripts/r32-native-producer-watchdog-smoke.cjs
   workflow_dispatch:
 
 concurrency:
@@ -80,7 +82,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
-          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r32 native focus surface + Flix worker' --notes 'R32 follows the R31 hardware evidence instead of repeating renderer-level focus experiments. R31 successfully drew 500 Canvas2D focus-shield frames with zero failures while the user still saw black flashing, so R32 disables the active Canvas2D fallback and presents the SAME libmpv D3D11 producer texture through a raw no-activate WS_CHILD/DXGI surface only while the Electron window is unfocused. Focused playback remains the qualified direct WebGPU path; no second mpv process, decoder, CPU readback, rAF gate or GPU completion fence is introduced. R32 also moves FlixCloud range fetch, Buffer.concat, XOR segment decode and five-segment prefetch to a worker_threads worker whose loopback HTTP server is contacted directly by libmpv, removing segment work from the Electron main event loop. Finally the native producer 6ms empty polling fallback becomes a callback-authoritative 250ms watchdog. R31 state coalescing, R30 managed texture release/backlog collapse, R27 diagnostics, R24 latest-frame mailbox/occlusion guards, profile identity and the pinned libmpv DLL are preserved.'
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r32 native focus surface + Flix worker' --notes 'R32 follows the R31 hardware evidence instead of repeating renderer-level focus experiments. R31 successfully drew 500 Canvas2D focus-shield frames with zero failures while the user still saw black flashing, so R32 disables the active Canvas2D fallback and presents the SAME libmpv D3D11 producer texture through a raw no-activate WS_CHILD/DXGI surface only while the Electron window is unfocused. The child surface is constrained to the physical video-element rectangle; HWND geometry/visibility changes stay on Electron main rather than the native producer thread, whose hot path is only CopyResource + Present. Because the existing subtitles are HTML/VTT overlays that a child HWND would cover, the same subtitle file is preloaded invisibly in libmpv and enabled only while the native unfocused surface is active; focused playback immediately returns to the existing HTML subtitle renderer. Focused video remains the qualified direct WebGPU path; no second mpv process, decoder, CPU readback, rAF gate or GPU completion fence is introduced. R32 also moves FlixCloud range fetch, Buffer.concat, XOR segment decode and five-segment prefetch to a worker_threads worker whose loopback HTTP server is contacted directly by libmpv, removing segment work from the Electron main event loop. Finally the native producer 6ms empty polling fallback becomes a callback-authoritative 250ms watchdog. R31 state coalescing, R30 managed texture release/backlog collapse, R27 diagnostics, R24 latest-frame mailbox/occlusion guards, profile identity and the pinned libmpv DLL are preserved.'
           if($LASTEXITCODE-ne 0){throw 'release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
           if($LASTEXITCODE-ne 0){throw 'release upload failed'}
