@@ -108,7 +108,6 @@ markers(bridge, [
   'void deliverImportedFrame(delivery)', 'sendInvokeMaxMs',
   'nextNativeFrameDeadlinePerfAt', 'pumpPhaseCatchupPeriods', 'pumpPhaseLateMaxMs'
 ], 'R3A bridge');
-runNode('scripts/smoke-libmpv-r3a-decoupled-delivery.cjs', 'R3A_SOURCE_SMOKE');
 stageGuard('R3A');
 
 runNode('scripts/apply-libmpv-r3b-update-callback.cjs', 'R3B_UPDATE_CALLBACK');
@@ -117,7 +116,10 @@ runNode('scripts/apply-libmpv-r3b-pending-wake.cjs', 'R3B_PENDING_WAKE');
 bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, ['nativeUpdateCallbackInstalled', 'wakePumpFromNative', 'nativeWakePending'], 'R3B bridge');
 markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['mpv_render_context_set_update_callback'], 'R3B native');
-// smoke-libmpv-r3b-update-callback requires a freshly compiled addon + libmpv DLL;
+// Despite its historical filename, this fake-addon smoke was later strengthened to
+// require the R3B update callback to be authoritative. Run it only after pending-wake.
+runNode('scripts/smoke-libmpv-r3a-decoupled-delivery.cjs', 'R3AB_CALLBACK_DELIVERY_SOURCE_SMOKE');
+// smoke-libmpv-r3b-update-callback itself requires a freshly compiled addon + libmpv DLL;
 // run it in the native qualification workflow, not this source-transform map.
 stageGuard('R3B');
 
