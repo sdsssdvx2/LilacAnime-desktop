@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 # eab226b is the fully reviewed R32 build core with the presenter-smoke callback
 # fix in its history and BOM-free package/manifest writes. Keep that exact core
 # and change only the producer qualification plus the final presenter safety pass.
-# The safety sanitizer now rewrites _surfaceSize by method boundaries, not an R31-sensitive exact body.
+# The safety sanitizer rewrites _surfaceSize by method boundaries and emits plain-string diagnostics.
 $baseCommit = 'eab226b788528253da08225d7ca2de8935e1bf39'
 $core = (& git show "$baseCommit`:scripts/r32-flix-worker-native-focus-build.ps1") -join "`n"
 if ($LASTEXITCODE -ne 0 -or -not $core) { throw 'R32 fixed build core could not be loaded' }
