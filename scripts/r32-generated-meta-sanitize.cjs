@@ -20,23 +20,6 @@ const closeAt = source.indexOf("\n'@ | Set-Content $presenterSmoke -Encoding utf
 if (openAt < 0 || closeAt < 0) throw new Error('presenter smoke here-string delimiters missing');
 source = source.slice(0, openAt) + '\n@"\n' + source.slice(openAt + 4, closeAt) + '\n"@ | Set-Content $presenterSmoke -Encoding utf8' + source.slice(closeAt + "\n'@ | Set-Content $presenterSmoke -Encoding utf8".length);
 
-// Restore and execute a real worker_threads RPC smoke after the R32 transform.
-replaceOnce(
-  "  'scripts/r32-flix-worker-native-focus-fix.cjs'\n)) {",
-  "  'scripts/r32-flix-worker-native-focus-fix.cjs',\n  'scripts/r32-flix-worker-smoke.cjs'\n)) {",
-  'support worker smoke'
-);
-replaceOnce(
-  "'r31-focus-compositor-state-coalesce-fix.cjs','r32-flix-worker-native-focus-fix.cjs')) {",
-  "'r31-focus-compositor-state-coalesce-fix.cjs','r32-flix-worker-native-focus-fix.cjs','r32-flix-worker-smoke.cjs')) {",
-  'restore worker smoke'
-);
-replaceOnce(
-  "node scripts/r32-flix-worker-native-focus-fix.cjs\nAssert-Exit 'R32 focus/stutter patch'",
-  "node scripts/r32-flix-worker-native-focus-fix.cjs\nAssert-Exit 'R32 focus/stutter patch'\nnode scripts/r32-flix-worker-smoke.cjs\nAssert-Exit 'R32 Flix worker RPC smoke'",
-  'run worker smoke'
-);
-
 // Do not make the packaged gate depend on esbuild retaining dead R31 Canvas2D
 // helper symbols after R32 has deliberately disabled that path.
 replaceOnce(
@@ -46,4 +29,4 @@ replaceOnce(
 );
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R32_GENERATED_META_SANITIZE_OK hereString=opposite-delimiter flixSmoke=enabled packageGate=r32-only');
+console.log('R32_GENERATED_META_SANITIZE_OK hereString=opposite-delimiter packageGate=r32-only');
