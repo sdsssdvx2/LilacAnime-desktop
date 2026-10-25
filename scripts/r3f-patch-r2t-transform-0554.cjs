@@ -13,5 +13,12 @@ const newBlock = `if (entry.includes('.lilac-vtt-cue{display:block;max-width:96%
 const count = source.split(oldBlock).length - 1;
 if (count !== 1) throw new Error(`R3F R2T transform patch expected one width block, found ${count}`);
 source = source.replace(oldBlock, newBlock);
+
+const oldCheck = `if (!entry.includes('browserBottomInset') || !entry.includes(' : 1.2;') || !entry.includes('.lilac-vtt-cue{max-width:100%;')) throw new Error('subtitle parity markers missing');`;
+const newCheck = `if (!entry.includes('browserBottomInset') || !entry.includes(' : 1.2;') || !entry.includes('.lilac-vtt-cue{display:block;max-width:100%;')) throw new Error('subtitle parity markers missing');`;
+const checkCount = source.split(oldCheck).length - 1;
+if (checkCount !== 1) throw new Error(`R3F R2T transform patch expected one subtitle parity check, found ${checkCount}`);
+source = source.replace(oldCheck, newCheck);
+
 fs.writeFileSync(target, source);
-console.log('R3F_0554_R2T_WIDTH_PATCH_OK anchor=display-block width=96-to-100');
+console.log('R3F_0554_R2T_WIDTH_PATCH_OK anchor=display-block width=96-to-100 selfCheck=updated');
