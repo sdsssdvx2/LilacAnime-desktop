@@ -8,16 +8,18 @@
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest"><img src="https://img.shields.io/github/v/release/whispelyn-byte/LilacAnime-desktop?label=%EC%B5%9C%EC%8B%A0%20%EB%B2%84%EC%A0%84&color=b98fd6" alt="최신 버전"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078d4" alt="Windows 10 / 11">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%2F%20Intel-555555" alt="macOS">
+  <img src="https://img.shields.io/badge/Linux-x64%20%2F%20arm64-e95420" alt="Linux">
 </p>
 
 <p align="center">
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-Setup.exe"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Windows-c8a2c8" alt="Windows용 받기"></a>
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-mac-arm64.dmg"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Mac%20%28Apple%20Silicon%29-c8a2c8" alt="Mac(Apple Silicon)용 받기"></a>
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-mac-x64.dmg"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Mac%20%28Intel%29-c8a2c8" alt="Mac(Intel)용 받기"></a>
+  <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-x86_64.AppImage"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Linux%20%28x64%29-c8a2c8" alt="Linux(x64)용 받기"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/dream150/LilacAnime">LilacAnime</a> Android 앱을 Windows와 macOS에서 쓸 수 있게 옮긴 데스크톱 앱입니다.<br>
+  <a href="https://github.com/dream150/LilacAnime">LilacAnime</a> Android 앱을 Windows·macOS·Linux에서 쓸 수 있게 옮긴 데스크톱 앱입니다.<br>
   여러 사이트의 애니를 한 화면에서 찾아 보고, 한국어 자막을 자동으로 찾아 입히고,<br>
   없으면 일본어·영어 자막을 한국어로 번역해 줍니다. 회차를 내려받아 오프라인에서도 볼 수 있습니다.
 </p>
@@ -78,6 +80,20 @@
    - 그래도 열리지 않으면 터미널에서 `xattr -cr /Applications/LilacAnime.app`을 실행한 뒤 다시 엽니다.
 
 Mac에서는 업데이트를 받아 **지금 설치**를 누르면 새 버전의 `.dmg`가 열리고 앱이 닫힙니다. 2번처럼 응용 프로그램 폴더로 끌어 놓아(**대치**) 바꿉니다.
+
+### Linux
+
+1. 내 PC에 맞는 AppImage를 받습니다: **[x64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-x86_64.AppImage)** · **[arm64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-arm64.AppImage)**
+2. 실행 권한을 주고 실행합니다: `chmod +x LilacAnime-linux-*.AppImage` 후 더블클릭하거나 터미널에서 실행합니다.
+   - "libfuse.so.2"가 없다고 나오면 FUSE 2를 설치합니다 (Ubuntu 22.04: `sudo apt install libfuse2`, 24.04 이상: `libfuse2t64`).
+   - Ubuntu 24.04 이상에서 "SUID sandbox helper"/"namespace" 오류로 열리지 않으면 AppArmor가 샌드박스를 막은 것입니다. `--no-sandbox`를 붙여 실행하면 열리지만 샌드박스 없이 돌게 되니, 가능하면 AppImage용 AppArmor 프로필을 추가해 주세요.
+
+AppImage로 실행하면 **설정 > 업데이트 · 정보**에서 받은 새 버전이 지금 AppImage 파일을 바꾸고 다시 시작합니다 (파일이 있는 폴더에 쓰기 권한이 있어야 합니다).
+
+Linux 참고:
+- 한국어 자막 폰트는 Noto Sans CJK 또는 나눔 글꼴을 씁니다 (`fonts-noto-cjk`, `fonts-nanum`).
+- 7z/RAR로 묶인 자막은 `bsdtar`(Ubuntu: `libarchive-tools`)가 있을 때 풉니다.
+- 로컬 AI(llama.cpp)는 Vulkan 빌드를 쓰고, NVIDIA 그래픽카드(드라이버 설치됨)면 CUDA 빌드를 먼저 씁니다. AMD·Intel 카드는 Vulkan(`mesa-vulkan-drivers`)으로 돕니다. Whisper AI 자막은 Mac처럼 전용 Python으로 CPU에서 돕니다.
 
 ## 처음 쓸 때
 
@@ -403,8 +419,8 @@ Horimiya 1화(Jimaku SubsPlease 일본어 자막, 같은 대사를 빼면 425줄
 
 | 내용 | 위치 |
 |---|---|
-| 다운로드한 회차 | `동영상\LilacAnime\작품 이름\` (Mac: `~/Movies/LilacAnime/작품 이름/`) (내 목록 > 다운로드 > 저장 폴더 바꾸기로 바꿀 수 있음) |
-| 설정, API 키, 자막·번역, 로컬 AI 모델 | `%APPDATA%\lilacanime-desktop\` (Mac: `~/Library/Application Support/lilacanime-desktop/`) |
+| 다운로드한 회차 | `동영상\LilacAnime\작품 이름\` (Mac: `~/Movies/LilacAnime/작품 이름/`, Linux: `~/Videos/LilacAnime/작품 이름/`) (내 목록 > 다운로드 > 저장 폴더 바꾸기로 바꿀 수 있음) |
+| 설정, API 키, 자막·번역, 로컬 AI 모델 | `%APPDATA%\lilacanime-desktop\` (Mac: `~/Library/Application Support/lilacanime-desktop/`, Linux: `~/.config/lilacanime-desktop/`) |
 
 API 키는 이 PC에만 저장되고 다른 곳으로 보내지 않습니다 (각 키는 그 서비스 요청에만 씁니다). 기기 동기화를 켜면 내 목록과 시청 기록만 내가 연결한 서버로 보냅니다. 서버 비밀번호는 저장하지 않고, 서버가 준 토큰만 이 PC에 둡니다.
 
@@ -431,7 +447,9 @@ npm run dist
 
 Mac에서는 `npm run dist:mac`으로 그 Mac의 칩에 맞는 `dist/LilacAnime-mac-arm64.dmg`(또는 `-x64.dmg`)가 만들어집니다.
 
-GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일과 Mac용 `.dmg` 두 개(Apple Silicon · Intel)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
+Linux에서는 `npm run dist:linux`로 `dist/LilacAnime-linux-x86_64.AppImage`(또는 `-arm64.AppImage`)가 만들어집니다.
+
+GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일, Mac용 `.dmg` 두 개(Apple Silicon · Intel), Linux용 AppImage 두 개(x64 · arm64)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
 
 | 폴더 | 내용 |
 |---|---|

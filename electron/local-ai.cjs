@@ -55,13 +55,16 @@ const MODELS = [
 // for the card did not load, or found no card) and is given up on.
 // macOS has the one build for its processor, which uses the graphics through Metal; it stands in for Vulkan (the build
 // every PC starts with and falls back to).
-const MAC = process.platform === 'darwin';
+// Linux takes the Ubuntu builds (.tar.gz): Vulkan, and CUDA for an NVIDIA card (CUDA 12 only for x64). Their ROCm, SYCL
+// and OpenVINO builds need the maker's libraries installed on the system, so those cards use Vulkan there.
+const MAC = process.platform === 'darwin', LINUX = process.platform === 'linux', ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
+const ubuntu = (name, cudart) => [new RegExp(`^llama-b\\d+-bin-ubuntu-${name}-${ARCH}\\.tar\\.gz$`), ...(cudart ? [new RegExp(`^cudart-llama-b\\d+-bin-ubuntu-${name}-${ARCH}\\.tar\\.gz$`)] : [])];
 const RUNTIMES = {
   vulkan: MAC
-    ? { dir: 'runtime', label: 'Metal', assets: [new RegExp(`^llama-b\\d+-bin-macos-${process.arch === 'arm64' ? 'arm64' : 'x64'}\\.tar\\.gz$`)] }
-    : { dir: 'runtime', label: 'Vulkan', assets: [/^llama-b\d+-bin-win-vulkan-x64\.zip$/] },
-  cuda12: { dir: 'runtime-cuda12', label: 'CUDA', device: /using device CUDA/i, assets: [/^llama-b\d+-bin-win-cuda-12\.[\d.]+-x64\.zip$/, /^cudart-llama-bin-win-cuda-12\.[\d.]+-x64\.zip$/] },
-  cuda13: { dir: 'runtime-cuda13', label: 'CUDA', device: /using device CUDA/i, assets: [/^llama-b\d+-bin-win-cuda-13\.[\d.]+-x64\.zip$/, /^cudart-llama-bin-win-cuda-13\.[\d.]+-x64\.zip$/] },
+    ? { dir: 'runtime', label: 'Metal', assets: [new RegExp(`^llama-b\\d+-bin-macos-${ARCH}\\.tar\\.gz$`)] }
+    : { dir: 'runtime', label: 'Vulkan', assets: LINUX ? ubuntu('vulkan') : [/^llama-b\d+-bin-win-vulkan-x64\.zip$/] },
+  cuda12: { dir: 'runtime-cuda12', label: 'CUDA', device: /using device CUDA/i, assets: LINUX ? ubuntu('cuda-12\\.[\\d.]+', true) : [/^llama-b\d+-bin-win-cuda-12\.[\d.]+-x64\.zip$/, /^cudart-llama-bin-win-cuda-12\.[\d.]+-x64\.zip$/] },
+  cuda13: { dir: 'runtime-cuda13', label: 'CUDA', device: /using device CUDA/i, assets: LINUX ? ubuntu('cuda-13\\.[\\d.]+', true) : [/^llama-b\d+-bin-win-cuda-13\.[\d.]+-x64\.zip$/, /^cudart-llama-bin-win-cuda-13\.[\d.]+-x64\.zip$/] },
   rocm: { dir: 'runtime-rocm', label: 'ROCm', device: /using device ROCm/i, assets: [/^llama-b\d+-bin-win-rocm-[\d.]+-x64\.zip$/] },
   sycl: { dir: 'runtime-sycl', label: 'SYCL', device: /using device SYCL/i, assets: [/^llama-b\d+-bin-win-sycl-x64\.zip$/] },
   openvino: { dir: 'runtime-openvino', label: 'OpenVINO', device: /using device OPENVINO\d+ \(GGML_OPENVINO_DEVICE=GPU/i, env: { GGML_OPENVINO_DEVICE: 'GPU' }, assets: [/^llama-b\d+-bin-win-openvino-[\d.]+-x64\.zip$/] }
@@ -191,9 +194,15 @@ function createLocalAi(userData) {
     Object.assign(item, { inputMode: options.inputMode, sourceLanguage: options.sourceLanguage, customPrompt });
     fs.writeFileSync(addedFile, JSON.stringify(list));
   }
+  // Linux: the CUDA runtime unpacks into a folder of its own beside the build's, so the library path names both.
+  const libraryPath = (kind, exe) => {
+    const top = path.join(root, RUNTIMES[kind].dir);
+    let dirs = []; try { dirs = fs.readdirSync(top, { withFileTypes: true }).filter(item => item.isDirectory()).map(item => path.join(top, item.name)); } catch {}
+    return [...new Set([path.dirname(exe), ...dirs, top])].concat(process.env.LD_LIBRARY_PATH || []).filter(Boolean).join(':');
+  };
   const runtimeExe = kind => {
     const walk = dir => { try { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(item => item.isDirectory() ? walk(path.join(dir, item.name)) : [path.join(dir, item.name)]); } catch { return []; } };
-    return walk(path.join(root, RUNTIMES[kind].dir)).find(file => path.basename(file).toLowerCase() === (MAC ? 'llama-server' : 'llama-server.exe')) || null;
+    return walk(path.join(root, RUNTIMES[kind].dir)).find(file => path.basename(file).toLowerCase() === (process.platform === 'win32' ? 'llama-server.exe' : 'llama-server')) || null;
   };
   // The builds for this PC, best first: CUDA for an NVIDIA card nvidia-smi reports (with a driver new enough for it),
   // ROCm for an AMD Radeon RX / PRO card, SYCL then OpenVINO for an Intel Arc one, Vulkan last; a build that failed here
@@ -203,7 +212,7 @@ function createLocalAi(userData) {
   let gpuInfo = null;
   function nvidiaGpu() {
     gpuInfo ||= new Promise(resolve => {
-      if (process.platform !== 'win32') { resolve(null); return; }
+      if (MAC) { resolve(null); return; }
       let out = ''; const child = spawn('nvidia-smi', ['--query-gpu=compute_cap,driver_version', '--format=csv,noheader'], { windowsHide: true });
       child.stdout.on('data', chunk => { out += chunk; }); child.once('error', () => resolve(null));
       child.once('close', code => { const [cap, driver] = out.split('\n')[0]?.split(',').map(value => parseFloat(value)) || []; resolve(code === 0 && cap && driver ? { cap, driver } : null); });
@@ -224,7 +233,8 @@ function createLocalAi(userData) {
   async function preferredRuntimes() {
     const gpu = await nvidiaGpu(), off = broken(), list = [];
     let driver = gpu?.driver;
-    if (gpu) list.push(gpu.cap >= 7.5 && gpu.driver >= 580 ? 'cuda13' : gpu.cap >= 5 && gpu.cap < 10 && gpu.driver >= 551.61 ? 'cuda12' : null);
+    // (Linux: CUDA 12 runs from driver 525.60; there is no CUDA 12 build for arm64.)
+    if (gpu) list.push(gpu.cap >= 7.5 && gpu.driver >= 580 ? 'cuda13' : gpu.cap >= 5 && gpu.cap < 10 && gpu.driver >= (LINUX ? 525.6 : 551.61) && !(LINUX && ARCH === 'arm64') ? 'cuda12' : null);
     else {
       const cards = await videoCards(), amd = cards.find(card => /radeon/i.test(card.name) && !/\brx\s*[45]\d0\b|vega|radeon vii|\br[579]\b|\bhd\s*\d/i.test(card.name)), arc = cards.find(card => /intel/i.test(card.name) && /\barc\b/i.test(card.name));
       if (amd) { list.push('rocm'); driver = amd.driver; } else if (arc) { list.push('sycl', 'openvino'); driver = arc.driver; }
@@ -278,12 +288,12 @@ function createLocalAi(userData) {
   }
   // Unpacked by Windows' own tar (bsdtar reads zip) in its own process: done here a build's 1 GB DLL (ROCm) kept the
   // app from answering for 5 seconds and more, long enough for Windows to call it not responding. adm-zip (here, in
-  // one go) only where there is no tar.exe (Windows 10 before 1803). macOS's tar unpacks its .tar.gz builds, keeping
-  // the programs runnable and the libraries' links.
+  // one go) only where there is no tar.exe (Windows 10 before 1803). macOS's and Linux's tar unpack their .tar.gz
+  // builds, keeping the programs runnable and the libraries' links.
   function unzip(zip, dir) {
     fs.mkdirSync(dir, { recursive: true });
-    const tar = MAC ? '/usr/bin/tar' : path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
-    if (MAC) return new Promise((resolve, reject) => {
+    const tar = MAC ? '/usr/bin/tar' : LINUX ? 'tar' : path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (MAC || LINUX) return new Promise((resolve, reject) => {
       let error = ''; const child = spawn(tar, ['-xzf', zip, '-C', dir]);
       child.stderr.on('data', chunk => { error += chunk; }); child.once('error', reject);
       child.once('close', code => code === 0 ? resolve() : reject(new Error(`llama.cpp 압축을 풀지 못했습니다: ${error.trim().slice(0, 200) || code}`)));
@@ -384,7 +394,9 @@ function createLocalAi(userData) {
   const pidFile = path.join(root, 'server.pid');
   function stopLeftover() {
     let pid = 0; try { pid = Number(fs.readFileSync(pidFile, 'utf8')) || 0; fs.unlinkSync(pidFile); } catch { return; }
-    if (!pid || process.platform !== 'win32') return;
+    if (!pid) return;
+    if (LINUX) { try { if (fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim() === 'llama-server') process.kill(pid); } catch {} return; }
+    if (process.platform !== 'win32') return;
     const list = spawn('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { windowsHide: true }); let out = '';
     list.stdout.on('data', chunk => { out += chunk; });
     return new Promise(resolve => list.once('close', () => { if (/llama-server\.exe/i.test(out)) try { process.kill(pid); } catch {} resolve(); }));
@@ -426,7 +438,7 @@ function createLocalAi(userData) {
       // with more room left on the card, then on the CPU alone.
       const launch = async extra => {
         const port = await freePort();
-        const child = spawn(exe, ['-m', file, '--host', '127.0.0.1', '--port', String(port), '-c', '4096', '-np', String(PARALLEL), '-fa', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--fit-target', '512', ...extra, '--jinja', '--no-webui', '-lv', '4'], { cwd: path.dirname(exe), windowsHide: true, env: { ...process.env, LLAMA_ARG_LOAD_MODE: 'none', LLAMA_ARG_NO_MMAP: '1', ...RUNTIMES[kind].env } });
+        const child = spawn(exe, ['-m', file, '--host', '127.0.0.1', '--port', String(port), '-c', '4096', '-np', String(PARALLEL), '-fa', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--fit-target', '512', ...extra, '--jinja', '--no-webui', '-lv', '4'], { cwd: path.dirname(exe), windowsHide: true, env: { ...process.env, LLAMA_ARG_LOAD_MODE: 'none', LLAMA_ARG_NO_MMAP: '1', ...(LINUX ? { LD_LIBRARY_PATH: libraryPath(kind, exe) } : {}), ...RUNTIMES[kind].env } });
         try { fs.writeFileSync(pidFile, String(child.pid)); } catch {}
         // The model file is read rather than memory-mapped: on Windows a mapped file stays in RAM whole even with every
         // layer on the graphics card (1.4 GB for the 1.8B model, 0.3 GB read; 5.2 GB against 2.7 GB for ja-ko-vn on a

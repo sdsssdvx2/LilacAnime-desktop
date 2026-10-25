@@ -1,6 +1,7 @@
 // GitHub release based auto update (mirrors Android GithubReleaseChecker).
 // Releases only need the NSIS installer asset (LilacAnime-Setup.exe; older releases have the version in the name), and
-// for macOS a disk image per processor (LilacAnime-mac-arm64.dmg, LilacAnime-mac-x64.dmg).
+// for macOS a disk image per processor (LilacAnime-mac-arm64.dmg, LilacAnime-mac-x64.dmg), for Linux an AppImage per
+// processor (LilacAnime-linux-x86_64.AppImage, LilacAnime-linux-arm64.AppImage).
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -10,10 +11,13 @@ const { pipeline } = require('stream/promises');
 
 const RELEASES = 'https://api.github.com/repos/whispelyn-byte/LilacAnime-desktop/releases';
 const RELEASE_API = `${RELEASES}/latest`;
-const MAC = process.platform === 'darwin';
+const MAC = process.platform === 'darwin', LINUX = process.platform === 'linux';
+// Linux: only an AppImage updates itself (the file it runs from is replaced); a build run some other way is not updated.
+const APPIMAGE = LINUX ? process.env.APPIMAGE || '' : '';
 // This build's installer among a release's files.
 function installerAsset(assets = []) {
   const named = test => assets.find(item => test(String(item.name || '')));
+  if (LINUX) return named(name => new RegExp(`-linux-${process.arch === 'arm64' ? 'arm64' : 'x86_64'}\\.AppImage$`, 'i').test(name));
   if (MAC) return named(name => new RegExp(`-mac-${process.arch}\\.dmg$`, 'i').test(name));
   return named(name => /\.exe$/i.test(name) && /setup/i.test(name)) || named(name => /\.exe$/i.test(name));
 }
@@ -49,7 +53,8 @@ class Updater {
       // Whatever GitHub marks as Latest is installed when it differs from this build, even an older version
       // (a release can be rolled back by publishing it again).
       if (!latest || parseVersion(latest).join('.') === parseVersion(this.app.getVersion()).join('.')) return this.set({ status: 'latest', latest: latest || this.app.getVersion() });
-      if (!asset) throw new Error(MAC ? '릴리스에 이 Mac용 설치 파일(.dmg)이 없습니다.' : '릴리스에 설치 파일(.exe)이 없습니다.');
+      if (!asset) throw new Error(MAC ? '릴리스에 이 Mac용 설치 파일(.dmg)이 없습니다.' : LINUX ? '릴리스에 이 Linux용 AppImage가 없습니다.' : '릴리스에 설치 파일(.exe)이 없습니다.');
+      if (LINUX && !APPIMAGE) throw new Error(`새 버전 v${latest}이 있습니다. AppImage로 실행할 때만 자동 업데이트되니 릴리스 페이지에서 받아 주세요.`);
       this.asset = asset;
       this.set({ status: 'available', latest, notes: String(release.body || '').slice(0, 20000), url: release.html_url || '', size: Number(asset.size) || 0 });
       // Downloaded right away; installing still waits for the user (it restarts the app).
@@ -72,7 +77,7 @@ class Updater {
       fs.mkdirSync(dir, { recursive: true });
       // The asset is always "LilacAnime-Setup.exe" (or the Mac's .dmg); the saved copy is named by the release, so an
       // older one is never overwritten while it may still be open.
-      const file = path.join(dir, `LilacAnime-Setup-${String(this.state.latest || 'update').replace(/[^\w.-]/g, '_')}${MAC ? '.dmg' : '.exe'}`);
+      const file = path.join(dir, `LilacAnime-Setup-${String(this.state.latest || 'update').replace(/[^\w.-]/g, '_')}${MAC ? '.dmg' : LINUX ? '.AppImage' : '.exe'}`);
       const partial = `${file}.part`;
       this.set({ status: 'downloading', percent: 0 });
       try {
@@ -110,6 +115,15 @@ class Updater {
     // drag the app into Applications, and the app closes so the old one is not in use.
     if (MAC) {
       shell.openPath(this.installer).then(error => { if (error) this.installing = false; else if (relaunch) setTimeout(() => this.app.quit(), 300); });
+      return true;
+    }
+    // Linux: the new AppImage takes the running one's place (the running copy stays readable until it exits; the copy is
+    // made beside it so the rename is one step) and is started again.
+    if (LINUX) {
+      const next = `${APPIMAGE}.new`;
+      try { fs.copyFileSync(this.installer, next); fs.chmodSync(next, 0o755); fs.renameSync(next, APPIMAGE); } catch (error) { try { fs.unlinkSync(next); } catch {} this.installing = false; throw error; }
+      // (Started once this one has exited, so it is not turned away as a second instance.)
+      if (relaunch) { this.app.relaunch({ execPath: APPIMAGE, args: [] }); setTimeout(() => this.app.quit(), 300); }
       return true;
     }
     // NSIS assisted installer: /S installs silently into the existing directory, --updated relaunches.
