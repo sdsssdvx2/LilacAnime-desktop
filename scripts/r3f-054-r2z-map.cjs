@@ -42,6 +42,17 @@ function preserve054(label) {
   markers(read('electron/main.cjs'), ["const API = 'https://api.tenrai.org/v1';"], `${label} Tenrai`);
   console.log(`R3F_0554_PRESERVE_OK=${label}`);
 }
+function patchR2WFor054() {
+  const target = path.join(root, 'scripts', 'apply-libmpv-r2w-aspect-cadence.cjs');
+  let source = fs.readFileSync(target, 'utf8');
+  const oldBlock = `main = replaceOnce(main,\n  "  app,\\n  ipcMain,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  "  app,\\n  ipcMain,\\n  screen,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  'bridge screen injection');`;
+  const newBlock = `main = replaceOnce(main,\n  "  userAgent: ANDROID_WEBVIEW_UA,",\n  "  screen,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  'bridge screen injection');`;
+  const count = source.split(oldBlock).length - 1;
+  assert(count === 1, `R2W 0.5.54 patch expected one historical screen-injection block, found ${count}`);
+  source = source.replace(oldBlock, newBlock);
+  fs.writeFileSync(target, source);
+  console.log('R3F_0554_R2W_PATCH_OK screenAnchor=userAgent-only uniqueness=enforced');
+}
 
 // Authoritative R2M -> R2V reconstruction. The child intentionally checks out
 // the pinned historical tooling commit while preserving branch-only 0.5.54
@@ -51,6 +62,7 @@ runNode('scripts/r3f-054-r2v-map.cjs', 'R2V_AUTHORITATIVE_MAP');
 identity('0.5.50-libmpv-r2v.rc1', 'libmpv-r2k-v0.5.50-r5', 'R2V_PARENT');
 preserve054('R2V_PARENT');
 
+patchR2WFor054();
 runNode('scripts/apply-libmpv-r2w-aspect-cadence.cjs', 'R2W');
 identity('0.5.50-libmpv-r2w.rc1', 'libmpv-r2k-v0.5.50-r6', 'R2W');
 markers(read('electron/main.cjs'), ['LILAC_R2W_ASPECT_CADENCE'], 'R2W main');
