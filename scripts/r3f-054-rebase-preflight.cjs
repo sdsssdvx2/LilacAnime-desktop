@@ -13,6 +13,10 @@ function run(command, args, options = {}) {
   console.log(`R3F_RUN=${command} ${args.join(' ')}`);
   cp.execFileSync(command, args, { cwd: ROOT, stdio: 'inherit', ...options });
 }
+function runShell(command) {
+  console.log(`R3F_SHELL=${command}`);
+  cp.execSync(command, { cwd: ROOT, stdio: 'inherit', shell: true });
+}
 function capture(command, args, options = {}) {
   return cp.execFileSync(command, args, { cwd: ROOT, encoding: 'utf8', ...options }).trim();
 }
@@ -198,8 +202,8 @@ function guard0554() {
 
 function main() {
   assemble0554();
-  run('npm.cmd', ['ci', '--no-audit', '--no-fund']);
-  run('npm.cmd', ['install', '--no-save', '--no-audit', '--no-fund', '@electron/asar@3.2.18', 'node-gyp@12.2.0']);
+  runShell('npm ci --no-audit --no-fund');
+  runShell('npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0');
   prepareTransforms();
 
   const scripts = [
