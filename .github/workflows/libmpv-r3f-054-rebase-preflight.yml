@@ -43,4 +43,14 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'R2N syntax failed'}
           node scripts/apply-libmpv-r2n-webgpu-pip.cjs
           if($LASTEXITCODE -ne 0){throw 'R2N compatibility failed'}
-          node -e "const fs=require('fs');const c=fs.readFileSync('src/app.js','utf8')+fs.readFileSync('src/player.js','utf8')+fs.readFileSync('src/index.html','utf8');for(const m of ['playerSeekHint','controlsOnPlaying','showSeekHint'])if(!c.includes(m))throw new Error('R2N erased upstream marker '+m);const u=fs.readFileSync('electron/updater.cjs','utf8');for(const m of ['CUSTOM_RELEASES_API','checkCustom()',\"!MAC && !DEB && this.state.status === 'ready'\"])if(!u.includes(m))throw new Error('R2N erased updater marker '+m);if(fs.existsSync('electron/miruro-session.cjs'))throw new Error('R2N resurrected obsolete Miruro');if(!fs.existsSync('electron/miruro-browser.cjs'))throw new Error('R2N removed Miruro browser');console.log('R3F_0554_R2N_GUARD_OK')"
+          $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){
+            if(-not $combined.Contains($marker)){throw "R2N erased upstream marker: $marker"}
+          }
+          $updater=Get-Content electron/updater.cjs -Raw
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
+            if(-not $updater.Contains($marker)){throw "R2N erased updater marker: $marker"}
+          }
+          if(Test-Path electron/miruro-session.cjs){throw 'R2N resurrected obsolete Miruro'}
+          if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2N removed Miruro browser'}
+          Write-Host 'R3F_0554_R2N_GUARD_OK'
