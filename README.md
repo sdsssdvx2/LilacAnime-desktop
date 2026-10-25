@@ -15,7 +15,7 @@
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-Setup.exe"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Windows-c8a2c8" alt="Windows용 받기"></a>
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-mac-arm64.dmg"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Mac%20%28Apple%20Silicon%29-c8a2c8" alt="Mac(Apple Silicon)용 받기"></a>
   <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-mac-x64.dmg"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Mac%20%28Intel%29-c8a2c8" alt="Mac(Intel)용 받기"></a>
-  <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-x86_64.AppImage"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Linux%20%28x64%29-c8a2c8" alt="Linux(x64)용 받기"></a>
+  <a href="https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-amd64.deb"><img src="https://img.shields.io/badge/%EB%B0%9B%EA%B8%B0-Linux%20%28x64%29-c8a2c8" alt="Linux(x64)용 받기"></a>
 </p>
 
 <p align="center">
@@ -83,21 +83,12 @@ Mac에서는 업데이트를 받아 **지금 설치**를 누르면 새 버전의
 
 ### Linux
 
-**Ubuntu · Debian · Linux Mint 등 (.deb, 권장)**
+Ubuntu · Debian · Linux Mint 등 .deb를 쓰는 배포판에서 설치할 수 있습니다.
 
 1. 내 PC에 맞는 .deb를 받습니다: **[x64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-amd64.deb)** · **[arm64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-arm64.deb)**
 2. 터미널에서 설치합니다: `sudo apt install ./LilacAnime-linux-amd64.deb` (arm64면 그 파일 이름). 앱 메뉴에 LilacAnime이 생깁니다.
 
 .deb로 설치하면 Ubuntu 24.04 이상의 샌드박스(AppArmor) 설정까지 설치할 때 함께 됩니다. 새 버전은 **설정 > 업데이트 · 정보**에서 **지금 설치**를 누르면 비밀번호를 물은 뒤 설치하고 다시 시작합니다. 지우려면 `sudo apt remove lilacanime-desktop`.
-
-**그 밖의 배포판 (AppImage)**
-
-1. 내 PC에 맞는 AppImage를 받습니다: **[x64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-x86_64.AppImage)** · **[arm64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-arm64.AppImage)**
-2. 실행 권한을 주고 실행합니다: `chmod +x LilacAnime-linux-*.AppImage` 후 더블클릭하거나 터미널에서 실행합니다.
-   - "libfuse.so.2"가 없다고 나오면 FUSE 2를 설치합니다 (Ubuntu 22.04: `sudo apt install libfuse2`, 24.04 이상: `libfuse2t64`).
-   - Ubuntu 24.04 이상에서 "SUID sandbox helper"/"namespace" 오류로 열리지 않으면 AppArmor가 샌드박스를 막은 것입니다. `--no-sandbox`를 붙여 실행하면 열리지만 샌드박스 없이 돌게 되니, 가능하면 AppImage용 AppArmor 프로필을 추가해 주세요.
-
-AppImage로 실행하면 **설정 > 업데이트 · 정보**에서 받은 새 버전이 지금 AppImage 파일을 바꾸고 다시 시작합니다 (파일이 있는 폴더에 쓰기 권한이 있어야 합니다).
 
 Linux 참고:
 - 한국어 자막 폰트는 Noto Sans CJK 또는 나눔 글꼴을 씁니다 (`fonts-noto-cjk`, `fonts-nanum`).
@@ -456,9 +447,9 @@ npm run dist
 
 Mac에서는 `npm run dist:mac`으로 그 Mac의 칩에 맞는 `dist/LilacAnime-mac-arm64.dmg`(또는 `-x64.dmg`)가 만들어집니다.
 
-Linux에서는 `npm run dist:linux`로 `dist/LilacAnime-linux-x86_64.AppImage`와 `dist/LilacAnime-linux-amd64.deb`(arm64면 `-arm64`)가 만들어집니다.
+Linux에서는 `npm run dist:linux`로 `dist/LilacAnime-linux-amd64.deb`(arm64면 `-arm64.deb`)가 만들어집니다.
 
-GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일, Mac용 `.dmg` 두 개(Apple Silicon · Intel), Linux용 AppImage와 .deb 각 두 개(x64 · arm64)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
+GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일, Mac용 `.dmg` 두 개(Apple Silicon · Intel), Linux용 .deb 두 개(x64 · arm64)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
 
 | 폴더 | 내용 |
 |---|---|

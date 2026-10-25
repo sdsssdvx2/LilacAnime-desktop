@@ -1,8 +1,7 @@
 // GitHub release based auto update (mirrors Android GithubReleaseChecker).
 // Releases only need the NSIS installer asset (LilacAnime-Setup.exe; older releases have the version in the name), and
-// for macOS a disk image per processor (LilacAnime-mac-arm64.dmg, LilacAnime-mac-x64.dmg), for Linux an AppImage per
-// processor (LilacAnime-linux-x86_64.AppImage, LilacAnime-linux-arm64.AppImage) and a .deb per processor
-// (LilacAnime-linux-amd64.deb, LilacAnime-linux-arm64.deb).
+// for macOS a disk image per processor (LilacAnime-mac-arm64.dmg, LilacAnime-mac-x64.dmg), for Linux a .deb per
+// processor (LilacAnime-linux-amd64.deb, LilacAnime-linux-arm64.deb).
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -13,15 +12,13 @@ const { pipeline } = require('stream/promises');
 const RELEASES = 'https://api.github.com/repos/whispelyn-byte/LilacAnime-desktop/releases';
 const RELEASE_API = `${RELEASES}/latest`;
 const MAC = process.platform === 'darwin', LINUX = process.platform === 'linux';
-// Linux: an AppImage replaces the file it runs from; a .deb install (dpkg knows the package and the app runs from /opt)
-// gets the new .deb installed through pkexec, which asks for the password. A build run some other way is not updated.
-const APPIMAGE = LINUX ? process.env.APPIMAGE || '' : '';
-const DEB = LINUX && !APPIMAGE && process.execPath.startsWith('/opt/') && fs.existsSync('/var/lib/dpkg/info/lilacanime-desktop.list');
+// Linux: a .deb install (dpkg knows the package and the app runs from /opt) gets the new .deb installed through pkexec,
+// which asks for the password. A build run some other way (v0.5.53's AppImage) is pointed to the .deb instead.
+const DEB = LINUX && process.execPath.startsWith('/opt/') && fs.existsSync('/var/lib/dpkg/info/lilacanime-desktop.list');
 // This build's installer among a release's files.
 function installerAsset(assets = []) {
   const named = test => assets.find(item => test(String(item.name || '')));
-  if (DEB) return named(name => new RegExp(`-linux-${process.arch === 'arm64' ? 'arm64' : 'amd64'}\\.deb$`, 'i').test(name));
-  if (LINUX) return named(name => new RegExp(`-linux-${process.arch === 'arm64' ? 'arm64' : 'x86_64'}\\.AppImage$`, 'i').test(name));
+  if (LINUX) return named(name => new RegExp(`-linux-${process.arch === 'arm64' ? 'arm64' : 'amd64'}\\.deb$`, 'i').test(name));
   if (MAC) return named(name => new RegExp(`-mac-${process.arch}\\.dmg$`, 'i').test(name));
   return named(name => /\.exe$/i.test(name) && /setup/i.test(name)) || named(name => /\.exe$/i.test(name));
 }
@@ -57,8 +54,8 @@ class Updater {
       // Whatever GitHub marks as Latest is installed when it differs from this build, even an older version
       // (a release can be rolled back by publishing it again).
       if (!latest || parseVersion(latest).join('.') === parseVersion(this.app.getVersion()).join('.')) return this.set({ status: 'latest', latest: latest || this.app.getVersion() });
-      if (!asset) throw new Error(MAC ? '릴리스에 이 Mac용 설치 파일(.dmg)이 없습니다.' : DEB ? '릴리스에 이 Linux용 설치 파일(.deb)이 없습니다.' : LINUX ? '릴리스에 이 Linux용 AppImage가 없습니다.' : '릴리스에 설치 파일(.exe)이 없습니다.');
-      if (LINUX && !APPIMAGE && !DEB) throw new Error(`새 버전 v${latest}이 있습니다. AppImage나 .deb로 설치했을 때만 자동 업데이트되니 릴리스 페이지에서 받아 주세요.`);
+      if (!asset) throw new Error(MAC ? '릴리스에 이 Mac용 설치 파일(.dmg)이 없습니다.' : LINUX ? '릴리스에 이 Linux용 설치 파일(.deb)이 없습니다.' : '릴리스에 설치 파일(.exe)이 없습니다.');
+      if (LINUX && !DEB) throw new Error(`새 버전 v${latest}이 있습니다. Linux는 이제 .deb로 설치합니다. 릴리스 페이지에서 .deb를 받아 설치해 주세요.`);
       this.asset = asset;
       this.set({ status: 'available', latest, notes: String(release.body || '').slice(0, 20000), url: release.html_url || '', size: Number(asset.size) || 0 });
       // Downloaded right away; installing still waits for the user (it restarts the app).
@@ -81,7 +78,7 @@ class Updater {
       fs.mkdirSync(dir, { recursive: true });
       // The asset is always "LilacAnime-Setup.exe" (or the Mac's .dmg); the saved copy is named by the release, so an
       // older one is never overwritten while it may still be open.
-      const file = path.join(dir, `LilacAnime-Setup-${String(this.state.latest || 'update').replace(/[^\w.-]/g, '_')}${MAC ? '.dmg' : DEB ? '.deb' : LINUX ? '.AppImage' : '.exe'}`);
+      const file = path.join(dir, `LilacAnime-Setup-${String(this.state.latest || 'update').replace(/[^\w.-]/g, '_')}${MAC ? '.dmg' : LINUX ? '.deb' : '.exe'}`);
       const partial = `${file}.part`;
       this.set({ status: 'downloading', percent: 0 });
       try {
@@ -131,15 +128,6 @@ class Updater {
         if (code !== 0) { failed(code === 126 || code === 127 ? '설치가 취소되었습니다.' : `설치하지 못했습니다 (코드 ${code}).`); return; }
         if (relaunch) this.app.relaunch(); this.app.quit();
       });
-      return true;
-    }
-    // Linux: the new AppImage takes the running one's place (the running copy stays readable until it exits; the copy is
-    // made beside it so the rename is one step) and is started again.
-    if (LINUX) {
-      const next = `${APPIMAGE}.new`;
-      try { fs.copyFileSync(this.installer, next); fs.chmodSync(next, 0o755); fs.renameSync(next, APPIMAGE); } catch (error) { try { fs.unlinkSync(next); } catch {} this.installing = false; throw error; }
-      // (Started once this one has exited, so it is not turned away as a second instance.)
-      if (relaunch) { this.app.relaunch({ execPath: APPIMAGE, args: [] }); setTimeout(() => this.app.quit(), 300); }
       return true;
     }
     // NSIS assisted installer: /S installs silently into the existing directory, --updated relaunches.

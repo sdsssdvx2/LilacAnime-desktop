@@ -16,7 +16,7 @@
     "predist:mac": "npm run vendor",
     "dist:mac": "electron-builder --mac dmg",
     "predist:linux": "npm run vendor",
-    "dist:linux": "electron-builder --linux AppImage deb",
+    "dist:linux": "electron-builder --linux deb",
     "prepack": "npm run vendor",
     "pack": "electron-builder --dir"
   },
@@ -67,14 +67,10 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "AudioVideo",
-      "target": [
-        "AppImage",
-        "deb"
-      ],
       "executableName": "lilacanime",
       "maintainer": "whispelyn-byte <246124296+whispelyn-byte@users.noreply.github.com>",
       "synopsis": "LilacAnime 애니 라이브러리·플레이어",
-      "artifactName": "LilacAnime-linux-${arch}.${ext}"
+      "target": "deb"
     },
     "deb": {
       "artifactName": "LilacAnime-linux-${arch}.${ext}"
