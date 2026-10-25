@@ -20,6 +20,7 @@ function runNode(script, label = script) {
 }
 function file(relative) { return path.join(root, relative); }
 function read(relative) { return fs.readFileSync(file(relative), 'utf8').replace(/\r\n/g, '\n'); }
+function write(relative, value) { fs.writeFileSync(file(relative), value); }
 function json(relative) { return JSON.parse(read(relative)); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function markers(text, expected, label) {
@@ -37,6 +38,25 @@ function identity(version, tag, label) {
 function sha256IfPresent(relative) {
   if (!fs.existsSync(file(relative))) return null;
   return crypto.createHash('sha256').update(fs.readFileSync(file(relative))).digest('hex');
+}
+function restoreSpeedDiagnosticParity() {
+  const relative = 'native/libmpv-d3d11-bridge/player_addon.cc';
+  let source = read(relative);
+  const marker = 'SetMaybeDouble(env, out, "speed", player, "speed");';
+  if (source.includes(marker)) {
+    console.log('R3F_0554_SPEED_DIAGNOSTIC_PARITY_OK mode=already-present');
+    return;
+  }
+  const anchor = '  SetMaybeDouble(env, out, "volume", player, "volume");\n  SetMaybeFlag(env, out, "mute", player, "mute");';
+  const count = source.split(anchor).length - 1;
+  assert(count === 1, `R3F speed diagnostic parity expected one volume/mute anchor, found ${count}`);
+  source = source.replace(
+    anchor,
+    '  SetMaybeDouble(env, out, "volume", player, "volume");\n  SetMaybeDouble(env, out, "speed", player, "speed");\n  SetMaybeFlag(env, out, "mute", player, "mute");'
+  );
+  write(relative, source);
+  assert(read(relative).includes(marker), 'R3F speed diagnostic parity write did not persist');
+  console.log('R3F_0554_SPEED_DIAGNOSTIC_PARITY_OK mode=full-diagnostics-only property=speed');
 }
 function preserve054(label) {
   const ui = read('src/app.js') + read('src/player.js') + read('src/index.html');
@@ -116,11 +136,7 @@ runNode('scripts/apply-libmpv-r3b-pending-wake.cjs', 'R3B_PENDING_WAKE');
 bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, ['nativeUpdateCallbackInstalled', 'wakePumpFromNative', 'nativeWakePending'], 'R3B bridge');
 markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['mpv_render_context_set_update_callback'], 'R3B native');
-// Despite its historical filename, this fake-addon smoke was later strengthened to
-// require the R3B update callback to be authoritative. Run it only after pending-wake.
 runNode('scripts/smoke-libmpv-r3a-decoupled-delivery.cjs', 'R3AB_CALLBACK_DELIVERY_SOURCE_SMOKE');
-// smoke-libmpv-r3b-update-callback itself requires a freshly compiled addon + libmpv DLL;
-// run it in the native qualification workflow, not this source-transform map.
 stageGuard('R3B');
 
 runNode('scripts/apply-libmpv-r3c-hotpath-state.cjs', 'R3C_HOTPATH_STATE');
@@ -141,6 +157,7 @@ stageGuard('R3D');
 runNode('scripts/normalize-libmpv-r3e-pending-anchor.cjs', 'R3E_COMPAT_NORMALIZE');
 runNode('scripts/apply-libmpv-r3e-native-producer.cjs', 'R3E_NATIVE_PRODUCER');
 identity('0.5.50-libmpv-r3e.rc1', 'libmpv-r2k-v0.5.50-r14', 'R3E');
+restoreSpeedDiagnosticParity();
 bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, [
   'frameProducerStarted', 'startFrameProducer', 'popProducedFrame',
@@ -150,9 +167,9 @@ const r3eNative = read('native/libmpv-d3d11-bridge/player_addon.cc');
 markers(r3eNative, [
   'FrameProducerReadyFrame', 'StartFrameProducerWorker', 'producerRawWakeSignals',
   'producerWakePending', 'producerReady', 'startFrameProducer', 'popProducedFrame',
-  'releaseProducedFrame', 'frameProducerStats'
-], 'R3E native producer');
-// R3D/R3E hardware smokes are likewise deferred until this exact source is compiled.
+  'releaseProducedFrame', 'frameProducerStats',
+  'SetMaybeDouble(env, out, "speed", player, "speed")'
+], 'R3E native producer + diagnostic parity');
 stageGuard('R3E');
 
 const packagedNativeAfter = {
@@ -162,4 +179,4 @@ const packagedNativeAfter = {
 assert(packagedNativeAfter.addon === packagedNativeBefore.addon, `R3 mapping replaced packaged addon bytes: ${packagedNativeBefore.addon} -> ${packagedNativeAfter.addon}`);
 assert(packagedNativeAfter.dll === packagedNativeBefore.dll, `R3 mapping replaced packaged DLL bytes: ${packagedNativeBefore.dll} -> ${packagedNativeAfter.dll}`);
 
-console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer packagedNativeBytes=unchanged nativeSmokes=deferred-to-compiled-qualification`);
+console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer diagnostics=speed-parity packagedNativeBytes=unchanged nativeSmokes=deferred-to-compiled-qualification`);
