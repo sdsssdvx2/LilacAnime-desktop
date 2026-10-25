@@ -1,0 +1,83 @@
+name: LilacAnime Libmpv R25 DirectComposition A/B
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r25-directcomposition-ab]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r25-directcomposition.yml
+      - scripts/r25-directcomposition-build.ps1
+      - scripts/r25-directcomposition-fix.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r25-directcomposition
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r24
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R24-Setup.exe
+  BASE_INSTALLER_SHA256: 3fadba3b01a9363863832ba1c47018d102bf2801f4105ce4ac91f35a704d196c
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r25
+  INSTALLER_NAME: LilacAnime-Libmpv-R25-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r25-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc5
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Build and qualify R25 DirectComposition A/B
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/r25-directcomposition-build.ps1
+      - name: Upload qualified R25 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r25-directcomposition
+          path: |
+            dist/LilacAnime-Libmpv-R25-Setup.exe
+            dist/lilacanime-libmpv-r25-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r25 DirectComposition focus repair' --notes 'R25 is a minimal Windows focus/presentation A/B on top of R24. It preserves the qualified R3E native producer, Electron 44.9.3 sharedTexture transport, direct WebGPU presenter, serial latest-frame mailbox, lazy cadence diagnostics, and R23 window/PiP repair, while bypassing Chromium DirectComposition with --disable-direct-composition. This targets the remaining black flashing and ~296 ms renderer receive/present gaps seen when Lilac loses focus. GPU acceleration itself remains enabled.'
+          if($LASTEXITCODE-ne 0){throw 'release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r25-public';New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME;$m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R25_INSTALLER_SHA256 -or $z-ne [long]$env:R25_INSTALLER_SIZE){throw 'public installer byte mismatch'}
+          if($m.installerSha256-ne $h -or $m.electron-ne '44.9.3' -or $m.sharedTextureImport-ne 'function' -or $m.sharedTextureSend-ne 'function'){throw 'public runtime proof mismatch'}
+          if($m.deliveryMode-ne 'serial-latest-frame-mailbox' -or $m.inactiveCompositorGuard-ne $true -or $m.directCompositionDisabled-ne $true -or $m.cadenceHotpath-ne 'record-only-snapshot-4hz'){throw 'public R25 feature manifest mismatch'}
+          Write-Host "R25_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) directComposition=disabled mailbox=serial-latest cadenceLazy=1"
