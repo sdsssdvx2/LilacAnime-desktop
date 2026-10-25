@@ -131,7 +131,9 @@ $pkg.build.appId = $env:STABLE_APP_ID
 $pkg.build.productName = $env:STABLE_PRODUCT_NAME
 $pkg.build.win.executableName = $env:STABLE_EXE_BASE
 $pkg.build.win.artifactName = $env:INSTALLER_NAME
-$pkg | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$pkgJson = ($pkg | ConvertTo-Json -Depth 100) + [Environment]::NewLine
+[System.IO.File]::WriteAllText((Join-Path $PWD 'package.json'), $pkgJson, $utf8NoBom)
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64
 Assert-Exit 'R32 final electron-builder package'
@@ -196,7 +198,8 @@ $manifest = [ordered]@{
   gpuCompletionFence = $false
 }
 $manifestPath = Join-Path 'dist' $env:MANIFEST_NAME
-$manifest | ConvertTo-Json -Depth 8 | Set-Content $manifestPath -Encoding utf8
+$manifestJson = ($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine
+[System.IO.File]::WriteAllText($manifestPath, $manifestJson, $utf8NoBom)
 "R32_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R32_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 Write-Host "R32_BUILD_OK sha256=$hash size=$size electron=$env:ELECTRON_VERSION addonSha256=$r32AddonSha libmpvDllUnchanged=1 focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd flix=worker-thread+asar-unpacked nativeWatchdogMs=250 r31CanvasShield=disabled"
