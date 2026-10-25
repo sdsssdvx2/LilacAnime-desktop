@@ -85,3 +85,28 @@ jobs:
           if(Test-Path electron/miruro-session.cjs){throw 'R2P resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2P removed Miruro browser'}
           Write-Host 'R3F_0554_R2P_GUARD_OK'
+
+      - name: Apply R2Q Tenrai metadata on rebased tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/apply-libmpv-r2q-tenrai-metadata.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2Q syntax failed'}
+          node scripts/apply-libmpv-r2q-tenrai-metadata.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2Q compatibility failed'}
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.49-libmpv-r2q.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r7'){throw 'R2Q metadata mismatch'}
+          $main=Get-Content electron/main.cjs -Raw
+          if(-not $main.Contains("const API = 'https://api.tenrai.org/v1';")){throw 'R2Q Tenrai base missing'}
+          if($main.Contains('api.jikan.moe')){throw 'R2Q Jikan runtime URL survived'}
+          $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){
+            if(-not $combined.Contains($marker)){throw "R2Q erased required marker: $marker"}
+          }
+          $updater=Get-Content electron/updater.cjs -Raw
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
+            if(-not $updater.Contains($marker)){throw "R2Q erased updater marker: $marker"}
+          }
+          if(Test-Path electron/miruro-session.cjs){throw 'R2Q resurrected obsolete Miruro'}
+          if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2Q removed Miruro browser'}
+          Write-Host 'R3F_0554_R2Q_GUARD_OK'
