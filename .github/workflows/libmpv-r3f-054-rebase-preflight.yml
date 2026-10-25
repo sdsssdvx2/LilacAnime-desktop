@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Assemble exact 0.5.54 upstream over retained libmpv tooling
+      - name: Assemble exact 0.5.54 upstream with custom-only libmpv files
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -42,25 +42,58 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
           if((git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream 0.5.54 SHA mismatch'}
 
-          # Keep our custom native/ and transform tooling, but replace every upstream-owned app surface.
+          # Preserve only files which exist in our legacy tree but not at all in upstream 0.5.54.
+          # This keeps libmpv-only integration files while making deleted/renamed upstream files disappear.
+          $custom=Join-Path $env:RUNNER_TEMP 'r3f-custom-only'
+          New-Item -ItemType Directory -Force -Path $custom|Out-Null
+          foreach($area in @('electron','src')){
+            $legacyBase=(Resolve-Path $area).Path.TrimEnd('\')+'\'
+            $upArea=Join-Path $up $area
+            Get-ChildItem $area -Recurse -File | ForEach-Object {
+              $rel=$_.FullName.Substring($legacyBase.Length)
+              if(!(Test-Path (Join-Path $upArea $rel))){
+                $dest=Join-Path (Join-Path $custom $area) $rel
+                New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent)|Out-Null
+                Copy-Item $_.FullName $dest -Force
+                Write-Host "R3F_CUSTOM_ONLY=$area/$($rel.Replace('\','/'))"
+              }
+            }
+          }
+
           Remove-Item electron -Recurse -Force
           Remove-Item src -Recurse -Force
           Remove-Item tests -Recurse -Force
           Copy-Item (Join-Path $up 'electron') electron -Recurse -Force
           Copy-Item (Join-Path $up 'src') src -Recurse -Force
           Copy-Item (Join-Path $up 'tests') tests -Recurse -Force
+
+          foreach($area in @('electron','src')){
+            $saved=Join-Path $custom $area
+            if(Test-Path $saved){Copy-Item (Join-Path $saved '*') $area -Recurse -Force}
+          }
+
           Copy-Item (Join-Path $up 'package.json') package.json -Force
           Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
           Copy-Item (Join-Path $up 'scripts/anime4k-entry.mjs') scripts/anime4k-entry.mjs -Force
 
+          # Prove representative upstream-owned surfaces are still byte-identical before transforms.
+          foreach($p in @('electron/main.cjs','electron/preload.cjs','electron/updater.cjs','electron/miruro-browser.cjs','src/app.js','src/player.js','src/index.html','src/player-android.css')){
+            $actual=(Get-FileHash $p -Algorithm SHA256).Hash
+            $expected=(Get-FileHash (Join-Path $up $p) -Algorithm SHA256).Hash
+            if($actual -ne $expected){throw "upstream surface changed during assembly: $p"}
+          }
+
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.54'){throw 'assembled package is not upstream 0.5.54'}
-          foreach($marker in @('playerSeekHint','controlsOnPlaying')){
-            $all=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          $all=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){
             if(-not $all.Contains($marker)){throw "0.5.54 player marker missing: $marker"}
           }
           if(Test-Path electron/miruro-session.cjs){throw 'obsolete Miruro session file survived assembly'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw '0.5.54 Miruro browser missing'}
+          foreach($p in @('electron/libmpv-shared-main.cjs','electron/libmpv-shared-preload.cjs','src/libmpv-shared-entry.js')){
+            if(!(Test-Path $p)){throw "custom libmpv file missing after assembly: $p"}
+          }
           Write-Host "R3F_0554_ASSEMBLY_OK upstream=$env:UPSTREAM_SHA nativeTooling=$env:LEGACY_TEST_SHA"
 
       - name: Install exact upstream dependencies and transform tools
@@ -76,8 +109,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          # Historical transforms have internal version guards. This changes metadata only for the probe;
-          # upstream-owned source files remain exact 0.5.54 and are guarded above.
+          # Historical transforms have internal version guards. Metadata only is normalized for this probe.
           node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
 
           $scripts=@(
