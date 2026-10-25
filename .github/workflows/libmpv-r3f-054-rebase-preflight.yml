@@ -28,9 +28,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Rebuild exact 0.5.54 and map libmpv transform compatibility
+      - name: Rebuild exact 0.5.54 and map libmpv transform compatibility through R2M
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           node scripts/r3f-054-rebase-preflight.cjs
           if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
+
+      - name: Apply R2N WebGPU PiP on rebased tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/apply-libmpv-r2n-webgpu-pip.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2N syntax failed'}
+          node scripts/apply-libmpv-r2n-webgpu-pip.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2N compatibility failed'}
+          node -e "const fs=require('fs');const c=fs.readFileSync('src/app.js','utf8')+fs.readFileSync('src/player.js','utf8')+fs.readFileSync('src/index.html','utf8');for(const m of ['playerSeekHint','controlsOnPlaying','showSeekHint'])if(!c.includes(m))throw new Error('R2N erased upstream marker '+m);const u=fs.readFileSync('electron/updater.cjs','utf8');for(const m of ['CUSTOM_RELEASES_API','checkCustom()',\"!MAC && !DEB && this.state.status === 'ready'\"])if(!u.includes(m))throw new Error('R2N erased updater marker '+m);if(fs.existsSync('electron/miruro-session.cjs'))throw new Error('R2N resurrected obsolete Miruro');if(!fs.existsSync('electron/miruro-browser.cjs'))throw new Error('R2N removed Miruro browser');console.log('R3F_0554_R2N_GUARD_OK')"
