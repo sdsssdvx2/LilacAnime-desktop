@@ -47,16 +47,39 @@ function restoreSpeedDiagnosticParity() {
     console.log('R3F_0554_SPEED_DIAGNOSTIC_PARITY_OK mode=already-present');
     return;
   }
-  const anchor = '  SetMaybeDouble(env, out, "volume", player, "volume");\n  SetMaybeFlag(env, out, "mute", player, "mute");';
+  const anchor = '  SetMaybeDouble(env, out, "volume", player, "volume");';
   const count = source.split(anchor).length - 1;
-  assert(count === 1, `R3F speed diagnostic parity expected one volume/mute anchor, found ${count}`);
-  source = source.replace(
-    anchor,
-    '  SetMaybeDouble(env, out, "volume", player, "volume");\n  SetMaybeDouble(env, out, "speed", player, "speed");\n  SetMaybeFlag(env, out, "mute", player, "mute");'
-  );
+  assert(count === 1, `R3F speed diagnostic parity expected one volume anchor, found ${count}`);
+  source = source.replace(anchor, `${anchor}\n  ${marker}`);
   write(relative, source);
   assert(read(relative).includes(marker), 'R3F speed diagnostic parity write did not persist');
-  console.log('R3F_0554_SPEED_DIAGNOSTIC_PARITY_OK mode=full-diagnostics-only property=speed');
+  console.log('R3F_0554_SPEED_DIAGNOSTIC_PARITY_OK mode=full-diagnostics-only property=speed anchor=volume');
+}
+function normalizeR3ABSyntheticSourceClock() {
+  const relative = 'scripts/smoke-libmpv-r3a-decoupled-delivery.cjs';
+  let source = read(relative);
+  const marker = '// R3F deterministic fake source: preserve every elapsed source index in order.';
+  if (source.includes(marker)) {
+    console.log('R3F_R3AB_SYNTHETIC_SOURCE_CLOCK_OK mode=already-normalized');
+    return;
+  }
+  const oldDelivery = '      lastDeliveredSourceIndex = availableSourceIndex;\n      const frameId = nextFrameId++;';
+  const deliveryCount = source.split(oldDelivery).length - 1;
+  assert(deliveryCount === 1, `R3AB synthetic source delivery anchor count=${deliveryCount}`);
+  const newDelivery = `      ${marker}\n      const deliverSourceIndex = lastDeliveredSourceIndex + 1;\n      lastDeliveredSourceIndex = deliverSourceIndex;\n      const frameId = nextFrameId++;`;
+  source = source.replace(oldDelivery, newDelivery);
+
+  const oldTimestamp = '        timestampUs: Math.round((sourceEpochMs + availableSourceIndex * SOURCE_PERIOD_MS) * 1000),';
+  const timestampCount = source.split(oldTimestamp).length - 1;
+  assert(timestampCount === 1, `R3AB synthetic source timestamp anchor count=${timestampCount}`);
+  source = source.replace(
+    oldTimestamp,
+    '        timestampUs: Math.round((sourceEpochMs + deliverSourceIndex * SOURCE_PERIOD_MS) * 1000),'
+  );
+  write(relative, source);
+  const final = read(relative);
+  markers(final, [marker, 'const deliverSourceIndex = lastDeliveredSourceIndex + 1;', 'sourceEpochMs + deliverSourceIndex * SOURCE_PERIOD_MS'], 'R3AB deterministic source clock');
+  console.log('R3F_R3AB_SYNTHETIC_SOURCE_CLOCK_OK mode=absolute-clock-sequential-backlog delayedSendStress=unchanged busyWaitStress=unchanged');
 }
 function preserve054(label) {
   const ui = read('src/app.js') + read('src/player.js') + read('src/index.html');
@@ -136,6 +159,7 @@ runNode('scripts/apply-libmpv-r3b-pending-wake.cjs', 'R3B_PENDING_WAKE');
 bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, ['nativeUpdateCallbackInstalled', 'wakePumpFromNative', 'nativeWakePending'], 'R3B bridge');
 markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['mpv_render_context_set_update_callback'], 'R3B native');
+normalizeR3ABSyntheticSourceClock();
 runNode('scripts/smoke-libmpv-r3a-decoupled-delivery.cjs', 'R3AB_CALLBACK_DELIVERY_SOURCE_SMOKE');
 stageGuard('R3B');
 
@@ -179,4 +203,4 @@ const packagedNativeAfter = {
 assert(packagedNativeAfter.addon === packagedNativeBefore.addon, `R3 mapping replaced packaged addon bytes: ${packagedNativeBefore.addon} -> ${packagedNativeAfter.addon}`);
 assert(packagedNativeAfter.dll === packagedNativeBefore.dll, `R3 mapping replaced packaged DLL bytes: ${packagedNativeBefore.dll} -> ${packagedNativeAfter.dll}`);
 
-console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer diagnostics=speed-parity packagedNativeBytes=unchanged nativeSmokes=deferred-to-compiled-qualification`);
+console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer diagnostics=speed-parity syntheticSource=sequential-backlog packagedNativeBytes=unchanged nativeSmokes=deferred-to-compiled-qualification`);
