@@ -106,8 +106,8 @@ preload = replaceOnce(
 
 preload = replaceOnce(
   preload,
-  `      r23RenderHotpath: 'LILAC_R23_RENDER_HOTPATH',\n      receiverStatsSuppressed,\n      ...extra`,
-  `      r23RenderHotpath: 'LILAC_R23_RENDER_HOTPATH',\n      receiverStatsSuppressed,\n      r28FocusSafePlayback: 'LILAC_R28_FOCUS_SAFE_PLAYBACK',\n      r28DirectFrames,\n      r28FocusStagedFrames,\n      r28FocusStagingFailures,\n      r28LastPresentationPath,\n      ...extra`,
+  `      receiverStatsSuppressed,\n      ...extra`,
+  `      receiverStatsSuppressed,\n      r28FocusSafePlayback: 'LILAC_R28_FOCUS_SAFE_PLAYBACK',\n      r28DirectFrames,\n      r28FocusStagedFrames,\n      r28FocusStagingFailures,\n      r28LastPresentationPath,\n      ...extra`,
   'R28 receiver diagnostics fields'
 );
 
