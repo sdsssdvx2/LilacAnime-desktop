@@ -42,9 +42,10 @@ preload = replaceOnce(preload, fenceBlock,
   'remove periodic WebGPU completion fence');
 
 // Expose how much diagnostic traffic was intentionally coalesced without changing
-// any playback counter/cadence semantics.
+// any playback counter/cadence semantics. The semantic marker is deliberately
+// emitted as data so esbuild cannot strip the qualification proof as a comment.
 if (preload.includes('      ...extra\n')) {
-  preload = replaceOnce(preload, '      ...extra\n', '      receiverStatsSuppressed,\n      ...extra\n', 'receiver stats suppression metric');
+  preload = replaceOnce(preload, '      ...extra\n', "      r23RenderHotpath: 'LILAC_R23_RENDER_HOTPATH',\n      receiverStatsSuppressed,\n      ...extra\n", 'receiver stats suppression metric');
 }
 
 assert(preload.includes('RECEIVER_STATS_INTERVAL_MS = 250'), 'receiver stats throttle missing');
