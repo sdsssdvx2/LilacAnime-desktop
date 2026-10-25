@@ -92,7 +92,14 @@ jobs:
           '@|node
           if($LASTEXITCODE -ne 0){throw 'stable metadata patch failed'}
           $hooks=@'
-          !macro preInit
+          !macro customInit
+            ReadRegStr $R9 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+            StrCmp $R9 "" 0 lilacHaveExistingInstall
+            ReadRegStr $R9 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+          lilacHaveExistingInstall:
+            StrCmp $R9 "" lilacChooseStableRoot 0
+            IfFileExists "$R9\LilacAnime-Libmpv-R2J-SubtitleFix.exe" lilacChooseStableRoot lilacStableInitDone
+          lilacChooseStableRoot:
             ReadEnvStr $0 "LILAC_INSTALL_ROOT"
             StrCmp $0 "" 0 lilacStableRootReady
             IfFileExists "D:\*.*" 0 lilacStableUseLocal
@@ -101,13 +108,8 @@ jobs:
           lilacStableUseLocal:
             StrCpy $0 "$LOCALAPPDATA\Programs"
           lilacStableRootReady:
-            StrCpy $1 "$0\LilacAnime-Libmpv"
-            SetRegView 64
-            WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
-            WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
-            SetRegView 32
-            WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
-            WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$1"
+            StrCpy $INSTDIR "$0\LilacAnime-Libmpv"
+          lilacStableInitDone:
           !macroend
           !macro customInstall
             Delete "$SMPROGRAMS\LilacAnime Libmpv R2J Subtitle Fix.lnk"
@@ -116,8 +118,8 @@ jobs:
           '@
           Set-Content build/stable-installer.nsh -Value $hooks -Encoding utf8
           $p=Get-Content package.json -Raw|ConvertFrom-Json;if($p.name -ne 'lilacanime-desktop' -or $p.build.appId -ne $env:STABLE_APP_ID -or $p.build.nsis.shortcutName -ne $env:STABLE_SHORTCUT_NAME -or $p.build.win.executableName -ne $env:PREPACKAGED_EXE_BASE){throw 'stable identity verification failed'}
-          $nsh=Get-Content build/stable-installer.nsh -Raw;if($nsh.Contains('customUnWelcomePage') -or $nsh.Contains('BUILD_UNINSTALLER')){throw 'stable hook include unexpectedly contains nested uninstall macros'}
-          Write-Host "R16_INSTALL_IDENTITY_OK visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' appExe=$($env:PREPACKAGED_EXE_NAME) profile=lilacanime-desktop hooks=standalone"
+          $nsh=Get-Content build/stable-installer.nsh -Raw;if($nsh.Contains('WriteRegExpandStr') -or $nsh.Contains('customUnWelcomePage') -or $nsh.Contains('BUILD_UNINSTALLER')){throw 'stable hook include mutates install registry too early or contains nested uninstall macros'}
+          Write-Host "R16_INSTALL_IDENTITY_OK visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' appExe=$($env:PREPACKAGED_EXE_NAME) profile=lilacanime-desktop migration=customInit-after-old-detection"
 
       - name: Build installer around exact R15 application
         shell: powershell
@@ -150,26 +152,26 @@ jobs:
           $oldExe=Get-ChildItem $legacy -File -Filter '*.exe'|Where-Object{$_.Name -notmatch '(?i)uninstall'}|Select-Object -First 1;if(-not $oldExe){throw 'R2J executable not found'}
           $profile=Join-Path $env:APPDATA 'lilacanime-desktop';New-Item -ItemType Directory -Force -Path $profile|Out-Null;$sentinel=Join-Path $profile 'r16-profile-retention-sentinel.txt';$value="keep-$([guid]::NewGuid())";Set-Content $sentinel $value -NoNewline
           $env:LILAC_INSTALL_ROOT=$root;$p=Start-Process $env:R16_INSTALLER_PATH -ArgumentList '/S' -Wait -PassThru;if($p.ExitCode -ne 0){throw "R16 migration failed $($p.ExitCode)"}
-          $newExe=Join-Path $stable $env:PREPACKAGED_EXE_NAME;if(!(Test-Path $newExe)){throw "stable executable missing $newExe"};if(Test-Path $oldExe.FullName){throw 'legacy executable survived'};if(!(Test-Path $sentinel) -or (Get-Content $sentinel -Raw) -ne $value){throw 'profile sentinel lost'}
+          $newExe=Join-Path $stable $env:PREPACKAGED_EXE_NAME;if(!(Test-Path $newExe)){throw "stable executable missing $newExe"};if(Test-Path $oldExe.FullName){throw 'legacy executable survived'};if(Test-Path $legacy){throw 'legacy R2J install directory survived'};if(!(Test-Path $sentinel) -or (Get-Content $sentinel -Raw) -ne $value){throw 'profile sentinel lost'}
           $menu=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs';$newLink=Join-Path $menu 'LilacAnime Libmpv.lnk';$oldLink=Join-Path $menu 'LilacAnime Libmpv R2J Subtitle Fix.lnk';if(!(Test-Path $newLink)){throw 'stable Start shortcut missing'};if(Test-Path $oldLink){throw 'legacy Start shortcut survived'}
           $ws=New-Object -ComObject WScript.Shell;$target=$ws.CreateShortcut($newLink).TargetPath;if([IO.Path]::GetFullPath($target) -ne [IO.Path]::GetFullPath($newExe)){throw "shortcut target mismatch $target"}
           $p=Start-Process $env:R16_INSTALLER_PATH -ArgumentList '/S' -Wait -PassThru;if($p.ExitCode -ne 0){throw 'stable reinstall failed'};$target2=$ws.CreateShortcut($newLink).TargetPath;if([IO.Path]::GetFullPath($target2) -ne [IO.Path]::GetFullPath($target)){throw 'shortcut target changed on reinstall'};if((Get-Content $sentinel -Raw) -ne $value){throw 'profile changed on reinstall'}
-          Remove-Item Env:LILAC_INSTALL_ROOT -ErrorAction SilentlyContinue;Write-Host "R16_MIGRATION_OK old=R2J newFolder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' profile=retained reinstall=stable"
+          Remove-Item Env:LILAC_INSTALL_ROOT -ErrorAction SilentlyContinue;Write-Host "R16_MIGRATION_OK old=R2J oldFolderRemoved=1 newFolder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' profile=retained reinstall=stable"
 
       - name: Create manifest and notes
         shell: powershell
         run: |
           $ErrorActionPreference='Stop';$i=Get-Item $env:R16_INSTALLER_PATH;$h=(Get-FileHash $i.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$z=$i.Length;"R16_INSTALLER_SHA256=$h"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"R16_INSTALLER_SIZE=$z"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          [ordered]@{schema=2;releaseTag=$env:RELEASE_TAG;installer=$env:INSTALLER_NAME;installerSha256=$h;installerSize=[long]$z;visibleProductName=$env:STABLE_PRODUCT_NAME;installFolder=$env:STABLE_FOLDER_NAME;startMenuShortcut=$env:STABLE_SHORTCUT_NAME;installerIdentity=$env:STABLE_APP_ID;upgradeFrom='LilacAnime Libmpv R2J Subtitle Fix';profilePackageName='lilacanime-desktop';profileRetention='real-r2j-upgrade-sentinel-pass';shortcutRetention='same-path-reinstall-pass';baseRelease=$env:BASE_RELEASE_TAG;baseInstallerSha256=$env:BASE_INSTALLER_SHA256;baseQualifiedSource=$env:BASE_QUALIFIED_SOURCE;baseAppExeSha256=$env:BASE_APP_EXE_SHA256;baseAppAsarSha256=$env:BASE_APP_ASAR_SHA256;addonSha256=$env:BASE_ADDON_SHA256;dllSha256=$env:BASE_DLL_SHA256;payloadQualification='byte-identical-to-r15-qualified-app'}|ConvertTo-Json -Depth 4|Set-Content (Join-Path dist $env:MANIFEST_NAME) -Encoding utf8
+          [ordered]@{schema=3;releaseTag=$env:RELEASE_TAG;installer=$env:INSTALLER_NAME;installerSha256=$h;installerSize=[long]$z;visibleProductName=$env:STABLE_PRODUCT_NAME;installFolder=$env:STABLE_FOLDER_NAME;startMenuShortcut=$env:STABLE_SHORTCUT_NAME;installerIdentity=$env:STABLE_APP_ID;upgradeFrom='LilacAnime Libmpv R2J Subtitle Fix';profilePackageName='lilacanime-desktop';profileRetention='real-r2j-upgrade-sentinel-pass';legacyInstallCleanup='real-r2j-old-folder-removed';shortcutRetention='same-path-reinstall-pass';baseRelease=$env:BASE_RELEASE_TAG;baseInstallerSha256=$env:BASE_INSTALLER_SHA256;baseQualifiedSource=$env:BASE_QUALIFIED_SOURCE;baseAppExeSha256=$env:BASE_APP_EXE_SHA256;baseAppAsarSha256=$env:BASE_APP_ASAR_SHA256;addonSha256=$env:BASE_ADDON_SHA256;dllSha256=$env:BASE_DLL_SHA256;payloadQualification='byte-identical-to-r15-qualified-app'}|ConvertTo-Json -Depth 4|Set-Content (Join-Path dist $env:MANIFEST_NAME) -Encoding utf8
           @"
           LilacAnime Libmpv stable installer r16 keeps the exact fully-qualified R15 application bytes and fixes only Windows installation identity.
 
           Visible name: LilacAnime Libmpv
           Stable folder: LilacAnime-Libmpv
           Start Menu shortcut: LilacAnime Libmpv
-          Default: D:\Program Files\LilacAnime-Libmpv when D: exists; LocalAppData\Programs\LilacAnime-Libmpv otherwise.
+          Fresh/R2J migration default: D:\Program Files\LilacAnime-Libmpv when D: exists; LocalAppData\Programs\LilacAnime-Libmpv otherwise. Once the stable installer is installed, future reinstalls/upgrades keep its registered path.
 
-          The legacy R2J installer GUID is retained internally so R2J upgrades into this app instead of becoming a duplicate. CI performs a real R2J install, upgrade, profile-sentinel check, old-shortcut removal check, shortcut-target check, and a second reinstall stability check.
+          The legacy R2J installer GUID is retained internally so the real R2J uninstaller is invoked with electron-builder's --updated/KEEP_APP_DATA path before the new files are installed. The new path is selected only after old-install detection, so the old R2J folder is removed without touching the unchanged lilacanime-desktop profile. CI performs a real R2J install, upgrade, old-folder removal check, profile-sentinel check, old-shortcut removal check, shortcut-target check, and a second stable reinstall check.
 
           Base release: $env:BASE_RELEASE_TAG
           Base qualified source: $env:BASE_QUALIFIED_SOURCE
@@ -194,5 +196,5 @@ jobs:
           gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 stable installer r16' --notes-file release-notes-r16.md;if($LASTEXITCODE -ne 0){throw 'release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber;if($LASTEXITCODE -ne 0){throw 'release upload failed'}
           $v=Join-Path $env:RUNNER_TEMP 'r16-public';New-Item -ItemType Directory -Force -Path $v|Out-Null;gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME;if($LASTEXITCODE -ne 0){throw 'public redownload failed'}
-          $e=Join-Path $v $env:INSTALLER_NAME;$mp=Join-Path $v $env:MANIFEST_NAME;$h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length;$m=Get-Content $mp -Raw|ConvertFrom-Json;if($h -ne $env:R16_INSTALLER_SHA256 -or $z -ne [long]$env:R16_INSTALLER_SIZE -or $m.installerSha256 -ne $h -or $m.profileRetention -ne 'real-r2j-upgrade-sentinel-pass' -or $m.shortcutRetention -ne 'same-path-reinstall-pass'){throw 'public verification mismatch'}
-          Write-Host "R16_PUBLISHED_OK tag=$env:RELEASE_TAG sha256=$h size=$z visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)'"
+          $e=Join-Path $v $env:INSTALLER_NAME;$mp=Join-Path $v $env:MANIFEST_NAME;$h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length;$m=Get-Content $mp -Raw|ConvertFrom-Json;if($h -ne $env:R16_INSTALLER_SHA256 -or $z -ne [long]$env:R16_INSTALLER_SIZE -or $m.installerSha256 -ne $h -or $m.profileRetention -ne 'real-r2j-upgrade-sentinel-pass' -or $m.legacyInstallCleanup -ne 'real-r2j-old-folder-removed' -or $m.shortcutRetention -ne 'same-path-reinstall-pass'){throw 'public verification mismatch'}
+          Write-Host "R16_PUBLISHED_OK tag=$env:RELEASE_TAG sha256=$h size=$z visible='$($env:STABLE_PRODUCT_NAME)' folder=$($env:STABLE_FOLDER_NAME) shortcut='$($env:STABLE_SHORTCUT_NAME)' oldFolderRemoved=1"
