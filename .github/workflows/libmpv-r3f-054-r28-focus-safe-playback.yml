@@ -1,0 +1,86 @@
+name: LilacAnime Libmpv R28 focus-safe playback
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r28-focus-safe-playback]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r28-focus-safe-playback.yml
+      - scripts/r28-focus-safe-playback-build.ps1
+      - scripts/r28-focus-safe-playback-fix.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r28-focus-safe-playback
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r28
+  INSTALLER_NAME: LilacAnime-Libmpv-R28-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r28-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc8
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Build and qualify R28 focus-safe playback
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/r28-focus-safe-playback-build.ps1
+      - name: Upload qualified R28 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r28-focus-safe-playback
+          path: |
+            dist/LilacAnime-Libmpv-R28-Setup.exe
+            dist/lilacanime-libmpv-r28-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r28 focus-safe playback' --notes 'R28 is the first evidence-driven repair after R27 isolated two independent problems. Focused playback keeps the qualified direct external-VideoFrame to WebGPU canvas copy. Only while unfocused, presentation uses a private Chromium-owned WebGPU staging texture before the canvas copy, with no CPU readback, rAF gate, or GPU completion fence. Separately, the R3E JS drain returns to the R3B callback-authoritative 250ms watchdog and collapses already-queued native producer backlog to the newest frame after a main-thread stall. R27 rare-stall/focus diagnostics remain. Native addon/DLL bytes, serial latest-frame mailbox, profile identity, window/PiP fixes, and direct focused path are preserved.'
+          if($LASTEXITCODE-ne 0){throw 'release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r28-public';New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME;$m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R28_INSTALLER_SHA256 -or $z-ne [long]$env:R28_INSTALLER_SIZE){throw 'public installer byte mismatch'}
+          if($m.installerSha256-ne $h -or $m.electron-ne '44.9.3' -or $m.sharedTextureImport-ne 'function' -or $m.sharedTextureSend-ne 'function'){throw 'public runtime proof mismatch'}
+          if($m.deliveryMode-ne 'serial-latest-frame-mailbox' -or $m.inactiveCompositorGuard-ne $true -or $m.cadenceHotpath-ne 'record-only-snapshot-4hz'){throw 'public qualified baseline mismatch'}
+          if($m.r26BoundaryTrace-ne 'ring256-on-demand-main-dispatch-renderer-entry-getVideoFrame-gpu-copy-present-release'){throw 'public R26 trace mismatch'}
+          if($m.r27FocusStallRetention-ne 'anomaly64-threshold60-main+renderer-focus-visibility'){throw 'public R27 retention mismatch'}
+          if($m.r28FocusSafePlayback-ne 'focused-direct+unfocused-private-staging+producer-watchdog250+latest-backlog-collapse'){throw 'public R28 repair mismatch'}
+          Write-Host "R28_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) focused=direct focusStaging=private-gpu producerWatchdogMs=250 backlog=newest-only"
