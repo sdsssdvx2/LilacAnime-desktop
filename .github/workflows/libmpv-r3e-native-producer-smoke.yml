@@ -84,6 +84,18 @@ jobs:
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.50-libmpv-r3d.rc1'){throw 'R3D identity mismatch'}
 
+      - name: Expose exact reproduced R3D ownership anchor
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $text=Get-Content electron/libmpv-shared-main.cjs -Raw
+          $idx=$text.IndexOf('function releaseNativeFrame')
+          if($idx -lt 0){throw 'releaseNativeFrame missing from reproduced R3D'}
+          $len=[Math]::Min(1400,$text.Length-$idx)
+          Write-Host '===== REPRODUCED_R3D_RELEASE_NATIVE_FRAME ====='
+          Write-Host $text.Substring($idx,$len)
+          Write-Host '===== END_REPRODUCED_R3D_RELEASE_NATIVE_FRAME ====='
+
       - name: Apply exact R3E native producer transform
         shell: powershell
         run: |
