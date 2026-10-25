@@ -42,6 +42,16 @@ function preserve054(label) {
   markers(read('electron/main.cjs'), ["const API = 'https://api.tenrai.org/v1';"], `${label} Tenrai`);
   console.log(`R3F_0554_PRESERVE_OK=${label}`);
 }
+function dumpR2VMainBridgeContext() {
+  const lines = read('electron/main.cjs').split(/\r?\n/);
+  console.log('R3F_0554_R2V_MAIN_BRIDGE_CONTEXT_BEGIN');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/libmpv|shared.*bridge|bridge.*shared|ANDROID_WEBVIEW_UA|headersFor|userAgent/i.test(lines[i])) {
+      console.log(`${String(i + 1).padStart(5, '0')}: ${lines[i]}`);
+    }
+  }
+  console.log('R3F_0554_R2V_MAIN_BRIDGE_CONTEXT_END');
+}
 function patchR2WFor054() {
   const target = path.join(root, 'scripts', 'apply-libmpv-r2w-aspect-cadence.cjs');
   let source = fs.readFileSync(target, 'utf8');
@@ -66,13 +76,10 @@ function patchR2WFor054() {
   console.log('R3F_0554_R2W_PATCH_OK screenAnchor=bridge-call-structural uniqueness=enforced');
 }
 
-// Authoritative R2M -> R2V reconstruction. The child intentionally checks out
-// the pinned historical tooling commit while preserving branch-only 0.5.54
-// compatibility helpers in temp files; when it returns, the working tree is the
-// fully reconstructed R2V product and this parent process continues from memory.
 runNode('scripts/r3f-054-r2v-map.cjs', 'R2V_AUTHORITATIVE_MAP');
 identity('0.5.50-libmpv-r2v.rc1', 'libmpv-r2k-v0.5.50-r5', 'R2V_PARENT');
 preserve054('R2V_PARENT');
+dumpR2VMainBridgeContext();
 
 patchR2WFor054();
 runNode('scripts/apply-libmpv-r2w-aspect-cadence.cjs', 'R2W');
