@@ -8,6 +8,7 @@ on:
       - scripts/r23-render-window-fix.cjs
       - scripts/r23-window-controller-smoke.cjs
       - scripts/r23-render-window-installer.ps1
+      - scripts/r23-nested-migration-smoke.ps1
       - build/stable-installer-r23.nsh
   workflow_dispatch:
 
@@ -50,11 +51,17 @@ jobs:
       - name: Install helper packaging tools
         shell: powershell
         run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Preserve nested migration smoke across source replay
+        shell: powershell
+        run: Copy-Item scripts/r23-nested-migration-smoke.ps1 (Join-Path $env:RUNNER_TEMP 'r23-nested-migration-smoke.ps1') -Force
       - name: Build and qualify R23 renderer window installer
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/r23-render-window-installer.ps1
+      - name: Qualify real nested R2J updater migration
+        shell: powershell
+        run: '& (Join-Path $env:RUNNER_TEMP ''r23-nested-migration-smoke.ps1'')'
       - name: Upload qualified R23
         uses: actions/upload-artifact@v4
         with:
@@ -71,7 +78,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
-          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r23 render/window repair' --notes 'R23 preserves the R22 Electron 44.9.3/sharedTexture runtime fix and the qualified R3E native producer. It reduces only renderer-side hot-path diagnostic overhead (4 Hz receiver stats, no periodic WebGPU queue completion fence), restores a persistent drag strip for windowed playback and libmpv mini-player, reapplies mini-player always-on-top after window state transitions, and restores the assisted install-directory page with the stable LilacAnime-Libmpv folder preselected. Profile identity remains lilacanime-desktop.'
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r23 render/window repair' --notes 'R23 preserves the R22 Electron 44.9.3/sharedTexture runtime fix and the qualified R3E native producer. It reduces only renderer-side hot-path diagnostic overhead (4 Hz receiver stats, no periodic WebGPU queue completion fence), restores a persistent drag strip for windowed playback and libmpv mini-player, reapplies mini-player always-on-top after window state transitions, restores the assisted install-directory page with the stable LilacAnime-Libmpv folder preselected, and is qualified against a reproduced nested R2J install/registry/shortcut state. Profile identity remains lilacanime-desktop.'
           if($LASTEXITCODE-ne 0){throw 'release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
           if($LASTEXITCODE-ne 0){throw 'release upload failed'}
@@ -83,5 +90,5 @@ jobs:
           if($h-ne $env:R23_INSTALLER_SHA256 -or $z-ne [long]$env:R23_INSTALLER_SIZE){throw 'public installer byte mismatch'}
           if($m.installerSha256-ne $h -or $m.packagedRuntimeElectron-ne '44.9.3' -or $m.packagedSharedTextureImport-ne 'function' -or $m.packagedSharedTextureSend-ne 'function'){throw 'public runtime proof mismatch'}
           if($m.rendererMode-ne 'direct-receive-webgpu-copy' -or $m.receiverStatsIntervalMs-ne 250 -or $m.gpuCompletionFenceSampling-ne $false -or $m.installDirectoryPage-ne $true){throw 'public R23 feature manifest mismatch'}
-          if($m.installerRuntimeProbe-ne 'exact-extracted-installer-payload-pass' -or $m.installerMigrationProbe-ne 'stable-path-shortcut-profile-pass'){throw 'public installer qualification mismatch'}
-          Write-Host "R23_PUBLISHED_OK sha256=$h size=$z electron=$($m.packagedRuntimeElectron) sharedTexture=1 rendererHotpath=1 windowRepair=1 directoryPage=1"
+          if($m.installerRuntimeProbe-ne 'exact-extracted-installer-payload-pass' -or $m.installerMigrationProbe-ne 'stable-path-shortcut-profile-pass' -or $m.nestedMigrationProbe-ne 'r2j-nested-to-stable-pass'){throw 'public installer qualification mismatch'}
+          Write-Host "R23_PUBLISHED_OK sha256=$h size=$z electron=$($m.packagedRuntimeElectron) sharedTexture=1 rendererHotpath=1 windowRepair=1 directoryPage=1 nestedMigration=1"
