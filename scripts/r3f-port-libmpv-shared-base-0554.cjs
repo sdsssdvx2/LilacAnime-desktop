@@ -29,6 +29,16 @@ let index = read('src/index.html');
 let app = read('src/app.js');
 let anime4k = read('src/anime4k.js');
 const pkg = JSON.parse(read('package.json'));
+const packageIdentityBefore = {
+  version: pkg.version || null,
+  lilacCustomTag: pkg.lilacCustomTag || null,
+  appId: pkg.build?.appId || null,
+  productName: pkg.build?.productName || null,
+  executableName: pkg.build?.win?.executableName || null,
+  artifactName: pkg.build?.win?.artifactName || null
+};
+const linuxBefore = JSON.stringify(pkg.build?.linux ?? null);
+const debBefore = JSON.stringify(pkg.build?.deb ?? null);
 
 if (main.includes('LILAC_LIBMPV_SHARED_SOURCE_PATCH')) throw new Error('0.5.54 shared base wiring already applied');
 for (const relative of ['electron/libmpv-shared-main.cjs','electron/libmpv-shared-preload.cjs','src/libmpv-shared-entry.js']) {
@@ -121,8 +131,8 @@ if (anime4k.includes(anime4kAnchor)) {
   throw new Error('Anime4K libmpv exclusion anchor missing');
 }
 
-// Keep upstream 0.5.54 application identity/Linux packaging, but restore the
-// qualified Electron major and native payload unpack requirements.
+// Preserve the incoming R2M/custom-channel identity and 0.5.54 Linux packaging,
+// while restoring the qualified Electron major and native payload unpack entries.
 pkg.devDependencies ||= {};
 pkg.devDependencies.electron = '44.9.3';
 pkg.build ||= {};
@@ -179,9 +189,20 @@ if (finalPkg.devDependencies?.electron !== '44.9.3') throw new Error(`Electron p
 for (const native of ['electron/lilac-libmpv-player-bridge.node','electron/libmpv-2.dll']) {
   if (!finalPkg.build?.asarUnpack?.includes(native)) throw new Error(`native unpack entry missing: ${native}`);
 }
-if (finalPkg.build?.appId !== 'com.lilac.anime.desktop' || finalPkg.build?.productName !== 'LilacAnime') {
-  throw new Error('0.5.54 application identity changed by shared integration');
+const packageIdentityAfter = {
+  version: finalPkg.version || null,
+  lilacCustomTag: finalPkg.lilacCustomTag || null,
+  appId: finalPkg.build?.appId || null,
+  productName: finalPkg.build?.productName || null,
+  executableName: finalPkg.build?.win?.executableName || null,
+  artifactName: finalPkg.build?.win?.artifactName || null
+};
+if (JSON.stringify(packageIdentityAfter) !== JSON.stringify(packageIdentityBefore)) {
+  throw new Error(`shared integration changed incoming package identity: before=${JSON.stringify(packageIdentityBefore)} after=${JSON.stringify(packageIdentityAfter)}`);
 }
-if (!finalPkg.build?.linux || !finalPkg.build?.deb) throw new Error('0.5.54 Linux/deb packaging was lost');
+if (JSON.stringify(finalPkg.build?.linux ?? null) !== linuxBefore || JSON.stringify(finalPkg.build?.deb ?? null) !== debBefore) {
+  throw new Error('shared integration changed 0.5.54 Linux/deb packaging');
+}
+if (!finalPkg.build?.linux || !finalPkg.build?.deb) throw new Error('0.5.54 Linux/deb packaging was missing before/after shared integration');
 
-console.log(`R3F_0554_SHARED_BASE_OK version=${finalPkg.version} electron=44.9.3 main=wired preload=combined renderer=custom-element nativeUnpack=2 upstreamIdentity=preserved`);
+console.log(`R3F_0554_SHARED_BASE_OK version=${finalPkg.version} electron=44.9.3 main=wired preload=combined renderer=custom-element nativeUnpack=2 incomingIdentity=preserved linuxDeb=preserved`);
