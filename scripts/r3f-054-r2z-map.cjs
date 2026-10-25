@@ -46,12 +46,24 @@ function patchR2WFor054() {
   const target = path.join(root, 'scripts', 'apply-libmpv-r2w-aspect-cadence.cjs');
   let source = fs.readFileSync(target, 'utf8');
   const oldBlock = `main = replaceOnce(main,\n  "  app,\\n  ipcMain,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  "  app,\\n  ipcMain,\\n  screen,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  'bridge screen injection');`;
-  const newBlock = `main = replaceOnce(main,\n  "  userAgent: ANDROID_WEBVIEW_UA,",\n  "  screen,\\n  userAgent: ANDROID_WEBVIEW_UA,",\n  'bridge screen injection');`;
+  const newBlock = `{
+  const callStart = main.indexOf('createLibmpvSharedBridge({');
+  if (callStart < 0) throw new Error('bridge screen injection: createLibmpvSharedBridge call missing');
+  const callEnd = main.indexOf('});', callStart);
+  const userAgentAt = main.indexOf('userAgent: ANDROID_WEBVIEW_UA', callStart);
+  if (callEnd < 0 || userAgentAt < 0 || userAgentAt > callEnd) throw new Error('bridge screen injection: userAgent field missing inside bridge call');
+  const call = main.slice(callStart, callEnd + 3);
+  if (!/\\bscreen\\s*,/.test(call)) {
+    const lineStart = main.lastIndexOf('\\n', userAgentAt) + 1;
+    const indent = main.slice(lineStart, userAgentAt).match(/^\\s*/)?.[0] || '';
+    main = main.slice(0, lineStart) + indent + 'screen,\\n' + main.slice(lineStart);
+  }
+}`;
   const count = source.split(oldBlock).length - 1;
   assert(count === 1, `R2W 0.5.54 patch expected one historical screen-injection block, found ${count}`);
   source = source.replace(oldBlock, newBlock);
   fs.writeFileSync(target, source);
-  console.log('R3F_0554_R2W_PATCH_OK screenAnchor=userAgent-only uniqueness=enforced');
+  console.log('R3F_0554_R2W_PATCH_OK screenAnchor=bridge-call-structural uniqueness=enforced');
 }
 
 // Authoritative R2M -> R2V reconstruction. The child intentionally checks out
