@@ -98,8 +98,6 @@ const packagedNativeBefore = {
   dll: sha256IfPresent('electron/libmpv-2.dll')
 };
 
-// R3A authoritative corrected sequence. The pinned transform uses bounded async
-// delivery (12 pending frames), not the earlier experimental queue/tick constants.
 runNode('scripts/apply-libmpv-r3a-decoupled-delivery.cjs', 'R3A_DECOUPLED');
 identity('0.5.50-libmpv-r3a.rc1', 'libmpv-r2k-v0.5.50-r10', 'R3A_DECOUPLED');
 runNode('scripts/apply-libmpv-r3a-poll-cadence-fix.cjs', 'R3A_POLL_CADENCE');
@@ -119,7 +117,8 @@ runNode('scripts/apply-libmpv-r3b-pending-wake.cjs', 'R3B_PENDING_WAKE');
 bridge = read('electron/libmpv-shared-main.cjs');
 markers(bridge, ['nativeUpdateCallbackInstalled', 'wakePumpFromNative', 'nativeWakePending'], 'R3B bridge');
 markers(read('native/libmpv-d3d11-bridge/player_addon.cc'), ['mpv_render_context_set_update_callback'], 'R3B native');
-runNode('scripts/smoke-libmpv-r3b-update-callback.cjs', 'R3B_SOURCE_SMOKE');
+// smoke-libmpv-r3b-update-callback requires a freshly compiled addon + libmpv DLL;
+// run it in the native qualification workflow, not this source-transform map.
 stageGuard('R3B');
 
 runNode('scripts/apply-libmpv-r3c-hotpath-state.cjs', 'R3C_HOTPATH_STATE');
@@ -151,6 +150,7 @@ markers(r3eNative, [
   'producerWakePending', 'producerReady', 'startFrameProducer', 'popProducedFrame',
   'releaseProducedFrame', 'frameProducerStats'
 ], 'R3E native producer');
+// R3D/R3E hardware smokes are likewise deferred until this exact source is compiled.
 stageGuard('R3E');
 
 const packagedNativeAfter = {
@@ -160,4 +160,4 @@ const packagedNativeAfter = {
 assert(packagedNativeAfter.addon === packagedNativeBefore.addon, `R3 mapping replaced packaged addon bytes: ${packagedNativeBefore.addon} -> ${packagedNativeAfter.addon}`);
 assert(packagedNativeAfter.dll === packagedNativeBefore.dll, `R3 mapping replaced packaged DLL bytes: ${packagedNativeBefore.dll} -> ${packagedNativeAfter.dll}`);
 
-console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer packagedNativeBytes=unchanged`);
+console.log(`R3F_0554_R3E_MAP_OK chain=R2Z-R3A-R3B-pending-R3C-R3D-R3E direct=1 upstream054=preserved nativeSource=producer packagedNativeBytes=unchanged nativeSmokes=deferred-to-compiled-qualification`);
