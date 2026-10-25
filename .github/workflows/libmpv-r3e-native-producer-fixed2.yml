@@ -131,16 +131,24 @@ jobs:
           "LILAC_LIBMPV_DLL=$((Resolve-Path 'electron/libmpv-2.dll').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "R3E_ADDON_SHA256=$((Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant())"
 
-      - name: Install isolated Electron runtime for smoke
+      - name: Install verified official Electron runtime for smoke
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $prefix=Join-Path $env:RUNNER_TEMP 'electron-runtime'
-          npm install --prefix $prefix --no-save --no-audit --no-fund electron@44.9.3
-          if($LASTEXITCODE -ne 0){throw 'isolated Electron install failed'}
-          $exe=Join-Path $prefix 'node_modules/electron/dist/electron.exe'
-          if(!(Test-Path $exe)){throw "isolated Electron binary missing: $exe"}
+          $zip=Join-Path $env:RUNNER_TEMP 'electron-v44.9.3-win32-x64.zip'
+          $dir=Join-Path $env:RUNNER_TEMP 'electron-runtime-direct'
+          $url='https://github.com/electron/electron/releases/download/v44.9.3/electron-v44.9.3-win32-x64.zip'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $zip $url
+          if($LASTEXITCODE -ne 0){throw 'official Electron download failed'}
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected='41a1ffa0541cb0f2c9b9fe920dd2cef1793ad0ea2ada1a9582958880f4d1b23c'
+          if($actual -ne $expected){throw "Electron ZIP hash mismatch actual=$actual"}
+          New-Item -ItemType Directory -Force -Path $dir|Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $exe=Join-Path $dir 'electron.exe'
+          if(!(Test-Path $exe)){throw "official Electron binary missing: $exe"}
           "ELECTRON_SMOKE_EXE=$exe"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ELECTRON_ZIP_SHA256=$actual"
           Write-Host "ELECTRON_SMOKE_EXE=$exe"
 
       - name: Run corrected native producer qualification three times
