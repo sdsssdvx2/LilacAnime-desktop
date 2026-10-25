@@ -1,3 +1,5 @@
+!include FileFunc.nsh
+
 Var /GLOBAL lilacDetachedLegacyCleanup
 
 Function LilacCleanupDetachedR2J
