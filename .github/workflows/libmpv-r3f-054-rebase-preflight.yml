@@ -34,6 +34,13 @@ jobs:
           $ErrorActionPreference='Stop'
           node scripts/r3f-054-rebase-preflight.cjs
           if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
+          node --check scripts/apply-libmpv-r2m-finalize.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2M finalize syntax failed'}
+          node scripts/apply-libmpv-r2m-finalize.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2M finalize failed'}
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.49-libmpv-r2m.rc2' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r4'){throw 'R2M historical metadata restore failed'}
+          Write-Host 'R3F_0554_R2M_METADATA_OK'
 
       - name: Apply R2N WebGPU PiP on rebased tree
         shell: powershell
