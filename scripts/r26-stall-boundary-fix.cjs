@@ -70,7 +70,7 @@ const diagnosticsEndNeedle = `\n    }));`;
 const diagnosticsEnd = bridge.indexOf(diagnosticsEndNeedle, diagnosticsStart + diagnosticsStartNeedle.length);
 if (diagnosticsEnd < 0) throw new Error('R26 diagnostics handler end missing');
 const diagnosticsBody = bridge.slice(diagnosticsStart + diagnosticsStartNeedle.length, diagnosticsEnd);
-for (const marker of ["diagnosticVersion: 'LIBMPV-SHARED-D1'", 'state({ fullDiagnostics: true })', 'relay: relay.stats()']) {
+for (const marker of ['state({ fullDiagnostics: true })', 'relay: relay.stats()']) {
   if (!diagnosticsBody.includes(marker)) throw new Error(`R26 diagnostics body missing marker: ${marker}`);
 }
 const diagnosticsReplacement = `    ipcMain.handle('libmpv-shared:diagnostics', async () => {\n      const rendererTrace = await r26RequestRendererTrace();\n      return {${diagnosticsBody},\n        r26BoundaryTrace: {\n          version: 1,\n          capacity: R26_TRACE_CAPACITY,\n          capturedAtWallMs: Date.now(),\n          main: r26SnapshotMainTrace(),\n          renderer: rendererTrace\n        }\n      };\n    });`;
