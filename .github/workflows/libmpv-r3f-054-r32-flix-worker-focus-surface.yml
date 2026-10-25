@@ -6,10 +6,11 @@ on:
     paths:
       - .github/workflows/libmpv-r3f-054-r32-flix-worker-focus-surface.yml
       - scripts/r32-flix-worker-native-focus-build.ps1
-      - scripts/r32-build-meta-generator.cjs
-      - scripts/r32-generated-meta-sanitize.cjs
       - scripts/r32-flix-worker-native-focus-fix.cjs
+      - scripts/r32-transform-source-sanitize.cjs
+      - scripts/r32-worker-unpack-fix.cjs
       - scripts/r32-flix-worker-smoke.cjs
+      - scripts/r32-native-presenter-smoke.cjs
   workflow_dispatch:
 
 concurrency:
@@ -59,7 +60,10 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/r32-flix-worker-native-focus-build.ps1
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/r32-flix-worker-native-focus-build.ps1
       - name: Upload qualified R32 artifact
         uses: actions/upload-artifact@v4
         with:
