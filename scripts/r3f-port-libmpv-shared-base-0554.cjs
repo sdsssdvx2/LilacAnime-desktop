@@ -2,7 +2,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { buildSync } = require('esbuild');
+const { createRequire } = require('node:module');
+const repoRequire = createRequire(path.join(process.cwd(), 'package.json'));
+const { buildSync } = repoRequire('esbuild');
 
 const root = process.cwd();
 const file = relative => path.join(root, relative);
