@@ -24,9 +24,9 @@ $core = Replace-Once $core `
   ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer syntax'" + "`n" + "node scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
   'R32 apply presenter safety pass'
 
-# Replace the old opaque four-term source gate structurally. Matching the complete
-# regex line is intentionally avoided because PowerShell/JSON escaping of \(250\)
-# is irrelevant to product semantics and caused a false wrapper failure.
+# Replace the old opaque four-term source gate structurally. The watchdog source
+# check is whitespace/newline agnostic and tied specifically to producerCv.wait_for;
+# the runtime smoke below proves callback-authoritative progress through a JS stall.
 $legacyGatePrefix = "if (`$nativeSource -notmatch 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE'"
 $legacyGateStart = $core.IndexOf($legacyGatePrefix)
 if ($legacyGateStart -lt 0) { throw 'R32 legacy native source gate prefix missing' }
@@ -36,7 +36,8 @@ $newNativeGates = @'
 if (-not $nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }
 if (-not $nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }
 if (-not $nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }
-if (-not $nativeSource.Contains('player->producerCv.wait_for(lock, std::chrono::milliseconds(250), [player]() {')) { throw 'R32 native producer 250ms watchdog waiter missing' }
+if ($nativeSource -notmatch 'producerCv\.wait_for\([\s\S]{0,240}?std::chrono::milliseconds\(250\)') { throw 'R32 native producer 250ms watchdog waiter missing' }
+if ($nativeSource -match 'producerCv\.wait_for\([\s\S]{0,240}?std::chrono::milliseconds\(6\)') { throw 'R32 legacy native producer 6ms waiter survived' }
 '@
 $core = $core.Substring(0, $legacyGateStart) + $newNativeGates + $core.Substring($legacyGateEnd)
 
