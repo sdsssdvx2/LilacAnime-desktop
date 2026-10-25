@@ -7,6 +7,7 @@ on:
       - .github/workflows/libmpv-r3f-054-r2v-map.yml
       - scripts/r3f-054-r2v-map.cjs
       - scripts/r3f-054-rebase-preflight.cjs
+      - scripts/r3f-port-libmpv-shared-base-0554.cjs
       - scripts/r3f-port-r2q-tenrai-0554.cjs
       - scripts/r3f-bridge-r2r-metadata-0554.cjs
       - scripts/r3f-patch-r2t-transform-0554.cjs
