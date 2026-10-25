@@ -7,6 +7,7 @@ on:
       - .github/workflows/libmpv-r3f-054-rebase-preflight.yml
       - scripts/r3f-054-rebase-preflight.cjs
       - scripts/r3f-port-r2q-tenrai-0554.cjs
+      - scripts/r3f-bridge-r2r-metadata-0554.cjs
   workflow_dispatch:
 
 concurrency:
@@ -34,8 +35,11 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $r2qPort=Join-Path $env:RUNNER_TEMP 'r3f-port-r2q-tenrai-0554.cjs'
+          $r2rBridge=Join-Path $env:RUNNER_TEMP 'r3f-bridge-r2r-metadata-0554.cjs'
           Copy-Item scripts/r3f-port-r2q-tenrai-0554.cjs $r2qPort -Force
+          Copy-Item scripts/r3f-bridge-r2r-metadata-0554.cjs $r2rBridge -Force
           "R3F_R2Q_PORT=$r2qPort"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "R3F_R2R_BRIDGE=$r2rBridge"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           node scripts/r3f-054-rebase-preflight.cjs
           if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
           node --check scripts/apply-libmpv-r2m-finalize.cjs
@@ -55,13 +59,9 @@ jobs:
           node scripts/apply-libmpv-r2n-webgpu-pip.cjs
           if($LASTEXITCODE -ne 0){throw 'R2N compatibility failed'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){
-            if(-not $combined.Contains($marker)){throw "R2N erased upstream marker: $marker"}
-          }
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){if(-not $combined.Contains($marker)){throw "R2N erased upstream marker: $marker"}}
           $updater=Get-Content electron/updater.cjs -Raw
-          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
-            if(-not $updater.Contains($marker)){throw "R2N erased updater marker: $marker"}
-          }
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $updater.Contains($marker)){throw "R2N erased updater marker: $marker"}}
           if(Test-Path electron/miruro-session.cjs){throw 'R2N resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2N removed Miruro browser'}
           Write-Host 'R3F_0554_R2N_GUARD_OK'
@@ -71,21 +71,15 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           foreach($script in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs')){
-            node --check $script
-            if($LASTEXITCODE -ne 0){throw "R2P syntax failed: $script"}
-            node $script
-            if($LASTEXITCODE -ne 0){throw "R2P compatibility failed: $script"}
+            node --check $script;if($LASTEXITCODE -ne 0){throw "R2P syntax failed: $script"}
+            node $script;if($LASTEXITCODE -ne 0){throw "R2P compatibility failed: $script"}
           }
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.49-libmpv-r2p.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r6'){throw 'R2P metadata mismatch'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){
-            if(-not $combined.Contains($marker)){throw "R2P required marker missing: $marker"}
-          }
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){if(-not $combined.Contains($marker)){throw "R2P required marker missing: $marker"}}
           $updater=Get-Content electron/updater.cjs -Raw
-          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
-            if(-not $updater.Contains($marker)){throw "R2P erased updater marker: $marker"}
-          }
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $updater.Contains($marker)){throw "R2P erased updater marker: $marker"}}
           if(Test-Path electron/miruro-session.cjs){throw 'R2P resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2P removed Miruro browser'}
           Write-Host 'R3F_0554_R2P_GUARD_OK'
@@ -94,25 +88,39 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          node --check $env:R3F_R2Q_PORT
-          if($LASTEXITCODE -ne 0){throw 'R3F R2Q porter syntax failed'}
-          node $env:R3F_R2Q_PORT
-          if($LASTEXITCODE -ne 0){throw 'R3F R2Q 0.5.54 port failed'}
+          node --check $env:R3F_R2Q_PORT;if($LASTEXITCODE -ne 0){throw 'R3F R2Q porter syntax failed'}
+          node $env:R3F_R2Q_PORT;if($LASTEXITCODE -ne 0){throw 'R3F R2Q 0.5.54 port failed'}
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.49-libmpv-r2q.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r7'){throw 'R2Q metadata mismatch'}
           $main=Get-Content electron/main.cjs -Raw
-          foreach($marker in @("const API = 'https://api.tenrai.org/v1';",'AbortSignal.timeout(15000)',"Accept: 'application/json'")){
-            if(-not $main.Contains($marker)){throw "R2Q metadata marker missing: $marker"}
-          }
+          foreach($marker in @("const API = 'https://api.tenrai.org/v1';",'AbortSignal.timeout(15000)',"Accept: 'application/json'")){if(-not $main.Contains($marker)){throw "R2Q metadata marker missing: $marker"}}
           if($main.Contains('api.jikan.moe')){throw 'R2Q Jikan runtime URL survived'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){
-            if(-not $combined.Contains($marker)){throw "R2Q erased required marker: $marker"}
-          }
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){if(-not $combined.Contains($marker)){throw "R2Q erased required marker: $marker"}}
           $updater=Get-Content electron/updater.cjs -Raw
-          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
-            if(-not $updater.Contains($marker)){throw "R2Q erased updater marker: $marker"}
-          }
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $updater.Contains($marker)){throw "R2Q erased updater marker: $marker"}}
           if(Test-Path electron/miruro-session.cjs){throw 'R2Q resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2Q removed Miruro browser'}
           Write-Host 'R3F_0554_R2Q_GUARD_OK'
+
+      - name: Bridge R2R metadata and apply R2S on rebased tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check $env:R3F_R2R_BRIDGE;if($LASTEXITCODE -ne 0){throw 'R3F R2R bridge syntax failed'}
+          node $env:R3F_R2R_BRIDGE;if($LASTEXITCODE -ne 0){throw 'R3F R2R metadata bridge failed'}
+          foreach($script in @('scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/rebundle-libmpv-r2s.cjs')){
+            node --check $script;if($LASTEXITCODE -ne 0){throw "R2S syntax failed: $script"}
+            node $script;if($LASTEXITCODE -ne 0){throw "R2S compatibility failed: $script"}
+          }
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r2s.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r2'){throw 'R2S metadata mismatch'}
+          $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psSubtitleOriginalPreset','playPipSource','event.shiftKey','takeScreenshot()')){if(-not $combined.Contains($marker)){throw "R2S required marker missing: $marker"}}
+          $updater=Get-Content electron/updater.cjs -Raw
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $updater.Contains($marker)){throw "R2S erased updater marker: $marker"}}
+          if(Test-Path electron/miruro-session.cjs){throw 'R2S resurrected obsolete Miruro'}
+          if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2S removed Miruro browser'}
+          $main=Get-Content electron/main.cjs -Raw
+          if(-not $main.Contains("const API = 'https://api.tenrai.org/v1';")){throw 'R2S erased Tenrai base'}
+          Write-Host 'R3F_0554_R2S_GUARD_OK'
