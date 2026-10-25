@@ -61,3 +61,27 @@ jobs:
           if(Test-Path electron/miruro-session.cjs){throw 'R2N resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2N removed Miruro browser'}
           Write-Host 'R3F_0554_R2N_GUARD_OK'
+
+      - name: Apply R2P subtitle UI on rebased tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($script in @('scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs')){
+            node --check $script
+            if($LASTEXITCODE -ne 0){throw "R2P syntax failed: $script"}
+            node $script
+            if($LASTEXITCODE -ne 0){throw "R2P compatibility failed: $script"}
+          }
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.49-libmpv-r2p.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.49-r6'){throw 'R2P metadata mismatch'}
+          $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','psVttWeight','vttMaxWidth','vttLineHeight','vttShadow')){
+            if(-not $combined.Contains($marker)){throw "R2P required marker missing: $marker"}
+          }
+          $updater=Get-Content electron/updater.cjs -Raw
+          foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){
+            if(-not $updater.Contains($marker)){throw "R2P erased updater marker: $marker"}
+          }
+          if(Test-Path electron/miruro-session.cjs){throw 'R2P resurrected obsolete Miruro'}
+          if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2P removed Miruro browser'}
+          Write-Host 'R3F_0554_R2P_GUARD_OK'
