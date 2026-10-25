@@ -36,8 +36,7 @@ $newNativeGates = @'
 if (-not $nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }
 if (-not $nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }
 if (-not $nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }
-if (-not $nativeSource.Contains('LILAC_R32_NATIVE_CALLBACK_WATCHDOG')) { throw 'R32 native producer watchdog marker missing' }
-if (-not $nativeSource.Contains('std::chrono::milliseconds(250)')) { throw 'R32 native producer 250ms watchdog literal missing' }
+if (-not $nativeSource.Contains('player->producerCv.wait_for(lock, std::chrono::milliseconds(250), [player]() {')) { throw 'R32 native producer 250ms watchdog waiter missing' }
 '@
 $core = $core.Substring(0, $legacyGateStart) + $newNativeGates + $core.Substring($legacyGateEnd)
 
