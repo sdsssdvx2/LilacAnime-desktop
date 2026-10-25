@@ -1,7 +1,7 @@
 // Read-only actual API / segment / native HLS playback check.
 const {app,BrowserWindow,session}=require('electron');
 const {installPopupBlocker}=require('../electron/popup-policy.cjs');
-const {createMiruroSession}=require('../electron/miruro-session.cjs');
+const {createMiruroBrowser}=require('../electron/miruro-browser.cjs');
 installPopupBlocker(app);
 let popupWindows=0;
 app.on('web-contents-created',(_,contents)=>contents.on('did-create-window',()=>popupWindows++));
@@ -12,7 +12,7 @@ const root=path.resolve(__dirname,'..'),dir=fs.mkdtempSync(path.join(os.tmpdir()
 app.setPath('userData',path.join(dir,'profile'));app.disableHardwareAcceleration();
 app.whenReady().then(async()=>{
  const source=fs.readFileSync(path.join(root,'electron/main.cjs'),'utf8');
- const ctx=vm.createContext({fetch,miruroRequest:createMiruroSession({session,BrowserWindow}),URL,AbortSignal,AbortController,Buffer,zlib,Date,selectMiruroServer,
+ const ctx=vm.createContext({fetch,miruroRequest:createMiruroBrowser({BrowserWindow}),URL,AbortSignal,AbortController,Buffer,zlib,Date,selectMiruroServer,
    MIRURO_WEB:'https://www.miruro.to',MIRURO_KEY:Buffer.from('miruro/catalog'),LINKKF_UA:'Mozilla/5.0',ANDROID_WEBVIEW_UA:'Mozilla/5.0',isKoreanTrack:()=>false,saveRemoteSubtitle:async()=>{throw Error('skip subtitle download')},subtitleResult:x=>x});
  const at=source.indexOf('async function miruroApi(');vm.runInContext(source.slice(at,source.indexOf('\nfunction miruroText',at)),ctx);
  const from=source.indexOf('const MIRURO_KINDS');vm.runInContext(source.slice(from,source.indexOf('// --- 애니24',from)),ctx);
