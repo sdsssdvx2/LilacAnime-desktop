@@ -44,7 +44,6 @@ async function waitLoaded(addon, playerId) {
 }
 
 async function sampleMode(addon, media, label, privateTarget) {
-  process.env.LILAC_LIBMPV_TEST_PRIVATE_TARGET = privateTarget ? '1' : '0';
   const created = addon.createPlayer();
   const playerId = Number(created.playerId);
   const renderMs = [];
@@ -110,32 +109,75 @@ async function sampleMode(addon, media, label, privateTarget) {
     };
   } finally {
     try { addon.destroyPlayer(playerId); } catch {}
-    delete process.env.LILAC_LIBMPV_TEST_PRIVATE_TARGET;
   }
 }
 
-async function main() {
+async function childMain() {
+  const addonPath = process.env.LILAC_LIBMPV_PLAYER_ADDON;
+  const dllPath = process.env.LILAC_LIBMPV_DLL;
+  const media = process.env.LILAC_PRIVATE_MEDIA;
+  const label = process.env.LILAC_PRIVATE_LABEL || 'child';
+  const privateTarget = process.env.LILAC_LIBMPV_TEST_PRIVATE_TARGET === '1';
+  if (!addonPath || !fs.existsSync(addonPath) || !dllPath || !fs.existsSync(dllPath)) throw new Error('child addon/dll missing');
+  if (!media || !fs.existsSync(media)) throw new Error('child media missing');
+  // Important: native getenv() must see the probe mode at process startup. The
+  // parent supplies all native test env vars before this process is launched.
+  const addon = require(addonPath);
+  const result = await sampleMode(addon, media, label, privateTarget);
+  console.log(`LIBMPV_R3D_PRIVATE_TARGET_CHILD=${JSON.stringify(result)}`);
+}
+
+function runChild(media, label, privateTarget) {
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    LILAC_LIBMPV_TEST_AO_NULL: '1',
+    LILAC_LIBMPV_TEST_PRIVATE_TARGET: privateTarget ? '1' : '0',
+    LILAC_PRIVATE_MEDIA: media,
+    LILAC_PRIVATE_LABEL: label
+  };
+  const result = spawnSync(process.execPath, [__filename, '--child'], {
+    env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 45000,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`${label} child failed status=${result.status} stdout=${String(result.stdout || '').slice(-1200)} stderr=${String(result.stderr || '').slice(-1200)}`);
+  }
+  const prefix = 'LIBMPV_R3D_PRIVATE_TARGET_CHILD=';
+  const line = String(result.stdout || '').split(/\r?\n/).find(item => item.startsWith(prefix));
+  if (!line) throw new Error(`${label} child report missing: ${String(result.stdout || '').slice(-1200)}`);
+  return JSON.parse(line.slice(prefix.length));
+}
+
+async function parentMain() {
   const addonPath = process.env.LILAC_LIBMPV_PLAYER_ADDON;
   const dllPath = process.env.LILAC_LIBMPV_DLL;
   if (!addonPath || !fs.existsSync(addonPath) || !dllPath || !fs.existsSync(dllPath)) throw new Error('addon/dll missing');
-  process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
-  const addon = require(addonPath);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r3d-private-target-'));
   try {
     const media = buildFixture(dir);
-    const directA = await sampleMode(addon, media, 'directA', false);
-    const privateA = await sampleMode(addon, media, 'privateA', true);
-    const privateB = await sampleMode(addon, media, 'privateB', true);
-    const directB = await sampleMode(addon, media, 'directB', false);
+    const directA = runChild(media, 'directA', false);
+    const privateA = runChild(media, 'privateA', true);
+    const privateB = runChild(media, 'privateB', true);
+    const directB = runChild(media, 'directB', false);
     const directRenderP50 = round((directA.nativeRenderMs.p50 + directB.nativeRenderMs.p50) / 2);
     const privateRenderP50 = round((privateA.nativeRenderMs.p50 + privateB.nativeRenderMs.p50) / 2);
+    const directRenderP95 = round((directA.nativeRenderMs.p95 + directB.nativeRenderMs.p95) / 2);
+    const privateRenderP95 = round((privateA.nativeRenderMs.p95 + privateB.nativeRenderMs.p95) / 2);
     const report = {
       directA, privateA, privateB, directB,
       summary: {
         directRenderP50,
         privateRenderP50,
+        directRenderP95,
+        privateRenderP95,
         privateToDirectP50Ratio: directRenderP50 > 0 ? round(privateRenderP50 / directRenderP50) : 0,
-        p50ImprovementPct: directRenderP50 > 0 ? round((1 - privateRenderP50 / directRenderP50) * 100) : 0
+        p50ImprovementPct: directRenderP50 > 0 ? round((1 - privateRenderP50 / directRenderP50) * 100) : 0,
+        p95ImprovementPct: directRenderP95 > 0 ? round((1 - privateRenderP95 / directRenderP95) * 100) : 0
       }
     };
     console.log(`LIBMPV_R3D_PRIVATE_TARGET_AB_REPORT=${JSON.stringify(report)}`);
@@ -146,10 +188,9 @@ async function main() {
     }
     console.log('LIBMPV_R3D_PRIVATE_TARGET_AB_OK');
   } finally {
-    delete process.env.LILAC_LIBMPV_TEST_AO_NULL;
-    delete process.env.LILAC_LIBMPV_TEST_PRIVATE_TARGET;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
 
-main().catch(error => { console.error(error?.stack || error); process.exitCode = 1; });
+const entry = process.argv.includes('--child') ? childMain : parentMain;
+entry().catch(error => { console.error(error?.stack || error); process.exitCode = 1; });
