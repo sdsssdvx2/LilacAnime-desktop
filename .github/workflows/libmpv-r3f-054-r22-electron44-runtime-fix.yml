@@ -1,0 +1,82 @@
+name: LilacAnime Libmpv R22 Electron44 runtime fix
+
+on:
+  push:
+    branches: [libmpv-r3f-054-stable-installer-r16]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r22-electron44-runtime-fix.yml
+      - scripts/r22-electron44-runtime-fix.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r22-electron44-runtime-fix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r21
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R21-Setup.exe
+  BASE_INSTALLER_SHA256: e727472589fd76e24c41092ab73b511dc59318851576fb7ebdf8f48e398d59a7
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r22
+  INSTALLER_NAME: LilacAnime-Libmpv-R22-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r22-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc2
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_FOLDER_NAME: LilacAnime-Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install helper packaging tools
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Build and prove exact packaged Electron 44 runtime
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/r22-electron44-runtime-fix.ps1
+      - name: Upload qualified R22
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r22-electron44-runtime-fix
+          path: |
+            dist/LilacAnime-Libmpv-R22-Setup.exe
+            dist/lilacanime-libmpv-r22-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r22 Electron 44 runtime fix' --notes 'R22 fixes the R15-R21 packaging defect where the source transform requested Electron 44.9.3 after npm ci had already installed the upstream Electron 38 dependency. R22 reconciles dependencies after the transform and then executes the Electron runtime extracted from the final installer with a probe that requires sharedTexture.importSharedTexture and sharedTexture.sendSharedTexture. The lilacanime-desktop profile identity remains unchanged.'
+          if($LASTEXITCODE-ne 0){throw 'release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r22-public';New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME;$m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R22_INSTALLER_SHA256 -or $z-ne [long]$env:R22_INSTALLER_SIZE){throw 'public installer byte mismatch'}
+          if($m.installerSha256-ne $h -or $m.packagedRuntimeElectron-ne '44.9.3' -or $m.packagedSharedTextureImport-ne 'function' -or $m.packagedSharedTextureSend-ne 'function' -or $m.installerRuntimeProbe-ne 'exact-extracted-installer-payload-pass'){throw 'public manifest runtime proof mismatch'}
+          Write-Host "R22_PUBLISHED_OK sha256=$h size=$z electron=$($m.packagedRuntimeElectron) sharedTexture=1 exactInstallerPayload=1"
