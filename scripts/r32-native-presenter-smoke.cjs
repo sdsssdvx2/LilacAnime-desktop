@@ -46,7 +46,7 @@ function drain(addon, id) {
   if (!addonPath || !fs.existsSync(addonPath) || !dllPath || !fs.existsSync(dllPath)) throw new Error('R32 addon/dll env missing');
   process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
   const addon = require(addonPath);
-  for (const name of ['createPlayer','open','pollPlayback','startFrameProducer','stopFrameProducer','popProducedFrame','releaseProducedFrame','configureNativePresenter','setNativePresenterVisible','nativePresenterStats','destroyPlayer']) {
+  for (const name of ['createPlayer','open','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer','popProducedFrame','releaseProducedFrame','configureNativePresenter','setNativePresenterVisible','nativePresenterStats','destroyPlayer']) {
     if (typeof addon[name] !== 'function') throw new Error(`missing addon export ${name}`);
   }
 
@@ -59,6 +59,7 @@ function drain(addon, id) {
     const created = addon.createPlayer();
     id = Number(created.playerId);
     if (!id) throw new Error('createPlayer failed');
+    if (addon.setUpdateCallback(id, () => {}) !== true) throw new Error('setUpdateCallback failed');
     if (addon.configureNativePresenter(id, hwndText(win)) !== true) throw new Error('configureNativePresenter failed');
     const configured = addon.nativePresenterStats(id);
     if (!configured?.configured || configured.marker !== 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE') throw new Error(`presenter configure state invalid ${JSON.stringify(configured)}`);
