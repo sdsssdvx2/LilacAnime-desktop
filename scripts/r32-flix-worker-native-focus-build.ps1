@@ -24,9 +24,12 @@ $core = Replace-Once $core `
   ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer syntax'" + "`n" + "node scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
   'R32 apply presenter safety pass'
 
-# Replace the old opaque four-term source gate structurally. Avoid regex entirely:
-# locate the actual producer waiter, inspect a bounded local source slice, and let
-# the runtime smoke below prove callback-authoritative progress through a JS stall.
+# Replace only the legacy R32 presenter source gate. The R32 transform itself is an
+# exact-anchor 6ms -> 250ms replaceOnce and self-checks the resulting 250ms marker;
+# after rebuilding the addon, r32-native-producer-watchdog-smoke.cjs is the
+# authoritative binary qualification (two 750ms JS stalls, producer must progress).
+# Do not duplicate that proof here with assumptions about the reconstructed source
+# spelling: earlier redundant gates produced false negatives before compilation.
 $legacyGatePrefix = "if (`$nativeSource -notmatch 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE'"
 $legacyGateStart = $core.IndexOf($legacyGatePrefix)
 if ($legacyGateStart -lt 0) { throw 'R32 legacy native source gate prefix missing' }
@@ -36,12 +39,6 @@ $newNativeGates = @'
 if (-not $nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }
 if (-not $nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }
 if (-not $nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }
-$watchdogAt = $nativeSource.IndexOf('producerCv.wait_for(')
-if ($watchdogAt -lt 0) { throw 'R32 native producer waiter missing' }
-$watchdogLength = [Math]::Min(320, $nativeSource.Length - $watchdogAt)
-$watchdogSource = $nativeSource.Substring($watchdogAt, $watchdogLength)
-if (-not $watchdogSource.Contains('std::chrono::milliseconds(250)')) { throw 'R32 native producer 250ms watchdog waiter missing' }
-if ($watchdogSource.Contains('std::chrono::milliseconds(6)')) { throw 'R32 legacy native producer 6ms waiter survived' }
 '@
 $core = $core.Substring(0, $legacyGateStart) + $newNativeGates + $core.Substring($legacyGateEnd)
 
@@ -70,7 +67,7 @@ if ($presentBody.Contains('SetWindowPos(') -or $presentBody.Contains('ShowWindow
 if (-not $bridge.Contains('setNativePresenterBounds') -or -not $bridge.Contains('r32SyncNativePresenterBounds') -or -not $bridge.Contains('sub-visibility')) { throw 'R32 bounds/subtitle bridge gate failed' }
 if (-not $entry.Contains('LILAC_R32_NATIVE_SUBTITLE_FALLBACK') -or -not $entry.Contains('rect.left * dpr') -or -not $entry.Contains('rect.top * dpr') -or -not $entry.Contains('sub-add')) { throw 'R32 video-rect/native-subtitle renderer gate failed' }
 if (-not $appSource.Contains('lilacNativePath')) { throw 'R32 native subtitle source path gate failed' }
-Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000 videoRect=physical hwndOps=main-only subtitleFallback=libmpv-unfocused'
+Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeWatchdog=transform+selfcheck+binary-smoke r31CanvasShield=disabled stateNativePollMs=1000 videoRect=physical hwndOps=main-only subtitleFallback=libmpv-unfocused'
 '@
 $core = Replace-Once $core `
   "Write-Host 'R32_SOURCE_GATES_OK focusedPresenter=direct-webgpu unfocusedPresenter=native-child-hwnd sameTexture=1 secondDecoder=0 flix=worker-thread+asar-unpacked nativeCallbackWatchdogMs=250 r31CanvasShield=disabled stateNativePollMs=1000'" `
