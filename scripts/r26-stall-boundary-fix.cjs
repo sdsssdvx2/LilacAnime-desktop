@@ -58,8 +58,8 @@ bridge = replaceOnce(
   'main send completion trace'
 );
 
-const oldDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', () => ({\n      diagnosticVersion: 'LIBMPV-SHARED-D1',\n      ...state(),\n      receiverReady: { ...receiverReady },\n      receiver: { ...receiverStats },\n      relay: relay.stats()\n    }));`;
-const newDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', async () => {\n      const rendererTrace = await r26RequestRendererTrace();\n      return {\n        diagnosticVersion: 'LIBMPV-SHARED-D1',\n        ...state(),\n        receiverReady: { ...receiverReady },\n        receiver: { ...receiverStats },\n        relay: relay.stats(),\n        r26BoundaryTrace: {\n          version: 1,\n          capacity: R26_TRACE_CAPACITY,\n          capturedAtWallMs: Date.now(),\n          main: r26SnapshotMainTrace(),\n          renderer: rendererTrace\n        }\n      };\n    });`;
+const oldDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', () => ({\n      diagnosticVersion: 'LIBMPV-SHARED-D1',\n      ...state({ fullDiagnostics: true }),\n      receiverReady: { ...receiverReady },\n      receiver: { ...receiverStats },\n      relay: relay.stats()\n    }));`;
+const newDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', async () => {\n      const rendererTrace = await r26RequestRendererTrace();\n      return {\n        diagnosticVersion: 'LIBMPV-SHARED-D1',\n        ...state({ fullDiagnostics: true }),\n        receiverReady: { ...receiverReady },\n        receiver: { ...receiverStats },\n        relay: relay.stats(),\n        r26BoundaryTrace: {\n          version: 1,\n          capacity: R26_TRACE_CAPACITY,\n          capturedAtWallMs: Date.now(),\n          main: r26SnapshotMainTrace(),\n          renderer: rendererTrace\n        }\n      };\n    });`;
 bridge = replaceOnce(bridge, oldDiagnostics, newDiagnostics, 'on-demand diagnostics trace snapshot');
 bridge = replaceOnce(
   bridge,
