@@ -58,9 +58,24 @@ bridge = replaceOnce(
   'main send completion trace'
 );
 
-const oldDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', () => ({\n      diagnosticVersion: 'LIBMPV-SHARED-D1',\n      ...state({ fullDiagnostics: true }),\n      receiverReady: { ...receiverReady },\n      receiver: { ...receiverStats },\n      relay: relay.stats()\n    }));`;
-const newDiagnostics = `    ipcMain.handle('libmpv-shared:diagnostics', async () => {\n      const rendererTrace = await r26RequestRendererTrace();\n      return {\n        diagnosticVersion: 'LIBMPV-SHARED-D1',\n        ...state({ fullDiagnostics: true }),\n        receiverReady: { ...receiverReady },\n        receiver: { ...receiverStats },\n        relay: relay.stats(),\n        r26BoundaryTrace: {\n          version: 1,\n          capacity: R26_TRACE_CAPACITY,\n          capturedAtWallMs: Date.now(),\n          main: r26SnapshotMainTrace(),\n          renderer: rendererTrace\n        }\n      };\n    });`;
-bridge = replaceOnce(bridge, oldDiagnostics, newDiagnostics, 'on-demand diagnostics trace snapshot');
+// Preserve every field that R2X/R3C/R24 accumulated in diagnostics. Wrapping the
+// entire handler by an exact string was too brittle, so splice only the stable
+// handler boundaries and keep the original object body byte-for-byte.
+const diagnosticsStartNeedle = `    ipcMain.handle('libmpv-shared:diagnostics', () => ({`;
+const diagnosticsStart = bridge.indexOf(diagnosticsStartNeedle);
+if (diagnosticsStart < 0 || bridge.indexOf(diagnosticsStartNeedle, diagnosticsStart + 1) >= 0) {
+  throw new Error('R26 diagnostics handler start must be unique');
+}
+const diagnosticsEndNeedle = `\n    }));`;
+const diagnosticsEnd = bridge.indexOf(diagnosticsEndNeedle, diagnosticsStart + diagnosticsStartNeedle.length);
+if (diagnosticsEnd < 0) throw new Error('R26 diagnostics handler end missing');
+const diagnosticsBody = bridge.slice(diagnosticsStart + diagnosticsStartNeedle.length, diagnosticsEnd);
+for (const marker of ["diagnosticVersion: 'LIBMPV-SHARED-D1'", 'state({ fullDiagnostics: true })', 'relay: relay.stats()']) {
+  if (!diagnosticsBody.includes(marker)) throw new Error(`R26 diagnostics body missing marker: ${marker}`);
+}
+const diagnosticsReplacement = `    ipcMain.handle('libmpv-shared:diagnostics', async () => {\n      const rendererTrace = await r26RequestRendererTrace();\n      return {${diagnosticsBody},\n        r26BoundaryTrace: {\n          version: 1,\n          capacity: R26_TRACE_CAPACITY,\n          capturedAtWallMs: Date.now(),\n          main: r26SnapshotMainTrace(),\n          renderer: rendererTrace\n        }\n      };\n    });`;
+bridge = bridge.slice(0, diagnosticsStart) + diagnosticsReplacement + bridge.slice(diagnosticsEnd + diagnosticsEndNeedle.length);
+
 bridge = replaceOnce(
   bridge,
   `    ipcMain.on('libmpv-shared:receiver-ready', (event, payload = {}) => {`,
