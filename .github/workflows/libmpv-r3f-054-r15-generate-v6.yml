@@ -71,12 +71,12 @@ jobs:
           );
           replaceOnce(
             "keySmokeCompat='upstream-0.5.54-showSeekHint-sandbox-only'",
-            "keySmokeCompat='upstream-0.5.54-showSeekHint-sandbox-only';upstreamTestCompat='r2v-vtt92+sharedTexture-startup-sandbox-only'",
+            "keySmokeCompat='upstream-0.5.54-showSeekHint-sandbox-only';upstreamTestCompat='r2v-native-vtt100x50+startup-bridge-sandbox-only'",
             'manifest compatibility attestation'
           );
           replaceOnce(
             "-or $m.keySmokeCompat -ne 'upstream-0.5.54-showSeekHint-sandbox-only'",
-            "-or $m.keySmokeCompat -ne 'upstream-0.5.54-showSeekHint-sandbox-only' -or $m.upstreamTestCompat -ne 'r2v-vtt92+sharedTexture-startup-sandbox-only'",
+            "-or $m.keySmokeCompat -ne 'upstream-0.5.54-showSeekHint-sandbox-only' -or $m.upstreamTestCompat -ne 'r2v-native-vtt100x50+startup-bridge-sandbox-only'",
             'published manifest compatibility verification'
           );
           fs.writeFileSync(targetPath, text);
