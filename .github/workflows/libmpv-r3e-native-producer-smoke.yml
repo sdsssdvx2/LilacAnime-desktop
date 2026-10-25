@@ -1,0 +1,167 @@
+name: LilacAnime libmpv R3E native producer qualification
+
+on:
+  push:
+    branches: [libmpv-r3e-native-producer-r14]
+    paths: [.github/workflows/libmpv-r3e-native-producer-smoke.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r3e-native-producer
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  R3D_PRODUCT_SHA: 79eb1e6bee586e3b3168ab592ca08cc45b8a3470
+  R3E_PRODUCT_SHA: 1871b0e0edfababe344b9dbe3a2c6eeb04cf8d26
+  R3E_TEST_SHA: 2bcc5e46bee4bb81b5ffc7e3bfaa42e40d01a662
+  UPSTREAM_SHA: 5fa931e4dbede97dc7d586864417b62bde5d7ea0
+  ELECTRON_VERSION: 44.9.3
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+
+jobs:
+  qualify-native-producer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
+
+      - name: Pin R3E test source and prove product isolation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git checkout --detach $env:R3E_TEST_SHA
+          if((git rev-parse HEAD).Trim() -ne $env:R3E_TEST_SHA){throw 'R3E test pin mismatch'}
+          git diff --quiet $env:R3E_PRODUCT_SHA $env:R3E_TEST_SHA -- electron src native package.json package-lock.json scripts/apply-libmpv-r3e-native-producer.cjs
+          if($LASTEXITCODE -ne 0){throw 'production source changed after R3E product pin'}
+          foreach($p in @('scripts/apply-libmpv-r3e-native-producer.cjs','scripts/smoke-libmpv-r3e-native-producer.cjs')){
+            node --check $p
+            if($LASTEXITCODE -ne 0){throw "syntax failed $p"}
+          }
+
+      - name: Reproduce exact upstream through R3D
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $up=Join-Path $env:RUNNER_TEMP 'upstream-05050'
+          git clone --depth 1 --branch v0.5.50 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
+          if($LASTEXITCODE -ne 0 -or (git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream pin mismatch'}
+          Copy-Item (Join-Path $up 'electron/*') electron -Recurse -Force
+          Copy-Item (Join-Path $up 'src/*') src -Recurse -Force
+          Copy-Item (Join-Path $up 'tests/*') tests -Recurse -Force
+          Copy-Item (Join-Path $up 'package.json') package.json -Force
+          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
+          Copy-Item (Join-Path $up 'scripts/anime4k-entry.mjs') scripts/anime4k-entry.mjs -Force
+          npm ci --no-audit --no-fund
+          if($LASTEXITCODE -ne 0){throw 'npm ci failed'}
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
+          if($LASTEXITCODE -ne 0){throw 'tool install failed'}
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          $scripts=@(
+            'scripts/apply-libmpv-d2-diagnostics.cjs','scripts/apply-libmpv-r2-runtime-fixes.cjs','scripts/apply-libmpv-r2b-command-import-diagnostics.cjs','scripts/apply-libmpv-r2c-texture-pool.cjs','scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs','scripts/apply-libmpv-r2g-electron44-releasefix.cjs','scripts/apply-libmpv-r2h-webgpu-copy.cjs','scripts/apply-libmpv-r2i-pipeline-headroom.cjs','scripts/apply-libmpv-r2h-bundle-marker-fix.cjs','scripts/apply-libmpv-r2j-subtitle-overlay.cjs','scripts/apply-libmpv-r2k-upstream-polish.cjs','scripts/apply-libmpv-r2l-player-polish.cjs','scripts/apply-libmpv-r2m-open-race-key-ui.cjs','scripts/apply-libmpv-shared-texture.cjs','scripts/apply-libmpv-r2e-native-command-gates.cjs','scripts/apply-libmpv-r2m-finalize.cjs','scripts/apply-libmpv-r2n-webgpu-pip.cjs','scripts/normalize-libmpv-r2p-subtitle-anchor.cjs','scripts/apply-libmpv-r2p-subtitle-ui.cjs','scripts/apply-libmpv-r2p-metadata-finalize.cjs','scripts/apply-libmpv-r2q-tenrai-metadata.cjs','scripts/apply-libmpv-r2r-upstream-05050-finalize.cjs','scripts/normalize-libmpv-r2s-key-anchor.cjs','scripts/apply-libmpv-r2s-pip-subtitle-controls.cjs','scripts/apply-libmpv-r2s-null-default-fix.cjs','scripts/apply-libmpv-r2s-test-expectations.cjs','scripts/normalize-libmpv-r2t-subtitle-anchor.cjs','scripts/apply-libmpv-r2t-zero-copy-miniplayer-subtitle-parity.cjs','scripts/apply-libmpv-r2u-v2.cjs','scripts/apply-libmpv-r2v-calibrated-subtitle-miniplayer.cjs','scripts/apply-libmpv-r2w-aspect-cadence.cjs','scripts/apply-libmpv-r2x-vsync-fullscreen.cjs','scripts/apply-libmpv-r2x-pipeline-diagnostics.cjs','scripts/rebundle-libmpv-r2x-preload.cjs','scripts/apply-libmpv-r2y-cadence-fix.cjs','scripts/apply-libmpv-r2y-timestamp-phase.cjs','scripts/apply-libmpv-r2z-direct-present-ui-fixed.cjs','scripts/apply-libmpv-r3a-decoupled-delivery.cjs','scripts/apply-libmpv-r3a-poll-cadence-fix.cjs','scripts/apply-libmpv-r3a-phase-deadline.cjs','scripts/apply-libmpv-r3b-update-callback.cjs','scripts/apply-libmpv-r3b-pending-wake.cjs','scripts/apply-libmpv-r3c-hotpath-state.cjs','scripts/apply-libmpv-r3d-stall-isolation.cjs'
+          )
+          foreach($s in $scripts){
+            node --check $s
+            if($LASTEXITCODE -ne 0){throw "syntax failed $s"}
+            node $s
+            if($LASTEXITCODE -ne 0){throw "transform failed $s"}
+          }
+          node scripts/rebundle-libmpv-r2v.cjs
+          if($LASTEXITCODE -ne 0){throw 'renderer rebundle failed'}
+          npm install --no-audit --no-fund
+          if($LASTEXITCODE -ne 0){throw 'post-transform install failed'}
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
+          if($LASTEXITCODE -ne 0){throw 'post-transform tool install failed'}
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r3d.rc1'){throw 'R3D identity mismatch'}
+
+      - name: Apply exact R3E native producer transform
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/apply-libmpv-r3e-native-producer.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3E transform failed'}
+          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
+          if($pkg.version -ne '0.5.50-libmpv-r3e.rc1'){throw 'R3E version mismatch'}
+          if($pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r14'){throw 'R3E tag mismatch'}
+          $n=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
+          $b=Get-Content electron/libmpv-shared-main.cjs -Raw
+          foreach($m in @('FrameProducerReadyFrame','StartFrameProducerWorker','producerRawWakeSignals','producerCv.notify_one()','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats')){if(-not $n.Contains($m)){throw "native marker missing $m"}}
+          foreach($m in @('frameProducerStarted','native-callback-worker','addon.startFrameProducer','addon.popProducedFrame','addon.releaseProducedFrame','addon.stopFrameProducer')){if(-not $b.Contains($m)){throw "bridge marker missing $m"}}
+          if($n.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced-control unexpectedly enabled'}
+          if($b.Contains('await sharedTexture.sendSharedTexture')){throw 'asynchronous shared-texture transport regressed'}
+
+      - name: Build R3E addon with pinned libmpv
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $archive=Join-Path $env:RUNNER_TEMP 'libmpv.7z'
+          $extract=Join-Path $env:RUNNER_TEMP 'libmpv-sdk'
+          curl.exe -L --fail --retry 3 --retry-delay 2 -o $archive $env:LIBMPV_SDK_URL
+          if($LASTEXITCODE -ne 0){throw 'SDK download failed'}
+          if((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:LIBMPV_SDK_SHA256){throw 'SDK hash mismatch'}
+          New-Item -ItemType Directory -Force -Path $extract|Out-Null
+          7z.exe x $archive "-o$extract" -y|Out-Null
+          $client=Get-ChildItem $extract -Recurse -File -Filter client.h|Where-Object{(Split-Path (Split-Path $_.FullName -Parent) -Leaf) -eq 'mpv'}|Select-Object -First 1
+          if(-not $client){throw 'client.h missing'}
+          $vendor=Join-Path $PWD 'native/libmpv-d3d11-bridge/vendor/include/mpv'
+          New-Item -ItemType Directory -Force -Path $vendor|Out-Null
+          Copy-Item (Join-Path (Split-Path $client.FullName -Parent) '*') $vendor -Recurse -Force
+          $dll=Get-ChildItem $extract -Recurse -File|Where-Object{$_.Name -in @('libmpv-2.dll','mpv-2.dll')}|Select-Object -First 1
+          if(-not $dll){throw 'DLL missing'}
+          Copy-Item $dll.FullName electron/libmpv-2.dll -Force
+          if((Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:QUALIFIED_DLL_SHA256){throw 'DLL hash mismatch'}
+          & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          Copy-Item native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node electron/lilac-libmpv-player-bridge.node -Force
+          "LILAC_LIBMPV_PLAYER_ADDON=$((Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "LILAC_LIBMPV_DLL=$((Resolve-Path 'electron/libmpv-2.dll').Path)"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run native producer qualification three times with deadlock timeout
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $electron=(Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+          $env:ELECTRON_RUN_AS_NODE='1'
+          try {
+            for($i=1;$i -le 3;$i++){
+              $out=Join-Path $env:RUNNER_TEMP "r3e-producer-$i.out.log"
+              $err=Join-Path $env:RUNNER_TEMP "r3e-producer-$i.err.log"
+              $p=Start-Process -FilePath $electron -ArgumentList @('scripts/smoke-libmpv-r3e-native-producer.cjs') -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+              try {
+                Wait-Process -Id $p.Id -Timeout 180 -ErrorAction Stop
+              } catch {
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+                throw "R3E smoke iteration $i deadlocked or exceeded 180 seconds"
+              }
+              $p.Refresh()
+              $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
+              $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
+              Write-Host "===== R3E smoke iteration $i stdout ====="
+              Write-Host $stdout
+              if($stderr){Write-Host "===== R3E smoke iteration $i stderr =====";Write-Host $stderr}
+              if($p.ExitCode -ne 0){throw "R3E smoke iteration $i failed exit=$($p.ExitCode)"}
+              if($stdout -notmatch 'LIBMPV_R3E_NATIVE_PRODUCER_OK'){throw "R3E smoke iteration $i missing success marker"}
+              if($stdout -notmatch 'jsCallbacksDuringBlock=0'){throw "R3E smoke iteration $i did not prove JS-stall isolation"}
+              if($stdout -notmatch 'stopEnabled=false'){throw "R3E smoke iteration $i did not prove clean stop"}
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify legacy R3D production source was not mutated by qualification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git diff --quiet $env:R3E_PRODUCT_SHA $env:R3E_TEST_SHA -- electron src native package.json package-lock.json scripts/apply-libmpv-r3e-native-producer.cjs
+          if($LASTEXITCODE -ne 0){throw 'qualification test commit changed product source'}
+          Write-Host "R3E qualification source=$env:R3E_PRODUCT_SHA test=$env:R3E_TEST_SHA baseR3D=$env:R3D_PRODUCT_SHA"
