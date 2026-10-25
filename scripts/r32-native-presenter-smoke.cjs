@@ -46,7 +46,7 @@ function drain(addon, id) {
   if (!addonPath || !fs.existsSync(addonPath) || !dllPath || !fs.existsSync(dllPath)) throw new Error('R32 addon/dll env missing');
   process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
   const addon = require(addonPath);
-  for (const name of ['createPlayer','open','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer','popProducedFrame','releaseProducedFrame','configureNativePresenter','setNativePresenterVisible','nativePresenterStats','destroyPlayer']) {
+  for (const name of ['createPlayer','open','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer','popProducedFrame','releaseProducedFrame','configureNativePresenter','setNativePresenterVisible','setNativePresenterBounds','nativePresenterStats','destroyPlayer']) {
     if (typeof addon[name] !== 'function') throw new Error(`missing addon export ${name}`);
   }
 
@@ -55,14 +55,18 @@ function drain(addon, id) {
   let id = null;
   try {
     const media = buildFixture(dir);
-    win = new BrowserWindow({ show:false, width:640, height:360, webPreferences:{ backgroundThrottling:false } });
+    win = new BrowserWindow({ show:false, width:800, height:600, webPreferences:{ backgroundThrottling:false } });
     const created = addon.createPlayer();
     id = Number(created.playerId);
     if (!id) throw new Error('createPlayer failed');
     if (addon.setUpdateCallback(id, () => {}) !== true) throw new Error('setUpdateCallback failed');
     if (addon.configureNativePresenter(id, hwndText(win)) !== true) throw new Error('configureNativePresenter failed');
+    if (addon.setNativePresenterBounds(id, 37, 29, 640, 360) !== true) throw new Error('setNativePresenterBounds failed');
     const configured = addon.nativePresenterStats(id);
     if (!configured?.configured || configured.marker !== 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE') throw new Error(`presenter configure state invalid ${JSON.stringify(configured)}`);
+    if (Number(configured.x) !== 37 || Number(configured.y) !== 29 || Number(configured.boundsWidth) !== 640 || Number(configured.boundsHeight) !== 360) {
+      throw new Error(`presenter bounds mismatch ${JSON.stringify(configured)}`);
+    }
 
     addon.open(id, media);
     const loadedDeadline = Date.now() + 10000;
@@ -85,9 +89,10 @@ function drain(addon, id) {
     stats = addon.nativePresenterStats(id);
     if (Number(stats?.presentedFrames || 0) < 4) throw new Error(`native presenter produced too few frames ${JSON.stringify(stats)}`);
     if (Number(stats?.failures || 0) !== 0) throw new Error(`native presenter failures ${JSON.stringify(stats)}`);
+    if (Number(stats.x) !== 37 || Number(stats.y) !== 29 || Number(stats.boundsWidth) !== 640 || Number(stats.boundsHeight) !== 360) throw new Error(`presenter bounds drifted ${JSON.stringify(stats)}`);
     if (!(Number(stats?.maxPresentMs || 0) >= 0)) throw new Error('invalid native presenter timing');
     addon.setNativePresenterVisible(id, false);
-    console.log(`R32_NATIVE_PRESENTER_SMOKE_OK frames=${stats.presentedFrames} failures=${stats.failures} avgPresentMs=${Number(stats.avgPresentMs || 0).toFixed(3)} maxPresentMs=${Number(stats.maxPresentMs || 0).toFixed(3)} deviceMode=${created.deviceMode}`);
+    console.log(`R32_NATIVE_PRESENTER_SMOKE_OK frames=${stats.presentedFrames} failures=${stats.failures} bounds=37,29,640,360 avgPresentMs=${Number(stats.avgPresentMs || 0).toFixed(3)} maxPresentMs=${Number(stats.maxPresentMs || 0).toFixed(3)} deviceMode=${created.deviceMode}`);
   } finally {
     if (id != null) {
       try { addon.setNativePresenterVisible(id, false); } catch {}
