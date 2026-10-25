@@ -7,6 +7,7 @@ on:
       - .github/workflows/libmpv-r3f-054-r33-owned-popup-focus-surface.yml
       - scripts/r33-owned-popup-focus-build.ps1
       - scripts/r33-owned-popup-focus-fix.cjs
+      - scripts/r33-transform-source-sanitize.cjs
       - scripts/r33-stall-attribution-probe.cjs
       - scripts/r33-owned-popup-visible-focus-smoke.cjs
   workflow_dispatch:
@@ -60,6 +61,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/r32-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/r33-transform-source-sanitize.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/r33-owned-popup-focus-build.ps1
       - name: Upload qualified R33 artifact
