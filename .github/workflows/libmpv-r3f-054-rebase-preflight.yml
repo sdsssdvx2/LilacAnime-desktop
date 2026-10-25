@@ -152,23 +152,26 @@ jobs:
           if(-not (Get-Content electron/main.cjs -Raw).Contains("const API = 'https://api.tenrai.org/v1';")){throw 'R2T erased Tenrai base'}
           Write-Host 'R3F_0554_R2T_GUARD_OK'
 
-      - name: Apply R2U subtitle font and miniplayer fix on rebased tree
+      - name: Apply authoritative R2U v2 subtitle font and miniplayer fix
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          node --check scripts/apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs
-          if($LASTEXITCODE -ne 0){throw 'R2U syntax failed'}
-          node scripts/apply-libmpv-r2u-subtitle-font-miniplayer-fix.cjs
-          if($LASTEXITCODE -ne 0){throw 'R2U compatibility failed'}
+          node --check scripts/apply-libmpv-r2u-v2.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2U v2 syntax failed'}
+          node scripts/apply-libmpv-r2u-v2.cjs
+          if($LASTEXITCODE -ne 0){throw 'R2U v2 compatibility failed'}
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne '0.5.50-libmpv-r2u.rc1' -or $pkg.lilacCustomTag -ne 'libmpv-r2k-v0.5.50-r4'){throw 'R2U metadata mismatch'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint','VTT_FONT_FAMILIES','LilacMiniPlayerDiagnostics','__lilac_miniplayer_on__')){if(-not $combined.Contains($marker) -and -not (Get-Content electron/main.cjs -Raw).Contains($marker)){throw "R2U required marker missing: $marker"}}
+          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){if(-not $combined.Contains($marker)){throw "R2U erased upstream marker: $marker"}}
+          $entry=Get-Content src/libmpv-shared-entry.js -Raw
+          foreach($marker in @('VTT_FONT_FAMILIES','function libmpvSurface(','browserVisualBottom')){if(-not $entry.Contains($marker)){throw "R2U v2 product marker missing: $marker"}}
           $updater=Get-Content electron/updater.cjs -Raw
           foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $updater.Contains($marker)){throw "R2U erased updater marker: $marker"}}
           if(Test-Path electron/miruro-session.cjs){throw 'R2U resurrected obsolete Miruro'}
           if(!(Test-Path electron/miruro-browser.cjs)){throw 'R2U removed Miruro browser'}
-          Write-Host 'R3F_0554_R2U_GUARD_OK'
+          if(-not (Get-Content electron/main.cjs -Raw).Contains("const API = 'https://api.tenrai.org/v1';")){throw 'R2U erased Tenrai base'}
+          Write-Host 'R3F_0554_R2U_V2_GUARD_OK'
 
       - name: Apply R2V calibrated subtitle and miniplayer fallback on rebased tree
         shell: powershell
