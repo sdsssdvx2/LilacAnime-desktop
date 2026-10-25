@@ -146,14 +146,17 @@ jobs:
             $out=Join-Path $env:RUNNER_TEMP "$safe.out.log"
             $err=Join-Path $env:RUNNER_TEMP "$safe.err.log"
             $p=Start-Process -FilePath $electron -ArgumentList @($script) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
-            try{Wait-Process -Id $p.Id -Timeout $timeoutSec -ErrorAction Stop}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue;throw "$script timed out"}
-            $p.Refresh()
+            if(-not $p.WaitForExit($timeoutSec * 1000)){
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              throw "$script timed out"
+            }
+            $exitCode=$p.ExitCode
             $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
             $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
             Write-Host "===== $script ====="
             Write-Host $stdout
             if($stderr){Write-Host $stderr}
-            if($p.ExitCode -ne 0){throw "$script failed exit=$($p.ExitCode)"}
+            if($exitCode -ne 0){throw "$script failed exit=$exitCode"}
             if($stdout -notmatch [regex]::Escape($okMarker)){throw "$script missing $okMarker"}
           }
           try{
@@ -178,14 +181,17 @@ jobs:
               $out=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.out.log"
               $err=Join-Path $env:RUNNER_TEMP "r3f-r3e-$i.err.log"
               $p=Start-Process -FilePath $electron -ArgumentList @('scripts/smoke-libmpv-r3e-native-producer.cjs') -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
-              try{Wait-Process -Id $p.Id -Timeout 180 -ErrorAction Stop}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue;throw "R3E smoke iteration $i deadlocked"}
-              $p.Refresh()
+              if(-not $p.WaitForExit(180000)){
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+                throw "R3E smoke iteration $i deadlocked"
+              }
+              $exitCode=$p.ExitCode
               $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}
               $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
               Write-Host "===== R3F_R3E_ITERATION_$i ====="
               Write-Host $stdout
               if($stderr){Write-Host $stderr}
-              if($p.ExitCode -ne 0){throw "R3E smoke iteration $i failed exit=$($p.ExitCode)"}
+              if($exitCode -ne 0){throw "R3E smoke iteration $i failed exit=$exitCode"}
               if($stdout -notmatch 'LIBMPV_R3E_NATIVE_PRODUCER_OK'){throw "R3E iteration $i missing OK marker"}
             }
           } finally {
