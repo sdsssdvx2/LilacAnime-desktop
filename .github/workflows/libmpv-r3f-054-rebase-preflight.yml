@@ -3,7 +3,9 @@ name: LilacAnime libmpv R3F upstream 0.5.54 rebase preflight
 on:
   push:
     branches: [libmpv-r3f-upstream-0.5.54-rebase]
-    paths: [.github/workflows/libmpv-r3f-054-rebase-preflight.yml]
+    paths:
+      - .github/workflows/libmpv-r3f-054-rebase-preflight.yml
+      - scripts/r3f-054-rebase-preflight.cjs
   workflow_dispatch:
 
 concurrency:
@@ -12,10 +14,6 @@ concurrency:
 
 permissions:
   contents: read
-
-env:
-  UPSTREAM_SHA: e4ac62214f5c4863eebae5052633e7f9f33dcbaa
-  LEGACY_TEST_SHA: 1d983e1d68e388bfd57abd3c6772d2e037d72dcd
 
 jobs:
   compatibility-map:
@@ -30,201 +28,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: Assemble exact 0.5.54 upstream with custom-only libmpv files
+      - name: Rebuild exact 0.5.54 and map libmpv transform compatibility
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          git checkout --detach $env:LEGACY_TEST_SHA
-          if((git rev-parse HEAD).Trim() -ne $env:LEGACY_TEST_SHA){throw 'legacy tooling pin mismatch'}
-
-          $up=Join-Path $env:RUNNER_TEMP 'upstream-0554'
-          git clone --depth 1 --branch v0.5.54 https://github.com/whispelyn-byte/LilacAnime-desktop.git $up
-          if($LASTEXITCODE -ne 0){throw 'upstream clone failed'}
-          if((git -C $up rev-parse HEAD).Trim() -ne $env:UPSTREAM_SHA){throw 'upstream 0.5.54 SHA mismatch'}
-
-          $custom=Join-Path $env:RUNNER_TEMP 'r3f-custom-only'
-          New-Item -ItemType Directory -Force -Path $custom|Out-Null
-          foreach($area in @('electron','src')){
-            $legacyBase=(Resolve-Path $area).Path.TrimEnd('\')+'\'
-            $upArea=Join-Path $up $area
-            Get-ChildItem $area -Recurse -File | ForEach-Object {
-              $rel=$_.FullName.Substring($legacyBase.Length)
-              if(!(Test-Path (Join-Path $upArea $rel))){
-                $dest=Join-Path (Join-Path $custom $area) $rel
-                New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent)|Out-Null
-                Copy-Item $_.FullName $dest -Force
-                Write-Host "R3F_CUSTOM_ONLY=$area/$($rel.Replace('\','/'))"
-              }
-            }
-          }
-
-          Remove-Item electron -Recurse -Force
-          Remove-Item src -Recurse -Force
-          Remove-Item tests -Recurse -Force
-          Copy-Item (Join-Path $up 'electron') electron -Recurse -Force
-          Copy-Item (Join-Path $up 'src') src -Recurse -Force
-          Copy-Item (Join-Path $up 'tests') tests -Recurse -Force
-          foreach($area in @('electron','src')){
-            $saved=Join-Path $custom $area
-            if(Test-Path $saved){Copy-Item (Join-Path $saved '*') $area -Recurse -Force}
-          }
-          Copy-Item (Join-Path $up 'package.json') package.json -Force
-          Copy-Item (Join-Path $up 'package-lock.json') package-lock.json -Force
-          Copy-Item (Join-Path $up 'scripts/anime4k-entry.mjs') scripts/anime4k-entry.mjs -Force
-
-          foreach($p in @('electron/main.cjs','electron/preload.cjs','electron/updater.cjs','electron/miruro-browser.cjs','src/app.js','src/player.js','src/index.html','src/player-android.css')){
-            $actual=(Get-FileHash $p -Algorithm SHA256).Hash
-            $expected=(Get-FileHash (Join-Path $up $p) -Algorithm SHA256).Hash
-            if($actual -ne $expected){throw "upstream surface changed during assembly: $p"}
-          }
-          $pkg=Get-Content package.json -Raw|ConvertFrom-Json
-          if($pkg.version -ne '0.5.54'){throw 'assembled package is not upstream 0.5.54'}
-          $all=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){if(-not $all.Contains($marker)){throw "0.5.54 player marker missing: $marker"}}
-          if(Test-Path electron/miruro-session.cjs){throw 'obsolete Miruro session file survived assembly'}
-          if(!(Test-Path electron/miruro-browser.cjs)){throw '0.5.54 Miruro browser missing'}
-          foreach($p in @('electron/libmpv-shared-main.cjs','electron/libmpv-shared-preload.cjs','src/libmpv-shared-entry.js')){if(!(Test-Path $p)){throw "custom libmpv file missing after assembly: $p"}}
-          Write-Host "R3F_0554_ASSEMBLY_OK upstream=$env:UPSTREAM_SHA nativeTooling=$env:LEGACY_TEST_SHA"
-
-      - name: Install exact upstream dependencies and transform tools
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          npm ci --no-audit --no-fund
-          if($LASTEXITCODE -ne 0){throw 'npm ci failed'}
-          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 node-gyp@12.2.0
-          if($LASTEXITCODE -ne 0){throw 'transform tool install failed'}
-
-      - name: Probe cumulative transform compatibility until first real conflict
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          node -e "const fs=require('fs');const p=require('./package.json');p.version='0.5.49';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
-
-          # R2J: retain subtitle overlay transform, port updater isolation separately.
-          $r2jPath='scripts/apply-libmpv-r2j-subtitle-overlay.cjs'
-          $r2j=Get-Content $r2jPath -Raw
-          $cut="let updater = read('electron/updater.cjs');"
-          $idx=$r2j.IndexOf($cut)
-          if($idx -lt 0){throw 'R2J updater split anchor missing'}
-          $r2j=$r2j.Substring(0,$idx)+"console.log('LIBMPV_R2J_SUBTITLE_OVERLAY_OK vtt=shadow-overlay updater=deferred-r3f');`n"
-          [IO.File]::WriteAllText((Resolve-Path $r2jPath),$r2j,[Text.UTF8Encoding]::new($false))
-
-          # R2K: retain renderer/subtitle polish and historical package staging, but port the custom updater separately.
-          $r2kPath='scripts/apply-libmpv-r2k-upstream-polish.cjs'
-          $r2k=Get-Content $r2kPath -Raw
-          $uStart=$r2k.IndexOf("let updater = read('electron/updater.cjs');")
-          $pkgStart=$r2k.IndexOf("const pkg = JSON.parse(read('package.json'));",$uStart)
-          if($uStart -lt 0 -or $pkgStart -le $uStart){throw 'R2K updater/package split anchors missing'}
-          $r2k=$r2k.Substring(0,$uStart)+$r2k.Substring($pkgStart)
-          [IO.File]::WriteAllText((Resolve-Path $r2kPath),$r2k,[Text.UTF8Encoding]::new($false))
-          Write-Host 'R3F_R2J_R2K_SPLIT_OK updaterPorts=2'
-
-          function Replace-One([string]$src,[string]$old,[string]$new,[string]$label){
-            $count=([regex]::Matches($src,[regex]::Escape($old))).Count
-            if($count -ne 1){throw "$label expected one anchor, found $count"}
-            return $src.Replace($old,$new)
-          }
-
-          function Apply-R3FUpdaterIsolation {
-            $path='electron/updater.cjs'
-            $u=(Get-Content $path -Raw).Replace("`r`n","`n")
-            $u=Replace-One $u "    this.downloading = null;" "    this.downloading = null;`n    this.isolatedCandidate = /libmpv/i.test(String(app.getVersion?.() || '')) || /libmpv/i.test(String(app.getName?.() || ''));" 'R3F updater identity'
-            $u=Replace-One $u "  async check() {" "  async check() {`n    if (this.isolatedCandidate) return this.set({ status: 'latest', latest: this.app.getVersion(), notes: '', url: '', isolatedChannel: true });" 'R3F updater check'
-            $u=Replace-One $u "  async download() {" "  async download() {`n    if (this.isolatedCandidate) return this.state;" 'R3F updater download'
-            $u=Replace-One $u "  install(relaunch = true) {" "  install(relaunch = true) {`n    if (this.isolatedCandidate) return false;" 'R3F updater install'
-            $u=Replace-One $u "  installOnQuit() {" "  installOnQuit() { if (this.isolatedCandidate) return false;" 'R3F updater quit'
-            $notes="  const version = this.app.getVersion(), same = value => parseVersion(value).join('.') === parseVersion(version).join('.');"
-            $notesNew="  const version = this.app.getVersion();`n  if (this.isolatedCandidate) return { version, notes: '', url: '' };`n  const same = value => parseVersion(value).join('.') === parseVersion(version).join('.');"
-            $u=Replace-One $u $notes $notesNew 'R3F updater notes'
-            [IO.File]::WriteAllText((Resolve-Path $path),$u,[Text.UTF8Encoding]::new($false))
-            Write-Host 'R3F_054_UPDATER_ISOLATION_OK preserveDEB=true'
-          }
-
-          function Apply-R3FCustomUpdater {
-            $path='electron/updater.cjs'
-            $u=(Get-Content $path -Raw).Replace("`r`n","`n")
-            $constants=@'
-const RELEASE_API = `${RELEASES}/latest`;
-const CUSTOM_RELEASES_API = 'https://api.github.com/repos/sdsssdvx2/LilacAnime-desktop/releases?per_page=100';
-const CUSTOM_TAG_RE = /^libmpv-r2k-v(\d+)\.(\d+)\.(\d+)-r(\d+)$/i;
-const CUSTOM_CURRENT_TAG = String(require('../package.json').lilacCustomTag || '');
-function customParts(value = '') { const match = CUSTOM_TAG_RE.exec(String(value)); return match ? match.slice(1).map(Number) : null; }
-function compareCustom(a, b) { const x = customParts(a), y = customParts(b); if (!x) return -1; if (!y) return 1; for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; }
-'@
-            $u=Replace-One $u 'const RELEASE_API = `${RELEASES}/latest`;' $constants.TrimEnd() 'R3F custom updater constants'
-            $checkOld="  async check() {`n    if (this.isolatedCandidate) return this.set({ status: 'latest', latest: this.app.getVersion(), notes: '', url: '', isolatedChannel: true });"
-            $checkNew=@'
-  async checkCustom() {
-    this.set({ status: 'checking', error: null, customChannel: true });
-    try {
-      const response = await fetch(CUSTOM_RELEASES_API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': `LilacAnime-Libmpv/${this.app.getVersion()}` } });
-      if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
-      const releases = (await response.json()).filter(item => !item.draft && customParts(item.tag_name));
-      releases.sort((a, b) => compareCustom(b.tag_name, a.tag_name));
-      const release = releases[0];
-      if (!release || !CUSTOM_CURRENT_TAG || compareCustom(release.tag_name, CUSTOM_CURRENT_TAG) <= 0) return this.set({ status: 'latest', latest: this.app.getVersion(), notes: '', url: release?.html_url || '', customChannel: true, customTag: CUSTOM_CURRENT_TAG });
-      const asset = installerAsset(release.assets || []);
-      if (!asset) throw new Error('커스텀 릴리스에 이 플랫폼용 설치 파일이 없습니다.');
-      this.asset = asset;
-      this.set({ status: 'available', latest: String(release.tag_name), notes: String(release.body || '').slice(0, 20000), url: release.html_url || '', size: Number(asset.size) || 0, customChannel: true, customTag: String(release.tag_name) });
-      this.download();
-      return this.state;
-    } catch (error) { return this.set({ status: 'error', error: error.message || '커스텀 업데이트 확인 실패', customChannel: true }); }
-  }
-
-  async check() {
-    if (this.isolatedCandidate) return this.checkCustom();
-'@
-            $u=Replace-One $u $checkOld $checkNew.TrimEnd() 'R3F custom updater check'
-            $u=Replace-One $u "  async download() {`n    if (this.isolatedCandidate) return this.state;" "  async download() {" 'R3F allow custom download'
-            $u=Replace-One $u "  install(relaunch = true) {`n    if (this.isolatedCandidate) return false;" "  install(relaunch = true) {" 'R3F allow custom install'
-            $u=Replace-One $u "  installOnQuit() { if (this.isolatedCandidate) return false; if (!MAC && !DEB" "  installOnQuit() { if (!MAC && !DEB" 'R3F allow custom install on quit'
-            $u=Replace-One $u "  if (this.isolatedCandidate) return { version, notes: '', url: '' };`n  const same = value => parseVersion(value).join('.') === parseVersion(version).join('.');" "  const same = value => parseVersion(value).join('.') === parseVersion(version).join('.');" 'R3F custom notes fallback'
-            foreach($marker in @('CUSTOM_RELEASES_API','checkCustom()','CUSTOM_CURRENT_TAG',"!MAC && !DEB && this.state.status === 'ready'")){if(-not $u.Contains($marker)){throw "R3F custom updater marker missing: $marker"}}
-            [IO.File]::WriteAllText((Resolve-Path $path),$u,[Text.UTF8Encoding]::new($false))
-            Write-Host 'R3F_054_CUSTOM_UPDATER_OK preservePlatformInstall=true'
-          }
-
-          $scripts=@(
-            'scripts/apply-libmpv-d2-diagnostics.cjs',
-            'scripts/apply-libmpv-r2-runtime-fixes.cjs',
-            'scripts/apply-libmpv-r2b-command-import-diagnostics.cjs',
-            'scripts/apply-libmpv-r2c-texture-pool.cjs',
-            'scripts/apply-libmpv-r2f-immediate-frame-lifetime.cjs',
-            'scripts/apply-libmpv-r2g-electron44-releasefix.cjs',
-            'scripts/apply-libmpv-r2h-webgpu-copy.cjs',
-            'scripts/apply-libmpv-r2i-pipeline-headroom.cjs',
-            'scripts/apply-libmpv-r2h-bundle-marker-fix.cjs',
-            'scripts/apply-libmpv-r2j-subtitle-overlay.cjs',
-            'scripts/apply-libmpv-r2k-upstream-polish.cjs',
-            'scripts/apply-libmpv-r2l-player-polish.cjs',
-            'scripts/apply-libmpv-r2m-open-race-key-ui.cjs'
-          )
-
-          $passed=@()
-          foreach($s in $scripts){
-            node --check $s
-            if($LASTEXITCODE -ne 0){throw "syntax failed: $s"}
-            Write-Host "R3F_PROBE_START=$s"
-            node $s
-            if($LASTEXITCODE -ne 0){Write-Host "R3F_FIRST_CONFLICT=$s";Write-Host "R3F_PASSED_PREFIX=$($passed -join ',')";exit 23}
-            if($s -eq 'scripts/apply-libmpv-r2j-subtitle-overlay.cjs'){Apply-R3FUpdaterIsolation}
-            if($s -eq 'scripts/apply-libmpv-r2k-upstream-polish.cjs'){Apply-R3FCustomUpdater}
-            $passed += $s
-            Write-Host "R3F_PROBE_OK=$s"
-          }
-          Write-Host "R3F_PREFIX_ALL_OK=$($passed.Count)"
-
-      - name: Guard upstream 0.5.54 features after compatible prefix
-        if: success()
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
-          foreach($marker in @('playerSeekHint','controlsOnPlaying','showSeekHint')){if(-not $combined.Contains($marker)){throw "compatible prefix erased upstream player feature: $marker"}}
-          if(Test-Path electron/miruro-session.cjs){throw 'compatible prefix resurrected obsolete Miruro verification implementation'}
-          if(!(Test-Path electron/miruro-browser.cjs)){throw 'compatible prefix removed Miruro browser transport'}
-          $updater=Get-Content electron/updater.cjs -Raw
-          foreach($marker in @("!MAC && !DEB && this.state.status === 'ready'",'CUSTOM_RELEASES_API','checkCustom()')){if(-not $updater.Contains($marker)){throw "0.5.54 updater semantic marker missing: $marker"}}
-          Write-Host 'R3F_0554_UPSTREAM_FEATURE_GUARD_OK'
+          node scripts/r3f-054-rebase-preflight.cjs
+          if($LASTEXITCODE -ne 0){throw "R3F 0.5.54 preflight failed: $LASTEXITCODE"}
