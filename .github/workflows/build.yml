@@ -1,6 +1,6 @@
-# Builds the Windows installer, the macOS disk images (Apple Silicon and Intel) and the Linux AppImages (x64, arm64).
+# Builds the Windows installer, the macOS disk images (Apple Silicon and Intel) and the Linux AppImages and .deb packages (x64, arm64).
 # - A pushed tag v* (e.g. v0.5.2): the files go to that tag's GitHub release. With no release yet a draft is made
-#   (write the notes and publish it); an existing one gets the .dmg and .AppImage files, and the .exe only when it has none yet
+#   (write the notes and publish it); an existing one gets the .dmg, .AppImage and .deb files, and the .exe only when it has none yet
 #   (one uploaded by hand is kept).
 # - Run by hand (Actions > Build > Run workflow): the files are kept as the run's artifacts only.
 name: Build
@@ -30,10 +30,14 @@ jobs:
             files: dist/LilacAnime-mac-x64.dmg
           - os: ubuntu-22.04 # an older glibc, so the AppImage runs on more distributions
             script: dist:linux
-            files: dist/LilacAnime-linux-x86_64.AppImage
+            files: |
+              dist/LilacAnime-linux-x86_64.AppImage
+              dist/LilacAnime-linux-amd64.deb
           - os: ubuntu-22.04-arm
             script: dist:linux
-            files: dist/LilacAnime-linux-arm64.AppImage
+            files: |
+              dist/LilacAnime-linux-arm64.AppImage
+              dist/LilacAnime-linux-arm64.deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +74,7 @@ jobs:
             gh release create "$TAG" out/* --draft --title "$TAG" --notes ""
             exit 0
           fi
-          gh release upload "$TAG" out/*.dmg out/*.AppImage --clobber
+          gh release upload "$TAG" out/*.dmg out/*.AppImage out/*.deb --clobber
           if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qi '\.exe$'; then
             echo "The release already has an .exe; it is kept."
           else

@@ -83,6 +83,15 @@ Mac에서는 업데이트를 받아 **지금 설치**를 누르면 새 버전의
 
 ### Linux
 
+**Ubuntu · Debian · Linux Mint 등 (.deb, 권장)**
+
+1. 내 PC에 맞는 .deb를 받습니다: **[x64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-amd64.deb)** · **[arm64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-arm64.deb)**
+2. 터미널에서 설치합니다: `sudo apt install ./LilacAnime-linux-amd64.deb` (arm64면 그 파일 이름). 앱 메뉴에 LilacAnime이 생깁니다.
+
+.deb로 설치하면 Ubuntu 24.04 이상의 샌드박스(AppArmor) 설정까지 설치할 때 함께 됩니다. 새 버전은 **설정 > 업데이트 · 정보**에서 **지금 설치**를 누르면 비밀번호를 물은 뒤 설치하고 다시 시작합니다. 지우려면 `sudo apt remove lilacanime-desktop`.
+
+**그 밖의 배포판 (AppImage)**
+
 1. 내 PC에 맞는 AppImage를 받습니다: **[x64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-x86_64.AppImage)** · **[arm64](https://github.com/whispelyn-byte/LilacAnime-desktop/releases/latest/download/LilacAnime-linux-arm64.AppImage)**
 2. 실행 권한을 주고 실행합니다: `chmod +x LilacAnime-linux-*.AppImage` 후 더블클릭하거나 터미널에서 실행합니다.
    - "libfuse.so.2"가 없다고 나오면 FUSE 2를 설치합니다 (Ubuntu 22.04: `sudo apt install libfuse2`, 24.04 이상: `libfuse2t64`).
@@ -447,9 +456,9 @@ npm run dist
 
 Mac에서는 `npm run dist:mac`으로 그 Mac의 칩에 맞는 `dist/LilacAnime-mac-arm64.dmg`(또는 `-x64.dmg`)가 만들어집니다.
 
-Linux에서는 `npm run dist:linux`로 `dist/LilacAnime-linux-x86_64.AppImage`(또는 `-arm64.AppImage`)가 만들어집니다.
+Linux에서는 `npm run dist:linux`로 `dist/LilacAnime-linux-x86_64.AppImage`와 `dist/LilacAnime-linux-amd64.deb`(arm64면 `-arm64`)가 만들어집니다.
 
-GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일, Mac용 `.dmg` 두 개(Apple Silicon · Intel), Linux용 AppImage 두 개(x64 · arm64)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
+GitHub Actions(`.github/workflows/build.yml`)로도 만들어집니다. `v0.5.2`처럼 `v`로 시작하는 태그를 올리면 Windows 설치 파일, Mac용 `.dmg` 두 개(Apple Silicon · Intel), Linux용 AppImage와 .deb 각 두 개(x64 · arm64)를 만들어 그 태그의 릴리즈에 올립니다. 릴리즈가 아직 없으면 초안(draft)으로 만들어지니, 바뀐 점을 적고 게시하면 됩니다. 이미 있는 릴리즈에 직접 올린 `.exe`는 그대로 둡니다. **Actions > Build > Run workflow**로 돌리면 릴리즈 없이 실행 결과(Artifacts)로만 받을 수 있습니다.
 
 | 폴더 | 내용 |
 |---|---|
