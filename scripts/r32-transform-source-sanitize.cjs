@@ -64,7 +64,17 @@ replaceOnce(
   'main synchronous Flix diagnostics export'
 );
 
-// 3) R3E/R30/R31 evolve the body of these bridge functions. Do not require an
+// 3) Win32 wide API qualification. IDC_ARROW resolves through the generic
+// MAKEINTRESOURCE macro and can become LPSTR when UNICODE is not set for this
+// node-gyp target. LoadCursorW requires LPCWSTR, so make the resource explicitly
+// wide instead of relying on project-wide UNICODE flags.
+replaceOnce(
+  '  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);',
+  '  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));',
+  'wide native presenter cursor resource'
+);
+
+// 4) R3E/R30/R31 evolve the body of these bridge functions. Do not require an
 // exact two-line body. Insert presenter calls inside explicit method ranges so
 // future diagnostic fields cannot break the transform without changing meaning.
 replaceTransformBlock('R32 configure presenter on player creation', 'bridge', `{
@@ -106,7 +116,7 @@ replaceTransformBlock('R32 hide presenter on stop', 'bridge', `{
   bridge = bridge.slice(0, r32InactiveAt) + r32StopInsert + bridge.slice(r32InactiveAt + r32Inactive.length);
 }`);
 
-// 4) esbuild is free to strip comments and constant-fold the disabled Canvas2D
+// 5) esbuild is free to strip comments and constant-fold the disabled Canvas2D
 // branch. Verify behavior, not the presence of a source comment in the bundle.
 replaceOnce(
   "if (!checks.preload.includes('const r31UseFocusShield = false') || !checks.bundled.includes('R32_NATIVE_HWND_FOCUS_SURFACE')) throw new Error('R32 renderer shield disable missing');",
@@ -131,4 +141,4 @@ if (process.env.GITHUB_ACTIONS === 'true') {
   run(['commit','-m','ci: normalize R32 generated transform source'], 'git commit sanitized transform');
 }
 
-console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 bridgeAnchors=structural rendererGate=semantic ciTree=clean');
+console.log('R32_TRANSFORM_SOURCE_SANITIZE_OK nestedFlixTemplate=removed flixExports=R31+stats-cache flixStatsPushHz=4 bridgeAnchors=structural rendererGate=semantic win32WideCursor=explicit ciTree=clean');
