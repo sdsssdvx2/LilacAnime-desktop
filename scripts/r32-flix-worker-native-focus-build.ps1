@@ -25,6 +25,19 @@ $core = Replace-Once $core `
   ("node scripts/r32-flix-worker-native-focus-fix.cjs" + "`n" + "Assert-Exit 'R32 transform'" + "`n" + "node --check scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer syntax'" + "`n" + "node scripts/r32-presenter-safety-source-sanitize.cjs" + "`n" + "Assert-Exit 'R32 presenter safety sanitizer'" + "`n" + "node --check scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle syntax'" + "`n" + "node scripts/r32-presenter-bounds-subtitle-fix.cjs" + "`n" + "Assert-Exit 'R32 presenter bounds/subtitle patch'") `
   'R32 apply presenter safety pass'
 
+# The original R32 core had one opaque four-term regex gate. The final safety pass
+# deliberately rewrites presenter source structure, so keep the same semantic
+# requirements but make each one explicit. Runtime cadence is additionally proved
+# by the 750ms callback-authority smoke below, rather than relying only on text.
+$core = Replace-Once $core `
+  "if (`$nativeSource -notmatch 'LILAC_R32_NATIVE_HWND_FOCUS_SURFACE' -or `$nativeSource -notmatch 'R32PresentNativeFrame' -or `$nativeSource -notmatch 'ConfigureNativePresenter' -or `$nativeSource -notmatch 'std::chrono::milliseconds\\(250\\)') { throw 'R32 native focus/watchdog source gate failed' }" `
+  ("if (-not `$nativeSource.Contains('LILAC_R32_NATIVE_HWND_FOCUS_SURFACE')) { throw 'R32 native presenter marker missing' }" + "`n" +
+   "if (-not `$nativeSource.Contains('R32PresentNativeFrame')) { throw 'R32 native presenter hotpath missing' }" + "`n" +
+   "if (-not `$nativeSource.Contains('ConfigureNativePresenter')) { throw 'R32 native presenter configure API missing' }" + "`n" +
+   "if (-not `$nativeSource.Contains('LILAC_R32_NATIVE_CALLBACK_WATCHDOG')) { throw 'R32 native producer watchdog marker missing' }" + "`n" +
+   "if (-not `$nativeSource.Contains('std::chrono::milliseconds(250)')) { throw 'R32 native producer 250ms watchdog literal missing' }") `
+  'R32 split native focus/watchdog source gate'
+
 $core = Replace-Once $core `
   '& node_modules/.bin/electron.cmd scripts/smoke-libmpv-r3e-native-producer.cjs' `
   '& node_modules/.bin/electron.cmd scripts/r32-native-producer-watchdog-smoke.cjs' `
