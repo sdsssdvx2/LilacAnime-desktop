@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 env:
-  QUALIFIED_SOURCE_SHA: 9e17ba612e5444283485a53650de65eef7c72e5c
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
   PRIOR_QUALIFICATION_RUN: '40179979269'
   PRIOR_QUALIFICATION_ADDON_SHA256: c0407f8627fce5e05b6b10aaf1bcdf15a459a387b77ac35f8376def05223c383
   UPSTREAM_SHA: e4ac62214f5c4863eebae5052633e7f9f33dcbaa
@@ -66,6 +66,9 @@ jobs:
           $native=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
           foreach($m in @('StartFrameProducerWorker','producerRawWakeSignals','producerWakePending','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats','SetMaybeDouble(env, out, "speed", player, "speed")')){if(-not $native.Contains($m)){throw "R3E native marker missing: $m"}}
           if($native.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control unexpectedly enabled'}
+          $renderer=Get-Content src/libmpv-shared.generated.js -Raw
+          foreach($m in @('browserVisualBottom','Pretendard Variable','fontVariationSettings','R2V_SUBTITLE_SOURCE_ATTEST')){if(-not $renderer.Contains($m)){throw "calibrated renderer marker missing: $m"}}
+          if($renderer.Contains('browserBottomInset')){throw 'stale R2S subtitle vertical mapping survived'}
           $js=@'
           const fs=require('node:fs');
           const p=JSON.parse(fs.readFileSync('package.json','utf8'));
@@ -78,7 +81,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'release identity patch failed'}
           $pkg=Get-Content package.json -Raw|ConvertFrom-Json
           if($pkg.version -ne $env:R3F_VERSION -or $pkg.lilacCustomTag -ne $env:CUSTOM_RELEASE_TAG -or $pkg.build.win.artifactName -ne 'LilacAnime-Libmpv-R3F-Setup.${ext}'){throw 'release identity mismatch'}
-          Write-Host 'R3F_R15_V4_SOURCE_IDENTITY_OK source=9e17ba612e54 upstream=0.5.54 profileIdentity=unchanged'
+          Write-Host 'R3F_R15_V4_SOURCE_IDENTITY_OK source=60a7e18bd29a upstream=0.5.54 renderer=R2V-calibrated profileIdentity=unchanged'
 
       - name: Run stable UI aspect and direct-presenter runtime gates
         shell: powershell
@@ -145,6 +148,14 @@ jobs:
           $runner=$env:NATIVE_SMOKE_RUNNER
           if(!(Test-Path $runner)){throw 'preserved smoke runner missing'}
 
+          $callbackScript=Join-Path $env:RUNNER_TEMP 'smoke-libmpv-r3b-update-callback-hosted.cjs'
+          Copy-Item scripts/smoke-libmpv-r3b-update-callback.cjs $callbackScript -Force
+          $callback=Get-Content $callbackScript -Raw
+          $callbackGate='if (effectiveFps < 15)'
+          if(([regex]::Matches($callback,[regex]::Escape($callbackGate))).Count -ne 1){throw 'R3B callback hosted throughput gate anchor mismatch'}
+          Set-Content $callbackScript -Value ($callback.Replace($callbackGate,'if (false && effectiveFps < 15)')) -NoNewline
+          Write-Host 'R3F_R15_V4_CALLBACK_GATE wake>=60 frames>=60 errors=0 wake>=frames hostedAbsoluteFps=reported-non-authoritative'
+
           $timingScript='scripts/smoke-libmpv-r3d-native-timing.cjs'
           $timingBackup=Join-Path $env:RUNNER_TEMP 'smoke-libmpv-r3d-native-timing.original.cjs'
           Copy-Item $timingScript $timingBackup -Force
@@ -154,7 +165,7 @@ jobs:
           Set-Content $timingScript -Value ($timing.Replace($gate,'if (calls < 40)')) -NoNewline
           Write-Host 'R3F_R15_V4_TIMING_SAMPLE_GATE calls>=40 frames>=20 timingCoverage=100% hostedThroughput=non-authoritative'
           try {
-            node $runner $electron scripts/smoke-libmpv-r3b-update-callback.cjs LIBMPV_R3B_UPDATE_CALLBACK_OK 180
+            node $runner $electron $callbackScript LIBMPV_R3B_UPDATE_CALLBACK_OK 180
             if($LASTEXITCODE -ne 0){throw 'callback smoke failed'}
             node $runner $electron $timingScript LIBMPV_R3D_NATIVE_TIMING_OK 180
             if($LASTEXITCODE -ne 0){throw 'R3D timing smoke failed'}
@@ -214,6 +225,9 @@ jobs:
           $native=Get-Content native/libmpv-d3d11-bridge/player_addon.cc -Raw
           foreach($m in @('StartFrameProducerWorker','producerRawWakeSignals','producerWakePending','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats','SetMaybeDouble(env, out, "speed", player, "speed")')){if(-not $native.Contains($m)){throw "native marker missing: $m"}}
           if($native.Contains('MPV_RENDER_PARAM_ADVANCED_CONTROL')){throw 'advanced control returned'}
+          $renderer=Get-Content src/libmpv-shared.generated.js -Raw
+          foreach($m in @('browserVisualBottom','Pretendard Variable','fontVariationSettings','R2V_SUBTITLE_SOURCE_ATTEST')){if(-not $renderer.Contains($m)){throw "final calibrated renderer marker missing: $m"}}
+          if($renderer.Contains('browserBottomInset')){throw 'final renderer regressed to stale R2S vertical mapping'}
           $combined=(Get-Content src/app.js -Raw)+(Get-Content src/player.js -Raw)+(Get-Content src/index.html -Raw)
           foreach($m in @('playerSeekHint','controlsOnPlaying','showSeekHint')){if(-not $combined.Contains($m)){throw "0.5.54 marker missing: $m"}}
           if(Test-Path electron/miruro-session.cjs){throw 'obsolete Miruro session returned'}
@@ -225,7 +239,7 @@ jobs:
           $ah=(Get-FileHash electron/lilac-libmpv-player-bridge.node -Algorithm SHA256).Hash.ToLowerInvariant();$dh=(Get-FileHash electron/libmpv-2.dll -Algorithm SHA256).Hash.ToLowerInvariant()
           if($ah -ne $env:R3F_FINAL_ADDON_SHA256){throw "prepackage addon drift $ah"}
           if($dh -ne $env:QUALIFIED_DLL_SHA256){throw "prepackage DLL drift $dh"}
-          Write-Host "R3F_R15_V4_ARCH_OK addon=$ah upstream054=1 direct=1 producer=1 stableUI=1 profileIdentity=unchanged"
+          Write-Host "R3F_R15_V4_ARCH_OK addon=$ah upstream054=1 direct=1 producer=1 calibratedRenderer=1 stableUI=1 profileIdentity=unchanged"
           & npx.cmd electron-builder --win nsis --publish never
           if($LASTEXITCODE -ne 0){throw 'NSIS build failed'}
           $installer=Get-ChildItem dist -File -Filter $env:INSTALLER_NAME|Select-Object -First 1
@@ -258,21 +272,24 @@ jobs:
           $pre=Get-Content (Join-Path $asarOut 'electron/preload-libmpv-shared.generated.cjs') -Raw;$bridge=Get-Content (Join-Path $asarOut 'electron/libmpv-shared-main.cjs') -Raw
           if(-not $pre.Contains('direct-receive-webgpu-copy') -or -not $pre.Contains('copyExternalImageToTexture') -or $pre.Contains('stagingTexture') -or $pre.Contains('ensureGpuPresentLoop')){throw 'packaged presentation architecture mismatch'}
           foreach($m in @('frameProducerStarted','startFrameProducer','popProducedFrame','releaseProducedFrame','frameProducerStats')){if(-not $bridge.Contains($m)){throw "packaged producer marker missing: $m"}}
+          $renderer=Get-Content (Join-Path $asarOut 'src/libmpv-shared.generated.js') -Raw
+          foreach($m in @('browserVisualBottom','Pretendard Variable','fontVariationSettings','R2V_SUBTITLE_SOURCE_ATTEST')){if(-not $renderer.Contains($m)){throw "packaged calibrated renderer marker missing: $m"}}
+          if($renderer.Contains('browserBottomInset')){throw 'packaged renderer contains stale R2S vertical mapping'}
           $hash=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant();$size=$installer.Length
           "R3F_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Append -Encoding utf8;"R3F_INSTALLER_SIZE=$size"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          $manifest=[ordered]@{schema=4;releaseTag=$env:CUSTOM_RELEASE_TAG;qualifiedSourceCommit=$env:QUALIFIED_SOURCE_SHA;priorQualificationRun=[long]$env:PRIOR_QUALIFICATION_RUN;priorQualificationAddonSha256=$env:PRIOR_QUALIFICATION_ADDON_SHA256;binaryQualification='same-finalizer-run-authoritative-harness';upstreamVersion='0.5.54';upstreamCommit=$env:UPSTREAM_SHA;electronVersion=$env:ELECTRON_VERSION;version=$env:R3F_VERSION;installer=$env:INSTALLER_NAME;installerSha256=$hash;installerSize=[long]$size;addonSha256=$env:R3F_FINAL_ADDON_SHA256;dllSha256=$env:QUALIFIED_DLL_SHA256;presentationMode='direct-receive-webgpu-copy';nativeProducer='mpv-render-update-native-worker';jsFrameRole='drain-only';delivery='async-bounded';statePoll='lightweight-pollPlayback';uiPolicy='fullscreen-invariant-right';profileIdentity='unchanged'}
+          $manifest=[ordered]@{schema=4;releaseTag=$env:CUSTOM_RELEASE_TAG;qualifiedSourceCommit=$env:QUALIFIED_SOURCE_SHA;priorQualificationRun=[long]$env:PRIOR_QUALIFICATION_RUN;priorQualificationAddonSha256=$env:PRIOR_QUALIFICATION_ADDON_SHA256;binaryQualification='same-finalizer-run-authoritative-harness';upstreamVersion='0.5.54';upstreamCommit=$env:UPSTREAM_SHA;electronVersion=$env:ELECTRON_VERSION;version=$env:R3F_VERSION;installer=$env:INSTALLER_NAME;installerSha256=$hash;installerSize=[long]$size;addonSha256=$env:R3F_FINAL_ADDON_SHA256;dllSha256=$env:QUALIFIED_DLL_SHA256;presentationMode='direct-receive-webgpu-copy';nativeProducer='mpv-render-update-native-worker';jsFrameRole='drain-only';delivery='async-bounded';statePoll='lightweight-pollPlayback';subtitleRenderer='R2V-calibrated-generated-bundle';uiPolicy='fullscreen-invariant-right';profileIdentity='unchanged'}
           $manifest|ConvertTo-Json -Depth 4|Set-Content (Join-Path dist $env:MANIFEST_NAME) -Encoding utf8
           @"
-          R3F r15 rebases the qualified libmpv/WebGPU stack onto LilacAnime 0.5.54 while preserving upstream 0.5.54 UI/features, Miruro browser, updater/platform packaging, Tenrai metadata, subtitle/miniplayer behavior, and direct WebGPU presentation.
+          R3F r15 rebases the qualified libmpv/WebGPU stack onto LilacAnime 0.5.54 while preserving upstream 0.5.54 UI/features, Miruro browser, updater/platform packaging, Tenrai metadata, calibrated subtitle/miniplayer behavior, and direct WebGPU presentation.
 
-          The exact native addon packaged here is qualified in this same finalizer run using the same authoritative compatibility harness as the independent qualification run: callback transport, R3D timing instrumentation, command roundtrip, FHD retention, and R3E native producer three times. The installer is then unpacked and must contain that exact addon hash.
+          The exact native addon packaged here is qualified in this same finalizer run using the authoritative compatibility harness: callback transport functional gates, R3D timing instrumentation, command roundtrip, FHD retention, and R3E native producer three times. Hosted-runner absolute callback FPS is reported but is not treated as hardware throughput qualification. The installer is then unpacked and must contain that exact addon hash and the attested R2V calibrated generated renderer.
 
           Qualified source: $env:QUALIFIED_SOURCE_SHA
           Prior independent qualification run: $env:PRIOR_QUALIFICATION_RUN
           Final addon SHA-256: $env:R3F_FINAL_ADDON_SHA256
           DLL SHA-256: $env:QUALIFIED_DLL_SHA256
           "@|Set-Content release-notes-r3f.md -Encoding utf8
-          Write-Host "R3F_R15_V4_INSTALLER_INTERNALS_OK sha256=$hash size=$size addon=$ah dll=$dh"
+          Write-Host "R3F_R15_V4_INSTALLER_INTERNALS_OK sha256=$hash size=$size addon=$ah dll=$dh calibratedRenderer=1"
 
       - name: Upload verified installer artifact
         uses: actions/upload-artifact@v4
@@ -302,5 +319,5 @@ jobs:
           $exe=Join-Path $verify $env:INSTALLER_NAME;$mp=Join-Path $verify $env:MANIFEST_NAME
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();$size=(Get-Item $exe).Length;$m=Get-Content $mp -Raw|ConvertFrom-Json
           if($hash -ne $env:R3F_INSTALLER_SHA256 -or $size -ne [long]$env:R3F_INSTALLER_SIZE){throw 'published installer byte mismatch'}
-          if($m.installerSha256 -ne $hash -or $m.qualifiedSourceCommit -ne $env:QUALIFIED_SOURCE_SHA -or $m.addonSha256 -ne $env:R3F_FINAL_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256 -or $m.releaseTag -ne $env:CUSTOM_RELEASE_TAG -or $m.binaryQualification -ne 'same-finalizer-run-authoritative-harness'){throw 'published manifest mismatch'}
-          Write-Host "R3F_R15_V4_PUBLISHED_OK tag=$env:CUSTOM_RELEASE_TAG sha256=$hash size=$size addon=$env:R3F_FINAL_ADDON_SHA256 dll=$env:QUALIFIED_DLL_SHA256"
+          if($m.installerSha256 -ne $hash -or $m.qualifiedSourceCommit -ne $env:QUALIFIED_SOURCE_SHA -or $m.addonSha256 -ne $env:R3F_FINAL_ADDON_SHA256 -or $m.dllSha256 -ne $env:QUALIFIED_DLL_SHA256 -or $m.releaseTag -ne $env:CUSTOM_RELEASE_TAG -or $m.binaryQualification -ne 'same-finalizer-run-authoritative-harness' -or $m.subtitleRenderer -ne 'R2V-calibrated-generated-bundle'){throw 'published manifest mismatch'}
+          Write-Host "R3F_R15_V4_PUBLISHED_OK tag=$env:CUSTOM_RELEASE_TAG sha256=$hash size=$size addon=$env:R3F_FINAL_ADDON_SHA256 dll=$env:QUALIFIED_DLL_SHA256 calibratedRenderer=1"
