@@ -28,8 +28,8 @@ replaceOnce(
   'load frame-info symbol'
 );
 
-const anchor = '  Set(env, out, "nativeUpdateMs", DoubleValue(env, nativeUpdateMs));\n  if (!(flags & MPV_RENDER_UPDATE_FRAME)) return out;';
-const replacement = `  Set(env, out, "nativeUpdateMs", DoubleValue(env, nativeUpdateMs));\n\n  mpv_render_frame_info nextFrameInfo{};\n  mpv_render_param nextFrameParam{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &nextFrameInfo};\n  const int nextFrameInfoRc = gMpv.render_context_get_info(player->render, nextFrameParam);\n  Set(env, out, "nextFrameInfoRc", DoubleValue(env, static_cast<double>(nextFrameInfoRc)));\n  if (nextFrameInfoRc >= 0) {\n    const uint64_t infoFlags = nextFrameInfo.flags;\n    Set(env, out, "nextFrameInfoFlags", DoubleValue(env, static_cast<double>(infoFlags)));\n    Set(env, out, "nextFramePresent", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_PRESENT) != 0));\n    Set(env, out, "nextFrameRedraw", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_REDRAW) != 0));\n    Set(env, out, "nextFrameRepeat", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_REPEAT) != 0));\n    Set(env, out, "nextFrameBlockVsync", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_BLOCK_VSYNC) != 0));\n    Set(env, out, "nextFrameTargetTimeNs", DoubleValue(env, static_cast<double>(nextFrameInfo.target_time)));\n  }\n  if (!(flags & MPV_RENDER_UPDATE_FRAME)) return out;`;
+const anchor = '  Set(env, out, "updateFlags", DoubleValue(env, static_cast<double>(flags)));';
+const replacement = `${anchor}\n\n  mpv_render_frame_info nextFrameInfo{};\n  mpv_render_param nextFrameParam{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &nextFrameInfo};\n  const int nextFrameInfoRc = gMpv.render_context_get_info(player->render, nextFrameParam);\n  Set(env, out, "nextFrameInfoRc", DoubleValue(env, static_cast<double>(nextFrameInfoRc)));\n  if (nextFrameInfoRc >= 0) {\n    const uint64_t infoFlags = nextFrameInfo.flags;\n    Set(env, out, "nextFrameInfoFlags", DoubleValue(env, static_cast<double>(infoFlags)));\n    Set(env, out, "nextFramePresent", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_PRESENT) != 0));\n    Set(env, out, "nextFrameRedraw", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_REDRAW) != 0));\n    Set(env, out, "nextFrameRepeat", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_REPEAT) != 0));\n    Set(env, out, "nextFrameBlockVsync", BoolValue(env, (infoFlags & MPV_RENDER_FRAME_INFO_BLOCK_VSYNC) != 0));\n    Set(env, out, "nextFrameTargetTimeNs", DoubleValue(env, static_cast<double>(nextFrameInfo.target_time)));\n  }`;
 replaceOnce(anchor, replacement, 'RenderFrame next-frame classification');
 
 for (const marker of [
@@ -45,4 +45,4 @@ for (const marker of [
 }
 
 fs.writeFileSync(target, source);
-console.log('LIBMPV_R3D_FRAMEINFO_PROBE_OK flags=present,redraw,repeat,block-vsync target-time=1');
+console.log('LIBMPV_R3D_FRAMEINFO_PROBE_OK anchor=updateFlags flags=present,redraw,repeat,block-vsync target-time=1');
