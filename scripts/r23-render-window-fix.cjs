@@ -29,7 +29,7 @@ const statsSignature = /function sendStats\(extra = \{\}(?:, force = false)?\) \
 const statsMatch = preload.match(statsSignature);
 assert(statsMatch, 'R23 receiver stats function not found');
 preload = preload.replace(statsSignature,
-`// LILAC_R23_RENDER_HOTPATH: keep frame/cadence accounting local every frame, but\n// do not serialize a large diagnostics payload over IPC for every 24 fps frame.\nconst RECEIVER_STATS_INTERVAL_MS = 250;\nlet receiverStatsLastSentAt = -Infinity;\nlet receiverStatsSuppressed = 0;\nfunction sendStats(extra = {}, force = false) {\n  const now = performance.now();\n  if (!force && now - receiverStatsLastSentAt < RECEIVER_STATS_INTERVAL_MS) {\n    receiverStatsSuppressed += 1;\n    return;\n  }\n  receiverStatsLastSentAt = now;\n`);
+`// LILAC_R23_RENDER_HOTPATH: keep frame/cadence accounting local every frame, but\n// do not serialize a large diagnostics payload over IPC for every 24 fps frame.\nconst RECEIVER_STATS_INTERVAL_MS = 250;\nlet receiverStatsLastSentAt = -Infinity;\nlet receiverStatsSuppressed = 0;\nfunction sendStats(extra = {}, force = false) {\n  const statsNowPerf = performance.now();\n  if (!force && statsNowPerf - receiverStatsLastSentAt < RECEIVER_STATS_INTERVAL_MS) {\n    receiverStatsSuppressed += 1;\n    return;\n  }\n  receiverStatsLastSentAt = statsNowPerf;\n`);
 
 // Preserve the diagnostic schema while removing the periodic WebGPU queue fence.
 // onSubmittedWorkDone is useful for qualification, but requesting it every ~24
