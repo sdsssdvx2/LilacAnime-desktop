@@ -1,0 +1,40 @@
+name: LilacAnime libmpv R3F 0.5.54 deterministic R2V map
+
+on:
+  push:
+    branches: [libmpv-r3f-upstream-0.5.54-rebase]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r2v-map.yml
+      - scripts/r3f-054-r2v-map.cjs
+      - scripts/r3f-054-rebase-preflight.cjs
+      - scripts/r3f-port-r2q-tenrai-0554.cjs
+      - scripts/r3f-bridge-r2r-metadata-0554.cjs
+      - scripts/r3f-patch-r2t-transform-0554.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r3f-054-r2v-map
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-map:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reconstruct exact 0.5.54 through authoritative R2V
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r3f-054-r2v-map.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3F deterministic driver syntax failed'}
+          node scripts/r3f-054-r2v-map.cjs
+          if($LASTEXITCODE -ne 0){throw 'R3F deterministic R2V map failed'}
