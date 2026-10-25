@@ -46,8 +46,6 @@ replaceBlock('R31 invalidate state cache on timing commands', 'bridge', `{
 }`);
 
 // Constructor/reset are located structurally inside their own method ranges.
-// There are multiple `this._time = 0` assignments in the class, so never use a
-// global replace for these fields.
 replaceBlock('R31 renderer clock fields', 'renderer', `{
   const r31ClassAt = renderer.indexOf('class LilacSharedMpvElement extends HTMLElement');
   const r31CtorAt = renderer.indexOf('  constructor() {', r31ClassAt);
@@ -82,5 +80,30 @@ replaceBlock('R31 reset renderer clock', 'renderer', `{
   renderer = renderer.slice(0, r31ResetTimeAt) + r31ResetLines + renderer.slice(r31ResetTimeAt + r31ResetTimeAnchor.length);
 }`);
 
+// Safety correction: Canvas2D drawImage() consumes the VideoFrame synchronously
+// for the canvas backing store. Do not retain a cloned VideoFrame on a timer;
+// inactive-window timer delay could otherwise hold native shared-texture slots.
+const heldCounters = String.raw`\nlet r31HeldVideoFrames = 0;\nlet r31HeldVideoFramesMax = 0;`;
+if (!source.includes(heldCounters)) throw new Error('R31 clone counter source anchor missing');
+source = source.replace(heldCounters, '');
+
+const heldDraw = String.raw`  let held = null;\n  try { held = typeof frame?.clone === 'function' ? frame.clone() : null; } catch {}\n  const drawStarted = performance.now();\n  context.drawImage(held || frame, 0, 0, width, height);\n  const elapsed = Math.max(0, performance.now() - drawStarted);\n  r31FocusShieldDrawSamples += 1;\n  r31FocusShieldDrawTotalMs += elapsed;\n  r31FocusShieldDrawMaxMs = Math.max(r31FocusShieldDrawMaxMs, elapsed);\n  r31FocusShieldReady = true;\n  if (held) {\n    r31HeldVideoFrames += 1;\n    r31HeldVideoFramesMax = Math.max(r31HeldVideoFramesMax, r31HeldVideoFrames);\n    setTimeout(() => {\n      try { held.close?.(); } catch {}\n      r31HeldVideoFrames = Math.max(0, r31HeldVideoFrames - 1);\n    }, 34);\n  }\n  return elapsed;`;
+const directDraw = String.raw`  const drawStarted = performance.now();\n  context.drawImage(frame, 0, 0, width, height);\n  const elapsed = Math.max(0, performance.now() - drawStarted);\n  r31FocusShieldDrawSamples += 1;\n  r31FocusShieldDrawTotalMs += elapsed;\n  r31FocusShieldDrawMaxMs = Math.max(r31FocusShieldDrawMaxMs, elapsed);\n  r31FocusShieldReady = true;\n  return elapsed;`;
+if (!source.includes(heldDraw)) throw new Error('R31 timed clone draw source anchor missing');
+source = source.replace(heldDraw, directDraw);
+
+for (const stat of [
+  String.raw`\n      r31HeldVideoFrames,\n      r31HeldVideoFramesMax,`,
+  String.raw`\n      heldVideoFrames: r31HeldVideoFrames,\n      heldVideoFramesMax: r31HeldVideoFramesMax`
+]) {
+  if (!source.includes(stat)) throw new Error('R31 held-frame diagnostic anchor missing');
+  source = source.replace(stat, '');
+}
+source = source.replace('heldCloneMs=34 ', 'cloneHold=none ');
+
+if (source.includes('frame?.clone') || source.includes('r31HeldVideoFrames') || source.includes('setTimeout(() => {\\n      try { held.close')) {
+  throw new Error('R31 timed VideoFrame retention survived normalization');
+}
+
 fs.writeFileSync(target, source, 'utf8');
-console.log('R31_TRANSFORM_ANCHORS_OK state=lf-safe command=native-call-scoped constructor=structural bundleMarker=semantic reset=structural');
+console.log('R31_TRANSFORM_ANCHORS_OK state=lf-safe command=native-call-scoped constructor=structural bundleMarker=semantic reset=structural focusShieldCloneHold=none');
