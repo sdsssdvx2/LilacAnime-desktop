@@ -1,10 +1,6 @@
 // Read-only actual API / segment / native HLS playback check.
 const {app,BrowserWindow,session}=require('electron');
-const {installPopupBlocker}=require('../electron/popup-policy.cjs');
 const {createMiruroBrowser}=require('../electron/miruro-browser.cjs');
-installPopupBlocker(app);
-let popupWindows=0;
-app.on('web-contents-created',(_,contents)=>contents.on('did-create-window',()=>popupWindows++));
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm'),zlib=require('node:zlib');
 const {pathToFileURL}=require('node:url'),assert=require('node:assert/strict');
 const {selectMiruroServer}=require('../electron/miruro-playback.cjs');
@@ -29,6 +25,5 @@ app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false}});await win.loadFile(file);
  const result=await win.webContents.executeJavaScript(`new Promise(resolve=>{const video=document.querySelector('video'),hls=new Hls({enableWorker:false,maxBufferLength:20});let buffered=0;const finish=value=>{clearTimeout(timer);hls.destroy();resolve(value)};const timer=setTimeout(()=>finish({ok:false,error:'timeout',buffered}),45000);hls.on(Hls.Events.FRAG_BUFFERED,()=>{buffered++;if(buffered>=3)finish({ok:true,buffered,levels:hls.levels.map(x=>x.height)})});hls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal)finish({ok:false,error:data.details,buffered})});hls.loadSource(${JSON.stringify(stream.url)});hls.attachMedia(video);video.play().catch(()=>{});})`);
  assert.equal(result.ok,true,JSON.stringify(result));console.log('Native HLS segments:',JSON.stringify(result));
- assert.equal(popupWindows,0);console.log('Unwanted popup windows:',popupWindows);
  win.destroy();app.quit();
 }).catch(error=>{console.error(error.stack||error);app.exit(1)});

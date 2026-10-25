@@ -1,6 +1,5 @@
 // Read-only end-to-end check of the actual document transport and catalog codec.
 const {app,BrowserWindow}=require('electron');
-require('../electron/popup-policy.cjs').installPopupBlocker(app);
 const assert=require('node:assert/strict'),zlib=require('node:zlib');
 const {createMiruroBrowser}=require('../electron/miruro-browser.cjs');
 if(process.argv.includes('--fresh'))app.setPath('userData',require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'miruro-document-check-')));
