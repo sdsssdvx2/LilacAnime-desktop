@@ -41,7 +41,10 @@ function identity(version, tag, label) {
   console.log(`R3F_IDENTITY_OK=${label} version=${version} tag=${tag}`);
 }
 function tempCopy(relative) {
-  const out = path.join(os.tmpdir(), `r3f-${path.basename(relative)}-${process.pid}`);
+  const base = path.basename(relative);
+  const ext = path.extname(base);
+  const stem = ext ? base.slice(0, -ext.length) : base;
+  const out = path.join(os.tmpdir(), `r3f-${stem}-${process.pid}${ext}`);
   fs.copyFileSync(path.join(root, relative), out);
   return out;
 }
