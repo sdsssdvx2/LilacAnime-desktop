@@ -9,43 +9,69 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
   return $Source.Replace($Needle,$Replacement)
 }
 
-$patched = Replace-Once $patched `
-"  'scripts/r24-focus-delivery-fix.cjs'`n)) {" `
-"  'scripts/r24-focus-delivery-fix.cjs',`n  'scripts/r25-directcomposition-fix.cjs'`n)) {" 'support list'
+$needle = @'
+  'scripts/r24-focus-delivery-fix.cjs'
+)) {
+'@
+$replacement = @'
+  'scripts/r24-focus-delivery-fix.cjs',
+  'scripts/r25-directcomposition-fix.cjs'
+)) {
+'@
+$patched = Replace-Once $patched $needle $replacement 'support list'
 
-$patched = Replace-Once $patched `
-"foreach (`$name in @('r23-render-window-fix.cjs','r23-window-controller-smoke.cjs','r24-cadence-hotpath-fix.cjs','r24-focus-delivery-fix.cjs')) {" `
-"foreach (`$name in @('r23-render-window-fix.cjs','r23-window-controller-smoke.cjs','r24-cadence-hotpath-fix.cjs','r24-focus-delivery-fix.cjs','r25-directcomposition-fix.cjs')) {" 'restore list'
+$needle = @'
+foreach ($name in @('r23-render-window-fix.cjs','r23-window-controller-smoke.cjs','r24-cadence-hotpath-fix.cjs','r24-focus-delivery-fix.cjs')) {
+'@
+$replacement = @'
+foreach ($name in @('r23-render-window-fix.cjs','r23-window-controller-smoke.cjs','r24-cadence-hotpath-fix.cjs','r24-focus-delivery-fix.cjs','r25-directcomposition-fix.cjs')) {
+'@
+$patched = Replace-Once $patched $needle $replacement 'restore list'
 
-$patched = Replace-Once $patched `
-"node scripts/r24-focus-delivery-fix.cjs`nAssert-Exit 'R24 focus/delivery patch'" `
-"node scripts/r24-focus-delivery-fix.cjs`nAssert-Exit 'R24 focus/delivery patch'`nnode scripts/r25-directcomposition-fix.cjs`nAssert-Exit 'R25 DirectComposition patch'" 'apply R25'
+$needle = @'
+node scripts/r24-focus-delivery-fix.cjs
+Assert-Exit 'R24 focus/delivery patch'
+'@
+$replacement = @'
+node scripts/r24-focus-delivery-fix.cjs
+Assert-Exit 'R24 focus/delivery patch'
+node scripts/r25-directcomposition-fix.cjs
+Assert-Exit 'R25 DirectComposition patch'
+'@
+$patched = Replace-Once $patched $needle $replacement 'apply R25'
 
-$patched = Replace-Once $patched `
-"if (`$main -notmatch 'LILAC_R24_INACTIVE_COMPOSITOR_GUARD' -or `$main -notmatch 'disable-backgrounding-occluded-windows' -or `$main -notmatch 'CalculateNativeWinOcclusion') { throw 'R24 inactive compositor guard missing' }" `
-"if (`$main -notmatch 'LILAC_R24_INACTIVE_COMPOSITOR_GUARD' -or `$main -notmatch 'disable-backgrounding-occluded-windows' -or `$main -notmatch 'CalculateNativeWinOcclusion') { throw 'R24 inactive compositor guard missing' }`nif (`$main -notmatch 'LILAC_R25_DISABLE_DIRECT_COMPOSITION' -or `$main -notmatch \"appendSwitch\\('disable-direct-composition'\\)\") { throw 'R25 DirectComposition bypass missing' }" 'source gate'
+$needle = @'
+Write-Host 'R24_SOURCE_GATES_OK nativeProducer=unchanged mailbox=serial-latest inactiveGuard=1 cadenceLazy=1 presenter=direct-webgpu'
+'@
+$replacement = @'
+if ($main -notmatch 'LILAC_R25_DISABLE_DIRECT_COMPOSITION' -or $main -notmatch 'disable-direct-composition') { throw 'R25 DirectComposition bypass missing' }
+Write-Host 'R25_SOURCE_GATES_OK nativeProducer=unchanged mailbox=serial-latest inactiveGuard=1 directComposition=disabled cadenceLazy=1 presenter=direct-webgpu'
+'@
+$patched = Replace-Once $patched $needle $replacement 'source gate'
 
-$patched = Replace-Once $patched `
-"Write-Host 'R24_SOURCE_GATES_OK nativeProducer=unchanged mailbox=serial-latest inactiveGuard=1 cadenceLazy=1 presenter=direct-webgpu'" `
-"Write-Host 'R25_SOURCE_GATES_OK nativeProducer=unchanged mailbox=serial-latest inactiveGuard=1 directComposition=disabled cadenceLazy=1 presenter=direct-webgpu'" 'source marker'
+$needle = @'
+if ($shipBridge -notmatch 'LILAC_R24_LATEST_FRAME_MAILBOX' -or $shipBridge -notmatch 'deliveryCoalescedFrames') { throw 'packaged mailbox missing' }
+'@
+$replacement = @'
+if ($shipMain -notmatch 'LILAC_R25_DISABLE_DIRECT_COMPOSITION' -or $shipMain -notmatch 'disable-direct-composition') { throw 'packaged R25 DirectComposition bypass missing' }
+if ($shipBridge -notmatch 'LILAC_R24_LATEST_FRAME_MAILBOX' -or $shipBridge -notmatch 'deliveryCoalescedFrames') { throw 'packaged mailbox missing' }
+'@
+$patched = Replace-Once $patched $needle $replacement 'packaged gate'
 
-$patched = Replace-Once $patched `
-"if (`$shipMain -notmatch 'LILAC_R24_INACTIVE_COMPOSITOR_GUARD' -or `$shipMain -notmatch 'CalculateNativeWinOcclusion') { throw 'packaged inactive guard missing' }" `
-"if (`$shipMain -notmatch 'LILAC_R24_INACTIVE_COMPOSITOR_GUARD' -or `$shipMain -notmatch 'CalculateNativeWinOcclusion') { throw 'packaged inactive guard missing' }`nif (`$shipMain -notmatch 'LILAC_R25_DISABLE_DIRECT_COMPOSITION' -or `$shipMain -notmatch 'disable-direct-composition') { throw 'packaged R25 DirectComposition bypass missing' }" 'packaged gate'
+$needle = @'
+  inactiveCompositorGuard = $true
+  cadenceHotpath = 'record-only-snapshot-4hz'
+'@
+$replacement = @'
+  inactiveCompositorGuard = $true
+  directCompositionDisabled = $true
+  cadenceHotpath = 'record-only-snapshot-4hz'
+'@
+$patched = Replace-Once $patched $needle $replacement 'manifest field'
 
-$patched = Replace-Once $patched `
-"  inactiveCompositorGuard = `$true`n  cadenceHotpath = 'record-only-snapshot-4hz'" `
-"  inactiveCompositorGuard = `$true`n  directCompositionDisabled = `$true`n  cadenceHotpath = 'record-only-snapshot-4hz'" 'manifest field'
-
-$patched = Replace-Once $patched `
-'"R24_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' `
-'"R25_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' 'hash env'
-$patched = Replace-Once $patched `
-'"R24_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' `
-'"R25_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' 'size env'
-$patched = Replace-Once $patched `
-'Write-Host "R24_BUILD_OK sha256=$hash size=$size electron=$($runtimeProbe.electron) nativeUnchanged=1 mailbox=serial-latest inactiveGuard=1 cadenceLazy=1"' `
-'Write-Host "R25_BUILD_OK sha256=$hash size=$size electron=$($runtimeProbe.electron) nativeUnchanged=1 mailbox=serial-latest inactiveGuard=1 directComposition=disabled cadenceLazy=1"' 'build marker'
+$patched = Replace-Once $patched '"R24_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' '"R25_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' 'hash env'
+$patched = Replace-Once $patched '"R24_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' '"R25_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append' 'size env'
+$patched = Replace-Once $patched 'Write-Host "R24_BUILD_OK sha256=$hash size=$size electron=$($runtimeProbe.electron) nativeUnchanged=1 mailbox=serial-latest inactiveGuard=1 cadenceLazy=1"' 'Write-Host "R25_BUILD_OK sha256=$hash size=$size electron=$($runtimeProbe.electron) nativeUnchanged=1 mailbox=serial-latest inactiveGuard=1 directComposition=disabled cadenceLazy=1"' 'build marker'
 
 $tempScript = Join-Path $env:RUNNER_TEMP 'r25-generated-build.ps1'
 Set-Content $tempScript $patched -Encoding utf8
