@@ -7,7 +7,9 @@ on:
       - .github/workflows/libmpv-r3f-054-r32-flix-worker-focus-surface.yml
       - scripts/r32-flix-worker-native-focus-build.ps1
       - scripts/r32-build-meta-generator.cjs
+      - scripts/r32-generated-meta-sanitize.cjs
       - scripts/r32-flix-worker-native-focus-fix.cjs
+      - scripts/r32-flix-worker-smoke.cjs
   workflow_dispatch:
 
 concurrency:
