@@ -17,12 +17,12 @@ $source = Replace-Once $source `
   ("  'r34-focus-handoff-native-smoke.cjs'," + "`n" + "  'r34-hosted-visual-proof.cjs'," + "`n" + "  'r34-run-smoke-with-timeout.cjs'") `
   'R34 external smoke runner/hosted visual support'
 
-# Apply the hosted-runner proof only after the generic correctness hardening has
-# removed nested Electron and made child failures authoritative. This changes only
-# smoke scripts; production sources/hotpaths are untouched.
+# Apply the hosted-runner proof only after generic correctness hardening. Anchor on
+# one stable line instead of a multi-line LF sequence so Windows checkout line
+# endings cannot prevent injection.
 $source = Replace-Once $source `
-  ("node scripts/r34-smoke-correctness-hardening.cjs" + "`n" + "Assert-Exit 'R34 smoke correctness hardening'") `
-  ("node scripts/r34-smoke-correctness-hardening.cjs" + "`n" + "Assert-Exit 'R34 smoke correctness hardening'" + "`n" + "node --check scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof syntax'" + "`n" + "node scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof transform'") `
+  "Assert-Exit 'R34 smoke correctness hardening'" `
+  ("Assert-Exit 'R34 smoke correctness hardening'" + "`n" + "node --check scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof syntax'" + "`n" + "node scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof transform'") `
   'R34 hosted visual proof execution'
 
 # Keep the historical R33 visual field for baseline provenance, but add an exact
