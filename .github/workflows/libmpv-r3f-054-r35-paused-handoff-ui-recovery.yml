@@ -8,6 +8,7 @@ on:
       - scripts/r35-hosted-native-startup-hardening.cjs
       - scripts/r35-paused-handoff-ui-recovery.cjs
       - scripts/r35-paused-handoff-redraw-smoke.cjs
+      - scripts/r35-paused-no-subtitle-handoff-smoke.cjs
       - scripts/r35-run-smoke-with-timeout.cjs
       - scripts/r35-cache-worker-heartbeat-smoke.cjs
       - scripts/r35-qualified-build.ps1
@@ -76,6 +77,8 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-paused-handoff-redraw-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-paused-no-subtitle-handoff-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-run-smoke-with-timeout.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-cache-worker-heartbeat-smoke.cjs
@@ -107,7 +110,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
-          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r35 paused handoff UI recovery' --notes 'R35 is a narrow correction on the qualified R34 presenter architecture. It preserves R33 owned-popup native-only unfocused playback and the R34 active-playback overlap handoff, but closes the paused/no-new-frame refocus hole that could leave the native popup covering all Chromium UI. The mirror is armed first, native subtitle visibility is then switched off to invalidate subtitle composition and request a paused redraw, and the popup is still hidden only after successful shared-texture send plus allReferencesReleased. R35 also de-escalates sub-ass-override from force to scale to preserve authored ASS placement while retaining main-only subtitle visibility ownership. Qualification retains R33 hosted visible/DWM proof including 900ms main-thread stall, R34 active handoff proof, adds a paused ASS redraw handoff smoke, and stress-tests the persistent cache writer against a main heartbeat.'
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r35 paused handoff UI recovery' --notes 'R35 is a narrow correction on the qualified R34 presenter architecture. It preserves R33 owned-popup native-only unfocused playback and the R34 active-playback overlap handoff, but closes the paused/no-new-frame refocus hole that could leave the native popup covering all Chromium UI. The mirror is armed first, native subtitle visibility is then switched off to invalidate subtitle composition and request a paused redraw, and the popup is still hidden only after successful shared-texture send plus allReferencesReleased. R35 also de-escalates sub-ass-override from force to scale to preserve authored ASS placement while retaining main-only subtitle visibility ownership. Qualification retains R33 hosted visible/DWM proof including 900ms main-thread stall, R34 active handoff proof, tests paused focus recovery both with an ASS track and with no subtitle track, and stress-tests the persistent cache writer against a main heartbeat.'
           if($LASTEXITCODE-ne 0){throw 'R35 release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
           if($LASTEXITCODE-ne 0){throw 'R35 release upload failed'}
@@ -124,7 +127,7 @@ jobs:
           if($m.r34SubtitleOwnership-ne 'main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-scale'){throw 'R35 subtitle manifest mismatch'}
           if($m.r35PausedHandoff-ne 'mirror-first+sub-visibility-redraw+successful-send+allReferencesReleased-then-hide'){throw 'R35 paused handoff proof mismatch'}
           if($m.r35SubtitleOwnership-ne 'main-only+focus-native-off+unfocused-native-on+ass-override-scale'){throw 'R35 subtitle ownership proof mismatch'}
-          if($m.r35RuntimeSmokes-ne 'r33-hosted-visual+r34-active-handoff+r35-paused-redraw+r35-cache-heartbeat'){throw 'R35 runtime smoke proof mismatch'}
+          if($m.r35RuntimeSmokes-ne 'r33-hosted-visual+r34-active-handoff+r35-paused-redraw+r35-paused-no-subtitle+r35-cache-heartbeat'){throw 'R35 runtime smoke proof mismatch'}
           if($m.r34HostedVisualProof-ne 'focused-capturePage-blue+native-visible-HWND+exact-S_OK+900ms-autonomous+mirror-sampleFrame-red+desktopCapturer-optional'){throw 'R35 hosted visual proof mismatch'}
           if($m.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or $m.r33OwnedPopupBlackErase-ne $false -or $m.r33ChromiumDuplicateDelivery-ne $false){throw 'R35 lost R33 native-only compositor proof'}
-          Write-Host "R35_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) activeHandoff=R34 pausedHandoff=redraw+send+release subtitle=single-owner+ass-scale cacheHeartbeat=qualified"
+          Write-Host "R35_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) activeHandoff=R34 pausedHandoff=subtitle+no-subtitle-redraw+send+release subtitle=single-owner+ass-scale cacheHeartbeat=qualified"
