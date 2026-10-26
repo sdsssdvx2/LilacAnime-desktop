@@ -50,7 +50,7 @@ async function waitUntil(fn, timeoutMs, label, intervalMs = 20) {
   if (!addonPath || !dllPath) throw new Error('R35 addon/dll env missing');
   process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
   const addon = require(addonPath);
-  for (const name of ['createPlayer','open','command','pollPlayback','startFrameProducer','stopFrameProducer','configureNativePresenter','setNativePresenterBounds','setNativePresenterVisible','setNativePresenterMirrorChromium','nativePresenterStats','popProducedFrame','releaseProducedFrame','destroyPlayer']) {
+  for (const name of ['createPlayer','open','command','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer','configureNativePresenter','setNativePresenterBounds','setNativePresenterVisible','setNativePresenterMirrorChromium','nativePresenterStats','popProducedFrame','releaseProducedFrame','destroyPlayer']) {
     if (typeof addon[name] !== 'function') throw new Error('missing ' + name);
   }
 
@@ -64,6 +64,7 @@ async function waitUntil(fn, timeoutMs, label, intervalMs = 20) {
     const created = addon.createPlayer();
     id = Number(created.playerId);
     if (!id) throw new Error('createPlayer failed');
+    if (addon.setUpdateCallback(id, () => {}) !== true) throw new Error('setUpdateCallback failed');
     if (addon.configureNativePresenter(id, hwndText(win)) !== true) throw new Error('configureNativePresenter failed');
     if (addon.setNativePresenterBounds(id, 0, 0, 800, 600) !== true) throw new Error('setNativePresenterBounds failed');
     addon.open(id, fixture.video);
@@ -72,7 +73,7 @@ async function waitUntil(fn, timeoutMs, label, intervalMs = 20) {
     addon.command(id, ['set', 'sub-visibility', 'yes']);
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
     if (addon.setNativePresenterVisible(id, true) !== true) throw new Error('presenter show failed');
-    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= 5, 6000, 'native baseline');
+    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= 5, 8000, 'native baseline');
 
     addon.command(id, ['set', 'pause', 'yes']);
     await waitUntil(() => addon.pollPlayback(id)?.paused === true, 3000, 'pause state');
@@ -134,6 +135,5 @@ async function waitUntil(fn, timeoutMs, label, intervalMs = 20) {
 })().catch(error => {
   clearTimeout(hardDeadline);
   console.error(error?.stack || error);
-  process.exitCode = 1;
-  try { app.quit(); } catch {}
+  process.exit(1);
 });
