@@ -45,6 +45,14 @@ $core = Replace-Once $core `
 '@
 
 $wrapper = $wrapper.Replace($injectionAnchor, $r33Injection + "`n" + $injectionAnchor)
+# R33 changes R32PresentNativeFrame from void to bool so native-only ownership can
+# depend on the exact DXGI Present result. Keep the inherited R32 hotpath audit,
+# but point its structural boundary at the qualified R33 signature.
+$auditOld = '$presentStart = $nativeSource.IndexOf(''void R32PresentNativeFrame('')'
+$auditNew = '$presentStart = $nativeSource.IndexOf(''bool R32PresentNativeFrame('')'
+$auditMatches = ([regex]::Matches($wrapper, [regex]::Escape($auditOld))).Count
+if ($auditMatches -ne 1) { throw "R33 inherited presenter audit signature expected one anchor, found $auditMatches" }
+$wrapper = $wrapper.Replace($auditOld, $auditNew)
 $tempWrapper = Join-Path $env:RUNNER_TEMP 'r33-qualified-wrapper.ps1'
 [System.IO.File]::WriteAllText($tempWrapper, $wrapper, (New-Object System.Text.UTF8Encoding($false)))
 & $tempWrapper
