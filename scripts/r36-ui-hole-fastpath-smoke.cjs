@@ -61,8 +61,23 @@ for (const transient of [
 ]) {
   assert(app.includes(transient), 'transient UI hole missing: ' + transient);
 }
+
+// R2M's final controls policy is intentional: only genuine mouse movement or an
+// actually-open settings sheet may reveal/pin the full controls. R36 must add region
+// sync without reintroducing play/pause/keyboard-driven full-control reveals.
+const controlsStart = app.indexOf("function showPlayerControls(source=''){");
+const controlsEnd = app.indexOf('\nfunction scheduleOpEdAnalysis', controlsStart);
+assert(controlsStart >= 0 && controlsEnd > controlsStart, 'R2M/R36 showPlayerControls boundary missing');
+const controls = app.slice(controlsStart, controlsEnd);
+assert(controls.includes("if(source!=='mouse'&&!settingsOpen())return;"), 'R2M mouse-or-settings source guard was lost');
+assert(controls.includes("player.classList.add('controls-visible');r36SyncNativeUiHoles();clearTimeout(controlsTimer);"), 'UI-hole sync is not immediately after controls reveal');
+assert(controls.includes("if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen()){player.classList.remove('controls-visible');r36SyncNativeUiHoles()}},2000)"), 'R2M settings/timer semantics or hide-time UI-hole sync changed');
+assert(!controls.includes("$('#video').paused"), 'pre-R2M paused-specific controls policy was resurrected');
+assert(app.includes("showPlayerControls('mouse')"), 'genuine mouse reveal source tagging disappeared');
+assert(app.includes("showPlayerControls('settings')"), 'settings pin-open reveal source tagging disappeared');
+
 assert(app.includes('if(flat.length>=96)break'), 'native 24-rectangle cap is not enforced in renderer payload');
 assert(app.includes('libmpvSharedResize({r36UiHolesOnly:true,uiHoles})'), 'renderer does not use UI-hole-only resize IPC payload');
 assert(!app.includes('libmpvSharedResize({r36UiHolesOnly:true,uiHoles,width'), 'UI-hole-only payload unexpectedly carries resize dimensions');
 
-console.log('R36_UI_HOLE_FASTPATH_SMOKE_OK ipc=reused-but-resize-bypassed nativeRegionOnly=1 producerResize=0 leafTop=5 leafCenter=5 preciseBottom=seek+time+action-children broadTransparentGroups=0 maxRects=23 subtitleCenterPreserved=1');
+console.log('R36_UI_HOLE_FASTPATH_SMOKE_OK ipc=reused-but-resize-bypassed nativeRegionOnly=1 producerResize=0 controlsPolicy=R2M-mouse-or-settings leafTop=5 leafCenter=5 preciseBottom=seek+time+action-children broadTransparentGroups=0 maxRects=23 subtitleCenterPreserved=1');
