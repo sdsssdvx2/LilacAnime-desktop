@@ -9,6 +9,7 @@ on:
       - scripts/r36-handoff-ack-order-smoke.cjs
       - scripts/r36-subtitle-determinism-smoke.cjs
       - scripts/r36-native-ui-hole-smoke.cjs
+      - scripts/r36-ui-hole-fastpath-smoke.cjs
       - scripts/r36-qualified-build.ps1
       - scripts/r35-hosted-native-startup-hardening.cjs
       - scripts/r35-paused-handoff-ui-recovery.cjs
@@ -92,6 +93,8 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r36-native-ui-hole-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r36-ui-hole-fastpath-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           Write-Host 'R36_PREFLIGHT_SYNTAX_OK'
       - name: Build and qualify R36
         shell: powershell
@@ -119,7 +122,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
-          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r36 focus UI and subtitle stability' --notes 'R36 is a targeted correction based on the R35 recording and diagnostic trace. It preserves the R33 same-libmpv D3D11 owned-popup native-only unfocused path and the direct WebGPU focused path. It fixes the release-before-send acknowledgement race that could leave the focus handoff permanently pending and keep native+Chromium dual delivery running. It also keeps Chromium player controls visible while unfocused by subtracting only currently visible HTML control rectangles from the owned popup Win32 region; native video continues autonomously everywhere else, with no per-frame UI IPC or Win32 region work on the producer path. Native fallback subtitles now prefer the plain dialogue source and use ASS strip mode so Lilac position/size/border settings remain authoritative without returning to destructive force override. Qualification repeats inherited R33/R34/R35 runtime smokes after R36, proves UI-region holes and 900 ms native autonomy, alternates both acknowledgement orderings for 200 cycles, and repeats active handoff three times. Low-overhead cached playback/focus context is retained around long supply gaps for one-capture stutter attribution if needed.'
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r36 focus UI and subtitle stability' --notes 'R36 is a targeted correction based on the R35 recording and diagnostic trace. It preserves the R33 same-libmpv D3D11 owned-popup native-only unfocused path and the direct WebGPU focused path. It fixes the release-before-send acknowledgement race that could leave the focus handoff permanently pending and keep native+Chromium dual delivery running. It also keeps Chromium player controls visible while unfocused by subtracting only currently visible HTML control rectangles from the owned popup Win32 region; native video continues autonomously everywhere else. UI-hole updates reuse the existing IPC channel but take a dedicated fast path that returns before any video resize/producer work, and precise bottom holes preserve the native subtitle center area. Native fallback subtitles prefer the plain dialogue source and use ASS strip mode so Lilac position/size/border settings remain authoritative without returning to destructive force override. Qualification repeats inherited R33/R34/R35 runtime smokes after R36, proves UI-region holes and 900 ms native autonomy, statically proves the UI-hole fast path bypasses resize work, alternates both acknowledgement orderings for 200 cycles, and repeats active handoff three times. Low-overhead cached playback/focus context is retained around long supply gaps for one-capture stutter attribution if needed.'
           if($LASTEXITCODE-ne 0){throw 'R36 release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
           if($LASTEXITCODE-ne 0){throw 'R36 release upload failed'}
@@ -140,5 +143,5 @@ jobs:
           if($m.r36UnfocusedUi-ne 'owned-popup-window-region-holes+html-controls-visible+native-video-autonomous'){throw 'R36 unfocused HTML UI proof mismatch'}
           if($m.r36SubtitleFallback-ne 'plain-dialogue-source-first+ass-strip+r32-style-map'){throw 'R36 subtitle fallback proof mismatch'}
           if($m.r36SupplyGapDiagnostics-ne 'cached-playback-state+focus-handoff-context+no-extra-native-poll'){throw 'R36 supply-gap diagnostics proof mismatch'}
-          if($m.r36RuntimeSmokes-ne 'ack-order-200-cycles+subtitle-determinism+native-ui-hole+active-handoff-repeat3+inherited-r33-r35'){throw 'R36 runtime smoke proof mismatch'}
-          Write-Host "R36_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) handoff=bidirectional-ack+fail-open unfocusedUi=native-video+html-holes subtitle=plain+strip repeatedHandoff=3"
+          if($m.r36RuntimeSmokes-ne 'ack-order-200-cycles+subtitle-determinism+ui-hole-fastpath+native-ui-hole+active-handoff-repeat3+inherited-r33-r35'){throw 'R36 runtime smoke proof mismatch'}
+          Write-Host "R36_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) handoff=bidirectional-ack+fail-open unfocusedUi=native-video+precise-html-holes+resize-fastpath subtitle=plain+strip repeatedHandoff=3"
