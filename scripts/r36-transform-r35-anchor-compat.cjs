@@ -115,6 +115,17 @@ const controlsReplacementState = replaceExactOrAlready(
   'R36 preserve R2M controls-source policy'
 );
 
+// R33 intentionally standardized signed HWND/region diagnostic values on the
+// existing DoubleValue helper; Int32Value is not defined in the qualified native
+// addon. Keep the region type signed while using a helper that actually exists.
+const legacyRegionType = '  Set(env, out, "r36UiRegionType", Int32Value(env, r36RegionType));';
+const safeRegionType = '  Set(env, out, "r36UiRegionType", DoubleValue(env, static_cast<double>(r36RegionType)));';
+const regionTypeState = replaceExactOrAlready(
+  legacyRegionType,
+  safeRegionType,
+  'R36 signed region diagnostic helper'
+);
+
 fs.writeFileSync(target, source, 'utf8');
 
 const final = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
@@ -148,4 +159,7 @@ if (!final.includes(guardedOldShowDecl) || !final.includes(guardedR36Show)) {
 if (final.includes(legacyOldShowDecl) || final.includes(legacyR36Show)) {
   throw new Error('R36 legacy controls policy survived normalization');
 }
-console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds controlsPolicy=R2M-mouse-or-settings controlsAnchor=' + controlsAnchorState + ' controlsReplacement=' + controlsReplacementState + ' uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(','));
+if (!final.includes(safeRegionType) || final.includes(legacyRegionType)) {
+  throw new Error('R36 undefined Int32Value region diagnostic helper survived normalization');
+}
+console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds controlsPolicy=R2M-mouse-or-settings controlsAnchor=' + controlsAnchorState + ' controlsReplacement=' + controlsReplacementState + ' uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(',') + ' regionTypeHelper=' + regionTypeState + ':DoubleValue');
