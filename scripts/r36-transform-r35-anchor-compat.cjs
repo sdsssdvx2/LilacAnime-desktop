@@ -5,12 +5,13 @@ const path = require('node:path');
 
 const target = path.resolve(__dirname, 'r36-handoff-ack-subtitle-stability.cjs');
 const generatedBridge = path.resolve(__dirname, '..', 'electron', 'libmpv-shared-main.cjs');
+const generatedApp = path.resolve(__dirname, '..', 'src', 'app.js');
 
 // The workflow may invoke this before the qualified R35 reconstruction. Keep that
 // checkout untouched so the pinned-source builder can switch refs safely. The R36
 // qualified builder invokes this script again after the exact R35 tree exists.
-if (!fs.existsSync(generatedBridge)) {
-  console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=deferred reason=generated-bridge-absent workingTree=unchanged');
+if (!fs.existsSync(generatedBridge) || !fs.existsSync(generatedApp)) {
+  console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=deferred reason=generated-r35-absent workingTree=unchanged');
   process.exit(0);
 }
 const bridge = fs.readFileSync(generatedBridge, 'utf8').replace(/\r\n/g, '\n');
@@ -18,6 +19,7 @@ if (!bridge.includes('LILAC_R35_PAUSED_HANDOFF_UI_RECOVERY') || !bridge.includes
   console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=deferred reason=qualified-r35-not-ready workingTree=unchanged');
   process.exit(0);
 }
+const app = fs.readFileSync(generatedApp, 'utf8').replace(/\r\n/g, '\n');
 
 // R32 added setNativePresenterBounds and R34's sanitizer deliberately preserved it
 // between the handoff mirror export and nativePresenterStats. Detect the exact
@@ -31,6 +33,16 @@ if (bridgeNeedleCount !== 1) {
 }
 if (bridge.includes('setNativePresenterUiHoles')) {
   throw new Error('R36 qualified R35 bridge unexpectedly already contains setNativePresenterUiHoles');
+}
+
+// R2M intentionally changed full-player controls to be revealable only by genuine
+// mouse movement or an actually-open settings sheet. R36 must not restore the old
+// play/pause/keyboard reveal policy while adding UI holes. Verify the exact R35
+// generated function before normalizing the R36 transform around it.
+const r35Controls = "function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
+const r35ControlsCount = app.split(r35Controls).length - 1;
+if (r35ControlsCount !== 1) {
+  throw new Error('R36 qualified R35 controls-source policy expected once, found ' + r35ControlsCount);
 }
 
 let source = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
@@ -49,22 +61,23 @@ if (!source.includes(boundsAwarePair)) {
   exportMode = 'normalized-bounds-aware';
 }
 
+function replaceExactOrAlready(original, normalized, label) {
+  const before = source.split(original).length - 1;
+  const after = source.split(normalized).length - 1;
+  if (before === 1 && after === 0) {
+    source = source.replace(original, normalized);
+    return 'normalized';
+  }
+  if (before === 0 && after === 1) return 'already';
+  throw new Error(label + ': expected one original or one normalized block, found original=' + before + ' normalized=' + after);
+}
+
 // The first UI-hole draft used whole transparent layout groups. player-top spans
 // the full viewport width, and player-center includes large flex gaps; revealing
 // those rectangles would expose a stale Chromium video band between controls while
 // the native presenter keeps playing. Hole only the actual visible leaf controls.
 // The exact 0.5.54 product DOM was cross-checked: these IDs/classes all exist, and
 // the maximum simultaneous list is 23 rectangles, below the native cap of 24.
-function replaceExactOrAlready(original, precise, label) {
-  const before = source.split(original).length - 1;
-  const after = source.split(precise).length - 1;
-  if (before === 1 && after === 0) {
-    source = source.replace(original, precise);
-    return 'normalized';
-  }
-  if (before === 0 && after === 1) return 'already';
-  throw new Error(label + ': expected one broad or one precise selector block, found broad=' + before + ' precise=' + after);
-}
 const selectorStates = [];
 selectorStates.push(replaceExactOrAlready(
   `  '#immersivePlayer.controls-visible .player-top',`,
@@ -81,6 +94,26 @@ selectorStates.push(replaceExactOrAlready(
   `  '#immersivePlayer.controls-visible .player-actions > *',`,
   'R36 precise action UI holes'
 ));
+
+// Normalize the R36 transform to the actual R35 controls function rather than the
+// pre-R2M function it originally assumed. The replacement keeps the R2M source guard
+// and timer semantics byte-for-byte, adding only region synchronization immediately
+// after showing and immediately after the timer hides the controls.
+const legacyOldShowDecl = `const oldShowControls = "function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!$('#video').paused&&!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";`;
+const guardedOldShowDecl = `const oldShowControls = "${r35Controls}";`;
+const controlsAnchorState = replaceExactOrAlready(
+  legacyOldShowDecl,
+  guardedOldShowDecl,
+  'R36 R35 controls-source anchor'
+);
+
+const legacyR36Show = `function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');r36SyncNativeUiHoles();clearTimeout(controlsTimer);if(!$('#video').paused&&!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen()){player.classList.remove('controls-visible');r36SyncNativeUiHoles()}},2000)}`;
+const guardedR36Show = `function showPlayerControls(source=''){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;if(source!=='mouse'&&!settingsOpen())return;player.classList.add('controls-visible');r36SyncNativeUiHoles();clearTimeout(controlsTimer);if(!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen()){player.classList.remove('controls-visible');r36SyncNativeUiHoles()}},2000)}`;
+const controlsReplacementState = replaceExactOrAlready(
+  legacyR36Show,
+  guardedR36Show,
+  'R36 preserve R2M controls-source policy'
+);
 
 fs.writeFileSync(target, source, 'utf8');
 
@@ -109,4 +142,10 @@ for (const precise of [
 ]) {
   if (!final.includes(precise)) throw new Error('R36 precise UI hole missing: ' + precise);
 }
-console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(','));
+if (!final.includes(guardedOldShowDecl) || !final.includes(guardedR36Show)) {
+  throw new Error('R36 controls-source policy normalization did not persist');
+}
+if (final.includes(legacyOldShowDecl) || final.includes(legacyR36Show)) {
+  throw new Error('R36 legacy controls policy survived normalization');
+}
+console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds controlsPolicy=R2M-mouse-or-settings controlsAnchor=' + controlsAnchorState + ' controlsReplacement=' + controlsReplacementState + ' uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(','));
