@@ -7,6 +7,9 @@ on:
       - .github/workflows/libmpv-r34-transform-preflight.yml
       - scripts/r34-transform-source-sanitize.cjs
       - scripts/r34-focus-handoff-stall-fix.cjs
+      - scripts/r34-handoff-ack-hardening.cjs
+      - scripts/r34-main-stall-hardening.cjs
+      - scripts/r34-focus-handoff-native-smoke.cjs
   workflow_dispatch:
 
 concurrency:
@@ -22,10 +25,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Sanitize and syntax-check R34 transform
+      - name: Sanitize and syntax-check all R34 transforms
         shell: bash
         run: |
           node scripts/r34-transform-source-sanitize.cjs
           node --check scripts/r34-transform-source-sanitize.cjs
           node --check scripts/r34-focus-handoff-stall-fix.cjs
-          echo 'R34_FAST_TRANSFORM_PREFLIGHT_OK sanitizer=1 syntax=1'
+          node --check scripts/r34-handoff-ack-hardening.cjs
+          node --check scripts/r34-main-stall-hardening.cjs
+          node --check scripts/r34-focus-handoff-native-smoke.cjs
+          echo 'R34_FAST_TRANSFORM_PREFLIGHT_OK sanitizer=1 primary=1 sentAck=1 mainIo=1 nativeSmoke=1'
