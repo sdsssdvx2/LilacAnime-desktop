@@ -20,11 +20,21 @@ if (typeof electronExe !== 'string' || !fs.existsSync(electronExe)) {
   throw new Error(`Electron executable not found: ${String(electronExe)}`);
 }
 if (!fs.existsSync(childScript)) throw new Error(`Smoke script not found: ${childScript}`);
-console.log(`R34_SMOKE_PARENT_START label=${label} timeoutMs=${timeoutMs} script=${script} launcher=electron-exe-direct`);
+
+// The inherited producer watchdog is intentionally a Node-style ABI smoke and
+// R32 qualified it with ELECTRON_RUN_AS_NODE=1. The DWM/focus smokes below it
+// require a real Electron app/BrowserWindow. Preserve that distinction here
+// instead of inheriting whatever mode happened to be in the parent environment.
+const producerNodeMode = /r32-native-producer-watchdog-smoke\.cjs$/i.test(childScript);
+const childEnv = { ...process.env };
+if (producerNodeMode) childEnv.ELECTRON_RUN_AS_NODE = '1';
+else delete childEnv.ELECTRON_RUN_AS_NODE;
+
+console.log(`R34_SMOKE_PARENT_START label=${label} timeoutMs=${timeoutMs} script=${script} launcher=electron-exe-direct mode=${producerNodeMode ? 'electron-run-as-node' : 'electron-app'}`);
 
 const child = spawn(electronExe, [childScript], {
   cwd: root,
-  env: process.env,
+  env: childEnv,
   stdio: 'inherit',
   windowsHide: true
 });
