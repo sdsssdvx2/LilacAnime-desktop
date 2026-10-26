@@ -34,6 +34,23 @@ function replaceLineContaining(needle, replacement, label) {
   throw new Error(`${label}: expected one offending line or one sanitized line, found offending=${matches.length} sanitized=${already.length}`);
 }
 
+function replaceLineStarting(needle, replacement, label) {
+  const lines = text.split('\n');
+  const matches = [];
+  const already = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].startsWith(needle)) matches.push(i);
+    if (lines[i] === replacement) already.push(i);
+  }
+  if (matches.length === 1 && already.length === 0) {
+    lines[matches[0]] = replacement;
+    text = lines.join('\n');
+    return 'replaced';
+  }
+  if (matches.length === 0 && already.length === 1) return 'already';
+  throw new Error(`${label}: expected one definition line or one sanitized line, found offending=${matches.length} sanitized=${already.length}`);
+}
+
 const states = [];
 
 // The R34 transform itself generates JavaScript with String.raw template literals.
@@ -50,7 +67,7 @@ states.push(replaceLineContaining(
   "      lastError = 'R34 native presenter focus failed: ' + String(error?.message || error).slice(0, 180);",
   'R34 presenter nested template'
 ));
-states.push(replaceLineContaining(
+states.push(replaceLineStarting(
   'function saveCatalogFile(provider,name,value){const key=`',
   "function saveCatalogFile(provider,name,value){const key=String(provider)+'-'+String(name);clearTimeout(indexSaveTimers[key]);indexSaveTimers[key]=setTimeout(()=>{try{r34QueueJsonWrite(path.join(app.getPath('userData'),key+'.json'),value())}catch{}},2000)} // LILAC_R34_CACHE_WRITE_WORKER`;",
   'R34 cache helper nested template'
@@ -97,11 +114,12 @@ states.push(replaceExactOrAlready(
 
 for (const forbidden of [
   'lastError = `R34 focus handoff arm failed:',
-  'lastError = `R34 native presenter focus failed:',
-  'function saveCatalogFile(provider,name,value){const key=`'
+  'lastError = `R34 native presenter focus failed:'
 ]) {
   if (text.includes(forbidden)) throw new Error(`R34 syntax sanitizer left forbidden nested template: ${forbidden}`);
 }
+const cacheDefinitionLines = text.split('\n').filter(line => line.startsWith('function saveCatalogFile(provider,name,value){const key=`'));
+if (cacheDefinitionLines.length) throw new Error(`R34 syntax sanitizer left ${cacheDefinitionLines.length} nested-template cache definition(s)`);
 
 fs.writeFileSync(target, text, 'utf8');
 console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-aware subtitleLoadAck=1`);
