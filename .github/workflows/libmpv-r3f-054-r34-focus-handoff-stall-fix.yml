@@ -1,0 +1,98 @@
+name: LilacAnime Libmpv R34 focus handoff and stall fix
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r34-focus-handoff-stall-fix]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r34-focus-handoff-stall-fix.yml
+      - scripts/r34-focus-handoff-stall-fix.cjs
+      - scripts/r34-focus-handoff-native-smoke.cjs
+      - scripts/r34-focus-handoff-stall-build.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r34-focus-handoff-stall-fix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r34
+  INSTALLER_NAME: LilacAnime-Libmpv-R34-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r34-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc14
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Build and qualify R34 focus handoff / stall fix
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/r33-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/r34-focus-handoff-stall-build.ps1
+      - name: Upload qualified R34 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r34-focus-handoff-stall
+          path: |
+            dist/LilacAnime-Libmpv-R34-Setup.exe
+            dist/lilacanime-libmpv-r34-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public R34 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r34 focus handoff and stall fix' --notes 'R34 is based directly on the user-tested R33 diagnostic. It fixes the R32/R33 subtitle ownership race that left the native ASS subtitle visible together with the focused HTML subtitle, forces the native fallback ASS track to obey the configured subtitle position/style, and avoids the first-load sub-remove failure. Focus recovery no longer hides the native owned popup before Chromium has a fresh frame: native Present and Chromium shared-texture delivery overlap during a bounded handoff, and allReferencesReleased on the first fresh frame acknowledges renderer consumption before the popup is hidden. This also resets the retained R27 dispatch baseline so intentional native-only intervals are not misreported as giant main-thread gaps. R34 additionally moves the known multi-megabyte catalog and related JSON cache serialization/writes from Electron main to a persistent coalescing worker. Existing R33 owned-popup DWM proof, native producer watchdog, Flix worker, archive worker, profile identity, direct focused WebGPU path and pinned libmpv DLL are preserved.'
+          if($LASTEXITCODE-ne 0){throw 'R34 release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R34 release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r34-public';New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R34 public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME;$m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R34_INSTALLER_SHA256 -or $z-ne [long]$env:R34_INSTALLER_SIZE){throw 'R34 public installer byte mismatch'}
+          if($m.installerSha256-ne $h -or $m.electron-ne '44.9.3' -or $m.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R34 public runtime identity mismatch'}
+          if($m.r34FocusHandoff-ne 'native-present+chromium-mirror-until-allReferencesReleased-then-hide'){throw 'R34 public handoff proof mismatch'}
+          if($m.r34SubtitleOwnership-ne 'main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-force'){throw 'R34 public subtitle proof mismatch'}
+          if($m.r34CacheWrites-ne 'catalog+display-title+tmdb-overview+artwork+anissia-worker-coalesced'){throw 'R34 public cache-worker proof mismatch'}
+          if($m.r34R27GapReset-ne $true){throw 'R34 public gap-reset proof mismatch'}
+          if($m.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or $m.r32NativeProducerWatchdog-ne 'callback-authoritative+250ms-native-watchdog'){throw 'R34 lost R33/R32 baseline'}
+          Write-Host "R34_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) addon=$($m.nativeAddon) libmpvDll=$($m.nativeDll) handoff=dual-until-consumed subtitle=single-owner cacheWrites=worker-coalesced"
