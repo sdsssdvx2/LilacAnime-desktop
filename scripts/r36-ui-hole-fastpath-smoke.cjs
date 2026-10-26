@@ -25,11 +25,44 @@ for (const forbidden of ['addon.resize(', 'startFrameProducer(', 'stopFrameProdu
 }
 
 assert(app.includes('R36_NATIVE_UI_HOLE_SELECTORS'), 'renderer UI-hole selector marker missing');
-assert(app.includes("'#immersivePlayer.controls-visible #playerSeek'"), 'seek bar precise hole missing');
-assert(app.includes("'#immersivePlayer.controls-visible #playerTime'"), 'time precise hole missing');
-assert(app.includes("'#immersivePlayer.controls-visible .player-actions'"), 'actions precise hole missing');
-assert(!app.includes("'#immersivePlayer.controls-visible .player-bottom'"), 'broad bottom hole survived and may clip native subtitles');
+for (const precise of [
+  "'#immersivePlayer.controls-visible #playerBack'",
+  "'#immersivePlayer.controls-visible #playerTitle'",
+  "'#immersivePlayer.controls-visible #playerMeta'",
+  "'#immersivePlayer.controls-visible #downloadStatus'",
+  "'#immersivePlayer.controls-visible #playerSettingsButton'",
+  "'#immersivePlayer.controls-visible #previousEpisode'",
+  "'#immersivePlayer.controls-visible #rewindPlayer'",
+  "'#immersivePlayer.controls-visible #togglePlayer'",
+  "'#immersivePlayer.controls-visible #forwardPlayer'",
+  "'#immersivePlayer.controls-visible #nextEpisode'",
+  "'#immersivePlayer.controls-visible #playerSeek'",
+  "'#immersivePlayer.controls-visible #playerTime'",
+  "'#immersivePlayer.controls-visible .player-actions > *'"
+]) {
+  assert(app.includes(precise), 'precise UI hole missing: ' + precise);
+}
+for (const broad of [
+  "'#immersivePlayer.controls-visible .player-top'",
+  "'#immersivePlayer.controls-visible .player-center'",
+  "'#immersivePlayer.controls-visible .player-bottom'",
+  "'#immersivePlayer.controls-visible .player-actions'",
+  "'#immersivePlayer.controls-visible .player-lock'"
+]) {
+  assert(!app.includes(broad), 'broad transparent UI hole survived and can expose stale Chromium video: ' + broad);
+}
+for (const transient of [
+  "'#playerSettings.open'",
+  "'#subtitleOffer:not(.hidden)'",
+  "'#unlockPlayer:not(.hidden)'",
+  "'#skipNow:not(.hidden)'",
+  "'#playerSpeedBoost:not(.hidden)'",
+  "'#playerSeekHint.show'"
+]) {
+  assert(app.includes(transient), 'transient UI hole missing: ' + transient);
+}
+assert(app.includes('if(flat.length>=96)break'), 'native 24-rectangle cap is not enforced in renderer payload');
 assert(app.includes('libmpvSharedResize({r36UiHolesOnly:true,uiHoles})'), 'renderer does not use UI-hole-only resize IPC payload');
 assert(!app.includes('libmpvSharedResize({r36UiHolesOnly:true,uiHoles,width'), 'UI-hole-only payload unexpectedly carries resize dimensions');
 
-console.log('R36_UI_HOLE_FASTPATH_SMOKE_OK ipc=reused-but-resize-bypassed nativeRegionOnly=1 producerResize=0 preciseBottom=seek+time+actions broadBottom=0 subtitleCenterPreserved=1');
+console.log('R36_UI_HOLE_FASTPATH_SMOKE_OK ipc=reused-but-resize-bypassed nativeRegionOnly=1 producerResize=0 leafTop=5 leafCenter=5 preciseBottom=seek+time+action-children broadTransparentGroups=0 maxRects=23 subtitleCenterPreserved=1');
