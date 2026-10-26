@@ -4,8 +4,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const target = path.resolve(__dirname, 'r36-handoff-ack-subtitle-stability.cjs');
-let source = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
+const generatedBridge = path.resolve(__dirname, '..', 'electron', 'libmpv-shared-main.cjs');
 
+// The workflow may invoke this before the qualified R35 reconstruction. That
+// checkout must stay bit-for-bit clean so the pinned-source builder can switch
+// refs safely. Only mutate the R36 transform after the generated R35 bridge is
+// present; r36-qualified-build.ps1 calls us again at exactly that point.
+if (!fs.existsSync(generatedBridge)) {
+  console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=deferred reason=generated-bridge-absent workingTree=unchanged');
+  process.exit(0);
+}
+const bridge = fs.readFileSync(generatedBridge, 'utf8');
+if (!bridge.includes('LILAC_R35_PAUSED_HANDOFF_UI_RECOVERY') || !bridge.includes('LILAC_R34_HANDOFF_SENT_ACK')) {
+  console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=deferred reason=qualified-r35-not-ready workingTree=unchanged');
+  process.exit(0);
+}
+
+let source = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
 const oldPair = `  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'nativePresenterStats', 'destroyPlayer']",\n  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'setNativePresenterUiHoles', 'nativePresenterStats', 'destroyPlayer']",`;
 const robustPair = `  "'setNativePresenterMirrorChromium', 'nativePresenterStats'",\n  "'setNativePresenterMirrorChromium', 'setNativePresenterUiHoles', 'nativePresenterStats'",`;
 
