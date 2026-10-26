@@ -14,8 +14,23 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 
 $source = Replace-Once $source `
   "  'r34-focus-handoff-native-smoke.cjs'" `
-  ("  'r34-focus-handoff-native-smoke.cjs'," + "`n" + "  'r34-run-smoke-with-timeout.cjs'") `
-  'R34 external smoke runner support'
+  ("  'r34-focus-handoff-native-smoke.cjs'," + "`n" + "  'r34-hosted-visual-proof.cjs'," + "`n" + "  'r34-run-smoke-with-timeout.cjs'") `
+  'R34 external smoke runner/hosted visual support'
+
+# Apply the hosted-runner proof only after the generic correctness hardening has
+# removed nested Electron and made child failures authoritative. This changes only
+# smoke scripts; production sources/hotpaths are untouched.
+$source = Replace-Once $source `
+  ("node scripts/r34-smoke-correctness-hardening.cjs" + "`n" + "Assert-Exit 'R34 smoke correctness hardening'") `
+  ("node scripts/r34-smoke-correctness-hardening.cjs" + "`n" + "Assert-Exit 'R34 smoke correctness hardening'" + "`n" + "node --check scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof syntax'" + "`n" + "node scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof transform'") `
+  'R34 hosted visual proof execution'
+
+# Keep the historical R33 visual field for baseline provenance, but add an exact
+# R34 qualification field describing what this run actually proves on hosted CI.
+$source = Replace-Once $source `
+  "  r34RuntimeSmokes='producer-watchdog+r33-visible-dwm+r34-dual-handoff-explicit-markers'" `
+  ("  r34HostedVisualProof='focused-capturePage-blue+native-visible-HWND+exact-S_OK+900ms-autonomous+mirror-sampleFrame-red+desktopCapturer-optional'" + "`n" + "  r34RuntimeSmokes='producer-watchdog+r33-visible-dwm+r34-dual-handoff-explicit-markers'") `
+  'R34 hosted visual manifest proof'
 
 $source = Replace-Once $source `
   '& node_modules/.bin/electron.cmd scripts/r32-native-producer-watchdog-smoke.cjs' `
@@ -65,6 +80,6 @@ $source = Replace-Once $source `
 
 $temp = Join-Path $env:RUNNER_TEMP 'r34-focus-handoff-stall-build-bounded-generated.ps1'
 [System.IO.File]::WriteAllText($temp,$source,(New-Object System.Text.UTF8Encoding($false)))
-Write-Host 'R34_BOUNDED_BUILD_WRAPPER_OK smokeTimeoutMs=120000 phaseMarkers=baseline+transform+native+smokes+package trackedTreeMutation=0'
+Write-Host 'R34_BOUNDED_BUILD_WRAPPER_OK smokeTimeoutMs=120000 phaseMarkers=baseline+transform+native+smokes+package hostedVisual=capturePage+exact-S_OK+source-sample desktopCapturer=optional trackedTreeMutation=0'
 & $temp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
