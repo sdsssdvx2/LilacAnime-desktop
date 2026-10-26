@@ -1,0 +1,137 @@
+name: LilacAnime Libmpv R37 explicit handoff clean focus
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r37-explicit-handoff-clean-focus]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r37-explicit-handoff-clean-focus.yml
+      - scripts/r37-explicit-handoff-clean-focus.cjs
+      - scripts/r37-native-handoff-freeze-smoke.cjs
+      - scripts/r37-explicit-handoff-e2e-smoke.cjs
+      - scripts/r37-qualified-build.ps1
+      - scripts/r36-transform-r35-anchor-compat.cjs
+      - scripts/r36-handoff-ack-subtitle-stability.cjs
+      - scripts/r36-qualified-build.ps1
+      - scripts/r35-hosted-native-startup-hardening.cjs
+      - scripts/r35-paused-handoff-ui-recovery.cjs
+      - scripts/r34-focus-handoff-stall-fix.cjs
+      - scripts/r34-handoff-ack-hardening.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r37-explicit-handoff-clean-focus
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r37
+  INSTALLER_NAME: LilacAnime-Libmpv-R37-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r37-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc17
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 210
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+
+      - name: Preflight R37 scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r37-explicit-handoff-clean-focus.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r37-native-handoff-freeze-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R37_PREFLIGHT_SYNTAX_OK'
+
+      - name: Build and qualify R37
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r36-transform-r35-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r37-qualified-build.ps1
+
+      - name: Upload qualified R37 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r37-explicit-handoff-clean-focus
+          path: |
+            dist/LilacAnime-Libmpv-R37-Setup.exe
+            dist/lilacanime-libmpv-r37-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish and reverify public R37 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r37 explicit focus handoff' --notes 'R37 is based directly on the user R36 recording and diagnostic trace. It preserves the R33 same-libmpv D3D11 owned-popup native-only unfocused path and the focused direct WebGPU path. R36 recorded zero successful handoff completions and seven 1500 ms fail-opens despite fresh Chromium frames resuming within milliseconds, so R37 no longer uses the successful-send/allReferencesReleased frame-set intersection as UI ownership authority. Mirrored frames carry a short-lived handoff epoch and the renderer sends one explicit ACK after a successful direct copy and imported-texture release; only that ACK hides the native popup. During the handoff the visible native swapchain is frozen, allowing the inherited paused redraw to feed Chromium without making the on-screen native subtitle disappear. R36 Win32 region holes are disabled because the recording proved they expose stale Chromium rectangles under the moving native popup. Qualification includes the inherited R33 autonomy smoke, an R37 native freeze smoke, and a real Electron BrowserWindow/sharedTexture end-to-end smoke covering active, paused-with-subtitle, and paused-without-subtitle focus cycles with zero fail-open allowed. R37 does not claim the remaining micro-stutter is solved; direct WebGPU and the existing low-overhead cadence/supply-gap diagnostics are intentionally retained for separate display-phase attribution.'
+          if($LASTEXITCODE-ne 0){throw 'R37 release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R37 release upload failed'}
+
+          $verify=Join-Path $env:RUNNER_TEMP 'r37-public'
+          Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R37 public redownload failed'}
+
+          $exe=Join-Path $verify $env:INSTALLER_NAME
+          $manifest=Get-Content (Join-Path $verify $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          if($manifest.version-ne $env:APP_VERSION -or
+             $manifest.qualifiedSourceSha-ne $env:QUALIFIED_SOURCE_SHA -or
+             $manifest.installerSha256-ne $hash -or
+             [long]$manifest.installerSize-ne $size -or
+             $manifest.electron-ne $env:ELECTRON_VERSION -or
+             $manifest.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R37 public runtime identity mismatch'}
+          if($manifest.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or
+             $manifest.r33OwnedPopupBlackErase-ne $false -or
+             $manifest.r33ChromiumDuplicateDelivery-ne $false){throw 'R37 lost R33 native-only proof'}
+          if($manifest.focusedPresenter-ne 'direct-receive-webgpu-copy'){throw 'R37 focused direct WebGPU proof mismatch'}
+          if($manifest.r37HandoffAck-ne 'explicit-renderer-epoch-after-direct-copy+imported-release'){throw 'R37 explicit ACK manifest mismatch'}
+          if($manifest.r37UnfocusedUi-ne 'full-r33-owned-popup+chromium-ui-holes-disabled'){throw 'R37 no-hole UI manifest mismatch'}
+          if($manifest.r37NativeHandoff-ne 'freeze-visible-native-swapchain+mirror-redraw-to-chromium-until-renderer-ack'){throw 'R37 native freeze manifest mismatch'}
+          if($manifest.r37RuntimeSmokes-ne 'r33-native-autonomy+native-freeze+real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle'){throw 'R37 runtime smoke manifest mismatch'}
+          Write-Host "R37_PUBLISHED_OK sha256=$hash size=$size electron=$($manifest.electron) handoff=explicit-renderer-ack failOpenRequired=0 uiHoles=disabled nativeHandoff=frozen-last-frame stutterClaim=none"
