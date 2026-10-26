@@ -12,7 +12,11 @@ const root = path.resolve(__dirname, '..');
 const electronCmd = path.join(root, 'node_modules', '.bin', 'electron.cmd');
 const childScript = path.resolve(root, script);
 const comspec = process.env.ComSpec || 'cmd.exe';
-const commandLine = `"${electronCmd}" "${childScript}"`;
+// Windows cmd.exe /s /c has special first/last-quote stripping rules. Invoking a
+// .cmd file as a bare quoted command can therefore leave the quote characters in
+// argv[0] (the previous wrapper failed with '"...electron.cmd" is not recognized').
+// CALL gives cmd.exe an explicit batch-command target and preserves quoted paths.
+const commandLine = `call "${electronCmd}" "${childScript}"`;
 console.log(`R34_SMOKE_PARENT_START label=${label} timeoutMs=${timeoutMs} script=${script}`);
 
 const child = spawn(comspec, ['/d', '/s', '/c', commandLine], {
