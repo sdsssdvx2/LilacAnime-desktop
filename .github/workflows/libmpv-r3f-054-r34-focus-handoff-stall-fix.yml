@@ -5,7 +5,7 @@ on:
     branches: [libmpv-r3f-054-r34-focus-handoff-stall-fix]
     paths:
       - .github/workflows/libmpv-r3f-054-r34-focus-handoff-stall-fix.yml
-      - scripts/r34-prebaseline-r33-smoke-watchdog.cjs
+      - scripts/r34-r33-baseline-defer.ps1
       - scripts/r34-transform-source-sanitize.cjs
       - scripts/r34-focus-handoff-stall-fix.cjs
       - scripts/r34-handoff-ack-hardening.cjs
@@ -66,16 +66,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/r33-transform-source-sanitize.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # R33's baseline builder runs its visible-focus smoke before any R34
-          # transform can execute. Wrap that inherited smoke first, so a blocking
-          # native/driver call is bounded and leaves stage evidence instead of
-          # hanging the entire R34 run indefinitely.
-          node --check scripts/r34-prebaseline-r33-smoke-watchdog.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/r34-prebaseline-r33-smoke-watchdog.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # R34's build script owns the pinned R33 reconstruction, restores all
-          # R34 support files, then sanitizes, transforms, rebuilds and qualifies.
+          # The build script reconstructs every R33 transform/source gate while
+          # deferring only R33's blocking visible-focus runtime smoke. After R34
+          # repairs/rebuilds the native presenter, it runs that exact smoke plus
+          # R34's dual-path handoff smoke before packaging.
           ./scripts/r34-focus-handoff-stall-build.ps1
       - name: Upload qualified R34 artifact
         uses: actions/upload-artifact@v4
