@@ -11,7 +11,9 @@ on:
       - scripts/r34-handoff-ack-hardening.cjs
       - scripts/r34-main-stall-hardening.cjs
       - scripts/r34-focus-handoff-native-smoke.cjs
+      - scripts/r34-run-smoke-with-timeout.cjs
       - scripts/r34-focus-handoff-stall-build.ps1
+      - scripts/r34-focus-handoff-stall-build-bounded.ps1
   workflow_dispatch:
 
 concurrency:
@@ -66,11 +68,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/r33-transform-source-sanitize.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # The build script reconstructs every R33 transform/source gate while
-          # deferring only R33's blocking visible-focus runtime smoke. After R34
-          # repairs/rebuilds the native presenter, it runs that exact smoke plus
-          # R34's dual-path handoff smoke before packaging.
-          ./scripts/r34-focus-handoff-stall-build.ps1
+          # The bounded wrapper uses a temp build-script copy, so nested pinned
+          # checkouts keep a clean tree. It defers only the pre-fix R33 DWM smoke,
+          # then externally supervises every post-R34 Electron smoke with a 120s
+          # process-tree timeout and emits coarse phase markers.
+          ./scripts/r34-focus-handoff-stall-build-bounded.ps1
       - name: Upload qualified R34 artifact
         uses: actions/upload-artifact@v4
         with:
