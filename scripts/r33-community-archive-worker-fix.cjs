@@ -39,9 +39,15 @@ function communityArchiveWorkerFail(error){
   communityArchiveWorkerPending.clear();
   communityArchiveWorker=null;
 }
+function communityArchiveWorkerEntry(){
+  const entry=path.join(__dirname,'community-archive-worker.cjs');
+  // Worker cannot execute directly from app.asar on Windows. Mirror the already
+  // qualified R32 Flix-worker rule and resolve the asarUnpack payload explicitly.
+  return entry.includes('app.asar.unpacked')?entry:(entry.includes('app.asar')?entry.replace(/app\.asar(?=[\\/])/,'app.asar.unpacked'):entry); // LILAC_R33_ARCHIVE_WORKER_UNPACK_ENTRY
+}
 function ensureCommunityArchiveWorker(){
   if(communityArchiveWorker)return communityArchiveWorker;
-  const worker=new Worker(path.join(__dirname,'community-archive-worker.cjs'));
+  const worker=new Worker(communityArchiveWorkerEntry());
   worker.unref();
   worker.on('message',message=>{
     const pending=communityArchiveWorkerPending.get(message?.id);if(!pending)return;
@@ -150,6 +156,7 @@ write('package.json', JSON.stringify(pkg,null,2)+'\n');
 
 const finalMain=read('electron/main.cjs'),finalWorker=read('electron/community-archive-worker.cjs'),finalPkg=JSON.parse(read('package.json'));
 if(!finalMain.includes('LILAC_R33_COMMUNITY_ARCHIVE_WORKER')||!finalMain.includes('ensureCommunityArchiveWorker')||finalMain.includes('new AdmZip(buffer)'))throw new Error('main-thread archive extraction survived');
+for(const marker of ['LILAC_R33_ARCHIVE_WORKER_UNPACK_ENTRY',"replace(/app\\.asar(?=[\\\\/])/,'app.asar.unpacked')",'new Worker(communityArchiveWorkerEntry())'])if(!finalMain.includes(marker))throw new Error(`archive worker packaged-entry marker missing: ${marker}`);
 for(const marker of ['parentPort','new AdmZip(buffer)','spawnSync','MAX_TOTAL','copyFileSync'])if(!finalWorker.includes(marker))throw new Error(`archive worker marker missing: ${marker}`);
 for(const item of ['electron/community-archive-worker.cjs','node_modules/adm-zip/**'])if(!finalPkg.build.asarUnpack.includes(item))throw new Error(`asarUnpack worker dependency missing: ${item}`);
-console.log('R33_COMMUNITY_ARCHIVE_WORKER_OK mainThreadAdmZip=0 workerQueue=1 transfer=ArrayBuffer zip=worker 7zRar=worker limits=100MB+300MB asarUnpack=worker+admzip');
+console.log('R33_COMMUNITY_ARCHIVE_WORKER_OK mainThreadAdmZip=0 workerQueue=1 transfer=ArrayBuffer zip=worker 7zRar=worker limits=100MB+300MB entry=app.asar.unpacked asarUnpack=worker+admzip');
