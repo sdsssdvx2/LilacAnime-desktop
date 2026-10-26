@@ -17,6 +17,17 @@ function replaceExactOrAlready(needle, replacement, label) {
   throw new Error(`${label}: expected one original or one sanitized occurrence, found original=${before} sanitized=${after}`);
 }
 
+function replaceAllCounted(needle, replacement, expected, label) {
+  const before = text.split(needle).length - 1;
+  const after = text.split(replacement).length - 1;
+  if (before === expected && after === 0) {
+    text = text.split(needle).join(replacement);
+    return 'replaced';
+  }
+  if (before === 0 && after === expected) return 'already';
+  throw new Error(`${label}: expected ${expected} originals or ${expected} sanitized occurrences, found original=${before} sanitized=${after}`);
+}
+
 function replaceLineContaining(needle, replacement, label) {
   const lines = text.split('\n');
   const matches = [];
@@ -106,6 +117,21 @@ states.push(replaceExactOrAlready(
   'R34 preserve R31 command invalidation'
 ));
 
+// R33's actual low-rate event-loop probe uses the original names from
+// r33-stall-attribution-probe.cjs. An early R34 draft used later experimental
+// R33_MAIN_* aliases which were never shipped. Both the needle and replacement
+// diagnostics snippets contain each name once, hence exactly two occurrences.
+for (const [oldName, shippedName] of [
+  ['R33_MAIN_HEARTBEAT_MS', 'R33_HEARTBEAT_MS'],
+  ['R33_MAIN_STALL_THRESHOLD_MS', 'R33_HEARTBEAT_STALL_MS'],
+  ['r33MainStallCount', 'r33EventLoopStallCount'],
+  ['r33MainStallMaxMs', 'r33EventLoopMaxGapMs'],
+  ['r33MainStallLastMs', 'r33EventLoopLastGapMs'],
+  ['r33MainStallLastWallMs', 'r33EventLoopLastWallMs']
+]) {
+  states.push(replaceAllCounted(oldName, shippedName, 2, `R34 R33 heartbeat name ${oldName}`));
+}
+
 // Do not claim the native fallback subtitle is loaded unless mpv accepted sub-add.
 states.push(replaceExactOrAlready(
   `        await this._command(['sub-add', r32NativeSubtitle, 'select']);\n        this._r34NativeSubtitleLoaded = true;`,
@@ -115,12 +141,14 @@ states.push(replaceExactOrAlready(
 
 for (const forbidden of [
   'lastError = `R34 focus handoff arm failed:',
-  'lastError = `R34 native presenter focus failed:'
+  'lastError = `R34 native presenter focus failed:',
+  'R33_MAIN_HEARTBEAT_MS',
+  'r33MainStallCount'
 ]) {
-  if (text.includes(forbidden)) throw new Error(`R34 syntax sanitizer left forbidden nested template: ${forbidden}`);
+  if (text.includes(forbidden)) throw new Error(`R34 syntax sanitizer left forbidden/stale transform text: ${forbidden}`);
 }
 const cacheDefinitionLines = text.split('\n').filter(line => line.startsWith('function saveCatalogFile(provider,name,value){const key=`'));
 if (cacheDefinitionLines.length) throw new Error(`R34 syntax sanitizer left ${cacheDefinitionLines.length} nested-template cache definition(s)`);
 
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-four-space subtitleLoadAck=1`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-four-space heartbeatAnchor=R33-shipped subtitleLoadAck=1`);
