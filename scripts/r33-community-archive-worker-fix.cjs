@@ -55,7 +55,7 @@ function ensureCommunityArchiveWorker(){
     if(message.ok)pending.resolve(message.files||[]);else pending.reject(new Error(message.error||'자막 압축해제 worker 실패'));
   });
   worker.on('error',communityArchiveWorkerFail);
-  worker.on('exit',code=>{if(communityArchiveWorker===worker)communityArchiveWorkerFail(new Error(`자막 압축해제 worker 종료 (${code})`))});
+  worker.on('exit',code=>{if(communityArchiveWorker===worker)communityArchiveWorkerFail(new Error('자막 압축해제 worker 종료 ('+code+')'))});
   communityArchiveWorker=worker;
   return worker;
 }
@@ -96,7 +96,7 @@ function cleanName(name){return path.basename(String(name).replace(/\\/g,'/')).n
 function targetFor(dir,name){
   if(!COMMUNITY_FILE.test(name))return null;
   const clean=cleanName(name);if(!clean)return null;
-  let out=path.join(dir,clean);for(let n=1;fs.existsSync(out);n++)out=path.join(dir,`${n}_${clean}`);return out;
+  let out=path.join(dir,clean);for(let n=1;fs.existsSync(out);n++)out=path.join(dir,String(n)+'_'+clean);return out;
 }
 function extractZip(buffer,dir){
   const files=[],zip=new AdmZip(buffer);let total=0;
@@ -123,7 +123,7 @@ function extractExternal(buffer,dir,kind){
   try{
     fs.writeFileSync(archive,buffer);fs.mkdirSync(outDir);
     const result=spawnSync(tar,['-xf',archive,'-C',outDir],{windowsHide:true,stdio:'pipe'});
-    if(result.error||result.status!==0)throw result.error||new Error(`tar ${result.status}: ${String(result.stderr||'').slice(0,300)}`);
+    if(result.error||result.status!==0)throw result.error||new Error('tar '+result.status+': '+String(result.stderr||'').slice(0,300));
     const files=[];let total=0;
     for(const source of walkFiles(outDir)){
       const stat=fs.statSync(source);total+=stat.size;if(stat.size>MAX_FILE||total>MAX_TOTAL)throw new Error('압축 자막 크기 제한을 초과했습니다.');
