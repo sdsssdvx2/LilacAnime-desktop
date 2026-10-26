@@ -38,5 +38,19 @@ const oldBundleGate = "for (const marker of ['LILAC_R34_SUBTITLE_SINGLE_OWNER',\
 const newBundleGate = "assert(e.includes('LILAC_R34_SUBTITLE_SINGLE_OWNER'), 'R34 subtitle source marker missing');\nfor (const marker of ['sub-ass-override','_r34NativeSubtitleLoaded']) assert(e.includes(marker) && bundle.includes(marker), `R34 subtitle runtime marker missing: ${marker}`);";
 states.push(replaceExactOrAlready(oldBundleGate, newBundleGate, 'R34 bundle semantic gate'));
 
+// R32's final bounds/subtitle safety pass adds setNativePresenterBounds to the
+// bridge's required native export list. R34 is applied after that exact R33 tree,
+// so normalize the old pre-bounds anchor and its replacement to the real R33 form.
+states.push(replaceExactOrAlready(
+  `  "'configureNativePresenter', 'setNativePresenterVisible', 'nativePresenterStats', 'destroyPlayer']",`,
+  `  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterBounds', 'nativePresenterStats', 'destroyPlayer']",`,
+  'R34 R33 bridge require needle'
+));
+states.push(replaceExactOrAlready(
+  `  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'nativePresenterStats', 'destroyPlayer']",`,
+  `  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'setNativePresenterBounds', 'nativePresenterStats', 'destroyPlayer']",`,
+  'R34 R33 bridge require replacement'
+));
+
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware`);
