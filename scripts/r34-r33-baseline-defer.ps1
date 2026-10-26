@@ -7,8 +7,8 @@ $ErrorActionPreference = 'Stop'
 # transform/gate but defers exactly that one runtime smoke. R34 runs the same smoke
 # again after its native addon rebuild, followed by the new dual-path handoff smoke.
 $source = Get-Content 'scripts/r33-owned-popup-focus-build.ps1' -Raw
-$old = "  '& node_modules/.bin/electron.cmd scripts/r33-owned-popup-visible-focus-smoke.cjs' ``"
-$new = "  'cmd.exe /d /c \"exit 0\"; Write-Host \"R34_R33_BASELINE_VISIBLE_SMOKE_DEFERRED_TO_POST_FIX\"' ``"
+$old = '  ''& node_modules/.bin/electron.cmd scripts/r33-owned-popup-visible-focus-smoke.cjs'' `'
+$new = '  ''cmd.exe /d /c "exit 0"; Write-Host "R34_R33_BASELINE_VISIBLE_SMOKE_DEFERRED_TO_POST_FIX"'' `'
 $count = ([regex]::Matches($source, [regex]::Escape($old))).Count
 if ($count -ne 1) { throw "R34 R33 smoke-defer anchor expected one match, found $count" }
 $source = $source.Replace($old, $new)
