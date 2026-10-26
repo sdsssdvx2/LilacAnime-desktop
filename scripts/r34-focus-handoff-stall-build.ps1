@@ -15,6 +15,7 @@ $r34Support=@(
   'r34-focus-handoff-stall-fix.cjs',
   'r34-handoff-ack-hardening.cjs',
   'r34-main-stall-hardening.cjs',
+  'r34-smoke-correctness-hardening.cjs',
   'r34-focus-handoff-native-smoke.cjs'
 )
 foreach($name in $r34Support){$src=Join-Path 'scripts' $name;if(-not(Test-Path $src)){throw "R34 support missing: $name"};Copy-Item $src (Join-Path $r34Stash $name) -Force}
@@ -40,11 +41,17 @@ node --check scripts/r34-main-stall-hardening.cjs
 Assert-Exit 'R34 main stall I/O syntax'
 node scripts/r34-main-stall-hardening.cjs
 Assert-Exit 'R34 main stall I/O hardening'
+node --check scripts/r34-smoke-correctness-hardening.cjs
+Assert-Exit 'R34 smoke correctness syntax'
+node scripts/r34-smoke-correctness-hardening.cjs
+Assert-Exit 'R34 smoke correctness hardening'
 
 $nativeSource=Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
 $bridge=Get-Content 'electron/libmpv-shared-main.cjs' -Raw
 $entry=Get-Content 'src/libmpv-shared-entry.js' -Raw
 $main=Get-Content 'electron/main.cjs' -Raw
+$r33Smoke=Get-Content 'scripts/r33-owned-popup-visible-focus-smoke.cjs' -Raw
+$r34Smoke=Get-Content 'scripts/r34-focus-handoff-native-smoke.cjs' -Raw
 if(-not $nativeSource.Contains('LILAC_R34_FOCUS_HANDOFF') -or -not $nativeSource.Contains('SetNativePresenterMirrorChromium') -or -not $nativeSource.Contains('r34MirrorChromiumDuringHandoff')){throw 'R34 native handoff source gate failed'}
 if(-not $bridge.Contains('r34BeginFocusHandoff') -or -not $bridge.Contains('r34CompleteFocusHandoff') -or -not $bridge.Contains('r34SetNativeSubtitleVisible')){throw 'R34 bridge handoff/subtitle gate failed'}
 if(-not $bridge.Contains('LILAC_R34_HANDOFF_SENT_ACK') -or -not $bridge.Contains('r34FocusHandoffSentFrames') -or -not $bridge.Contains('!r34FocusHandoffSentFrames.has(Number(frameId))')){throw 'R34 successful-send handoff acknowledgement gate failed'}
@@ -52,7 +59,9 @@ if($entry.Contains("document.hasFocus() ? 'no' : 'yes'") -or -not $entry.Contain
 if(-not $main.Contains('LILAC_R34_CACHE_WRITE_WORKER') -or $main.Contains("saveCatalogFile(provider,name,value){const key=`${provider}-${name}`;clearTimeout(indexSaveTimers[key]);indexSaveTimers[key]=setTimeout(()=>{try{fs.writeFileSync")){throw 'R34 main cache-worker gate failed'}
 if(-not $main.Contains('LILAC_R34_MAIN_STALL_IO_HARDENING') -or -not $main.Contains('async function readKoreanTitleCache()') -or -not $main.Contains('r34QueueJsonWrite(file,fresh)')){throw 'R34 main stall I/O hardening gate failed'}
 if($main.Contains("const disk=readKoreanTitleCache();") -or $main.Contains("communityPostCache.set(blog,fresh);try{fs.writeFileSync(file,JSON.stringify(fresh))")){throw 'R34 blocking metadata cache path survived'}
-Write-Host 'R34_SOURCE_GATES_OK handoff=native+chromium-until-successful-send+allReferencesReleased subtitle=main-single-owner assOverride=force cacheWrites=worker-coalesced mainCacheReads=async-or-memoized r27NativeGapReset=1'
+if(-not $r33Smoke.Contains('LILAC_R34_SMOKE_CORRECTNESS_HARDENING') -or $r33Smoke.Contains('LILAC_R34_R33_SMOKE_CHILD') -or -not $r33Smoke.Contains('R33_VISIBLE_FOCUS_SMOKE_OK') -or -not $r33Smoke.Contains('process.exit(1)')){throw 'R34 R33 visible smoke correctness gate failed'}
+if(-not $r34Smoke.Contains('LILAC_R34_SMOKE_CORRECTNESS_HARDENING') -or -not $r34Smoke.Contains('setUpdateCallback') -or -not $r34Smoke.Contains('R34_NATIVE_HANDOFF_SMOKE_OK') -or -not $r34Smoke.Contains('process.exit(1)')){throw 'R34 native handoff smoke correctness gate failed'}
+Write-Host 'R34_SOURCE_GATES_OK handoff=native+chromium-until-successful-send+allReferencesReleased subtitle=main-single-owner assOverride=force cacheWrites=worker-coalesced mainCacheReads=async-or-memoized r27NativeGapReset=1 smokeProof=explicit-marker+nonzero-failure+nested-electron-removed'
 
 # R34 changes the native producer decision and N-API surface, so rebuild the addon
 # against Electron 44.9.3. R33 already downloaded/pinned headers into vendor/include.
@@ -112,22 +121,39 @@ if((Sha256 $packedAddon)-ne $r34AddonSha){throw 'packaged R34 addon hash mismatc
 if((Sha256 $packedDll)-ne $env:QUALIFIED_DLL_SHA256){throw 'packaged R34 DLL hash mismatch'}
 
 $manifestPath=Join-Path 'dist' $env:MANIFEST_NAME
-$manifest=if(Test-Path $manifestPath){Get-Content $manifestPath -Raw|ConvertFrom-Json}else{[pscustomobject]@{}}
 $hash=Sha256 $installer;$size=(Get-Item $installer).Length
-$manifest|Add-Member -NotePropertyName version -NotePropertyValue $env:APP_VERSION -Force
-$manifest|Add-Member -NotePropertyName installer -NotePropertyValue $env:INSTALLER_NAME -Force
-$manifest|Add-Member -NotePropertyName installerSha256 -NotePropertyValue $hash -Force
-$manifest|Add-Member -NotePropertyName installerSize -NotePropertyValue $size -Force
-$manifest|Add-Member -NotePropertyName nativeAddon -NotePropertyValue $r34AddonSha -Force
-$manifest|Add-Member -NotePropertyName nativeDll -NotePropertyValue $env:QUALIFIED_DLL_SHA256 -Force
-$manifest|Add-Member -NotePropertyName r34FocusHandoff -NotePropertyValue 'native-present+chromium-mirror-until-successful-send+allReferencesReleased-then-hide' -Force
-$manifest|Add-Member -NotePropertyName r34HandoffAck -NotePropertyValue 'successful-send+allReferencesReleased-only' -Force
-$manifest|Add-Member -NotePropertyName r34SubtitleOwnership -NotePropertyValue 'main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-force' -Force
-$manifest|Add-Member -NotePropertyName r34CacheWrites -NotePropertyValue 'catalog+display-title+tmdb-overview+artwork+anissia+korean-title+community-post+oped-worker-coalesced' -Force
-$manifest|Add-Member -NotePropertyName r34MainStallIo -NotePropertyValue 'korean-title+community-post+tmdb-overview+artwork+anissia+oped-off-main+tmdb-key-memoized' -Force
-$manifest|Add-Member -NotePropertyName r34R27GapReset -NotePropertyValue $true -Force
+# Final packaging removes dist, so construct a self-contained manifest instead of
+# trying to inherit a baseline manifest that no longer exists.
+$manifest=[ordered]@{
+  version=$env:APP_VERSION
+  qualifiedSourceSha=$env:QUALIFIED_SOURCE_SHA
+  electron=$env:ELECTRON_VERSION
+  installer=$env:INSTALLER_NAME
+  installerSha256=$hash
+  installerSize=$size
+  nativeAddon=$r34AddonSha
+  nativeDll=$env:QUALIFIED_DLL_SHA256
+  r32NativeProducerWatchdog='callback-authoritative+250ms-native-watchdog'
+  r32FlixIsolation='worker-thread-loopback-server+no-segment-main-ipc'
+  r33FocusPresenter='same-libmpv-d3d11-texture+owned-ws-popup-unfocused'
+  r33NativeOnlyUnfocused='producer-copyresource-present-S_OK+slot-release+no-tsfn-no-import-no-send-no-webgpu'
+  r33PresentQualification='S_OK-only-native-ownership+DXGI_STATUS_OCCLUDED-fail-open+show-before-arm'
+  r33VisibleFocusSmoke='two-visible-browserwindows+dwm-pixel-capture+900ms-main-stall+owner-move+focus-recovery'
+  r33StallAttribution='main-heartbeat50ms-threshold80+native-render-threshold60'
+  r33CommunityArchiveWorker='zip+7z+rar-worker-thread+arraybuffer-transfer+heartbeat-smoke'
+  r33ChromiumDuplicateDelivery=$false
+  r33OwnedPopupBlackErase=$false
+  r34FocusHandoff='native-present+chromium-mirror-until-successful-send+allReferencesReleased-then-hide'
+  r34HandoffAck='successful-send+allReferencesReleased-only'
+  r34NativePresent='DXGI_PRESENT_DO_NOT_WAIT+busy-keep-last-native-frame'
+  r34SubtitleOwnership='main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-force'
+  r34CacheWrites='catalog+display-title+tmdb-overview+artwork+anissia+korean-title+community-post+oped-worker-coalesced'
+  r34MainStallIo='korean-title+community-post+tmdb-overview+artwork+anissia+oped-off-main+tmdb-key-memoized'
+  r34R27GapReset=$true
+  r34RuntimeSmokes='producer-watchdog+r33-visible-dwm+r34-dual-handoff-explicit-markers'
+}
 [System.IO.File]::WriteAllText($manifestPath,(($manifest|ConvertTo-Json -Depth 12)+[Environment]::NewLine),$utf8NoBom)
 "R34_ADDON_SHA256=$r34AddonSha"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SHA256=$hash"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SIZE=$size"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-Write-Host "R34_BUILD_OK sha256=$hash size=$size addon=$r34AddonSha dll=$dllSha focusHandoff=successful-send+release subtitle=single-owner cacheWrites=worker-coalesced mainCacheReads=async-or-memoized"
+Write-Host "R34_BUILD_OK sha256=$hash size=$size addon=$r34AddonSha dll=$dllSha focusHandoff=successful-send+release subtitle=single-owner cacheWrites=worker-coalesced mainCacheReads=async-or-memoized runtimeSmokes=explicit-markers"
