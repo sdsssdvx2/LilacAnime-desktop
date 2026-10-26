@@ -1,0 +1,127 @@
+name: LilacAnime Libmpv R35 paused handoff UI recovery
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r35-paused-handoff-ui-recovery]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r35-paused-handoff-ui-recovery.yml
+      - scripts/r35-paused-handoff-ui-recovery.cjs
+      - scripts/r35-paused-handoff-redraw-smoke.cjs
+      - scripts/r35-run-smoke-with-timeout.cjs
+      - scripts/r35-cache-worker-heartbeat-smoke.cjs
+      - scripts/r35-qualified-build.ps1
+      - scripts/r34-focus-handoff-stall-build.ps1
+      - scripts/r34-r33-baseline-defer.ps1
+      - scripts/r34-transform-source-sanitize.cjs
+      - scripts/r34-focus-handoff-stall-fix.cjs
+      - scripts/r34-handoff-ack-hardening.cjs
+      - scripts/r34-main-stall-hardening.cjs
+      - scripts/r34-smoke-correctness-hardening.cjs
+      - scripts/r34-hosted-visual-proof.cjs
+      - scripts/r34-hosted-refocus-hardening.cjs
+      - scripts/r34-focus-handoff-native-smoke.cjs
+      - scripts/r34-run-smoke-with-timeout.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r35-paused-handoff-ui-recovery
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r35
+  INSTALLER_NAME: LilacAnime-Libmpv-R35-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r35-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc15
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Preflight R35 scripts
+        shell: powershell
+        run: |
+          node --check scripts/r35-paused-handoff-ui-recovery.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-paused-handoff-redraw-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-run-smoke-with-timeout.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-cache-worker-heartbeat-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R35_PREFLIGHT_SYNTAX_OK'
+      - name: Build and qualify R35
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r35-qualified-build.ps1
+      - name: Upload qualified R35 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r35-paused-handoff-ui-recovery
+          path: |
+            dist/LilacAnime-Libmpv-R35-Setup.exe
+            dist/lilacanime-libmpv-r35-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public R35 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r35 paused handoff UI recovery' --notes 'R35 is a narrow correction on the qualified R34 presenter architecture. It preserves R33 owned-popup native-only unfocused playback and the R34 active-playback overlap handoff, but closes the paused/no-new-frame refocus hole that could leave the native popup covering all Chromium UI. The mirror is armed first, native subtitle visibility is then switched off to invalidate subtitle composition and request a paused redraw, and the popup is still hidden only after successful shared-texture send plus allReferencesReleased. R35 also de-escalates sub-ass-override from force to scale to preserve authored ASS placement while retaining main-only subtitle visibility ownership. Qualification retains R33 hosted visible/DWM proof including 900ms main-thread stall, R34 active handoff proof, adds a paused ASS redraw handoff smoke, and stress-tests the persistent cache writer against a main heartbeat.'
+          if($LASTEXITCODE-ne 0){throw 'R35 release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R35 release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r35-public';Remove-Item $v -Recurse -Force -ErrorAction SilentlyContinue;New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R35 public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME
+          $m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R34_INSTALLER_SHA256 -or $z-ne [long]$env:R34_INSTALLER_SIZE){throw 'R35 public installer byte mismatch'}
+          if($m.version-ne $env:APP_VERSION -or $m.qualifiedSourceSha-ne $env:QUALIFIED_SOURCE_SHA -or $m.installerSha256-ne $h -or $m.electron-ne $env:ELECTRON_VERSION -or $m.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R35 public runtime identity mismatch'}
+          if($m.r34FocusHandoff-ne 'native-present+chromium-mirror-until-successful-send+allReferencesReleased-then-hide'){throw 'R35 lost R34 active handoff proof'}
+          if($m.r34NativePresent-ne 'DXGI_PRESENT_DO_NOT_WAIT+busy-keep-last-native-frame'){throw 'R35 lost R34 native present proof'}
+          if($m.r34SubtitleOwnership-ne 'main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-scale'){throw 'R35 subtitle manifest mismatch'}
+          if($m.r35PausedHandoff-ne 'mirror-first+sub-visibility-redraw+successful-send+allReferencesReleased-then-hide'){throw 'R35 paused handoff proof mismatch'}
+          if($m.r35SubtitleOwnership-ne 'main-only+focus-native-off+unfocused-native-on+ass-override-scale'){throw 'R35 subtitle ownership proof mismatch'}
+          if($m.r35RuntimeSmokes-ne 'r33-hosted-visual+r34-active-handoff+r35-paused-redraw+r35-cache-heartbeat'){throw 'R35 runtime smoke proof mismatch'}
+          if($m.r34HostedVisualProof-ne 'focused-capturePage-blue+native-visible-HWND+exact-S_OK+900ms-autonomous+mirror-sampleFrame-red+desktopCapturer-optional'){throw 'R35 hosted visual proof mismatch'}
+          if($m.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or $m.r33OwnedPopupBlackErase-ne $false -or $m.r33ChromiumDuplicateDelivery-ne $false){throw 'R35 lost R33 native-only compositor proof'}
+          Write-Host "R35_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) activeHandoff=R34 pausedHandoff=redraw+send+release subtitle=single-owner+ass-scale cacheHeartbeat=qualified"
