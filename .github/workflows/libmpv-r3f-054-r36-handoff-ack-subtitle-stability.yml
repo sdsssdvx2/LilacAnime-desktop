@@ -5,6 +5,7 @@ on:
     branches: [libmpv-r3f-054-r36-handoff-ack-subtitle-stability]
     paths:
       - .github/workflows/libmpv-r3f-054-r36-handoff-ack-subtitle-stability.yml
+      - scripts/r36-transform-r35-anchor-compat.cjs
       - scripts/r36-handoff-ack-subtitle-stability.cjs
       - scripts/r36-handoff-ack-order-smoke.cjs
       - scripts/r36-subtitle-determinism-smoke.cjs
@@ -85,6 +86,8 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-paused-no-subtitle-handoff-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r36-transform-r35-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r36-handoff-ack-subtitle-stability.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r36-handoff-ack-order-smoke.cjs
@@ -104,6 +107,8 @@ jobs:
           node scripts/r32-transform-source-sanitize.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r36-transform-r35-anchor-compat.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           ./scripts/r36-qualified-build.ps1
       - name: Upload qualified R36 artifact
