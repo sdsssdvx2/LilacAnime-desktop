@@ -7,11 +7,6 @@ function Sha256([string]$path) {
   return (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-# R35's qualified builder already reconstructs the exact pinned R33 baseline,
-# reapplies R34/R35, rebuilds Electron 44.9.3 native code and runs all inherited
-# runtime smokes. Keep R36 sources outside that reconstruction, restore them, then
-# apply and qualify R36 explicitly. This avoids another layer of generated
-# PowerShell/quoting and makes every R36 gate visible in this file.
 $r36Stash = Join-Path $env:RUNNER_TEMP 'lilac-r36-support'
 Remove-Item $r36Stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $r36Stash | Out-Null
@@ -19,7 +14,8 @@ $r36Support = @(
   'r36-handoff-ack-subtitle-stability.cjs',
   'r36-handoff-ack-order-smoke.cjs',
   'r36-subtitle-determinism-smoke.cjs',
-  'r36-native-ui-hole-smoke.cjs'
+  'r36-native-ui-hole-smoke.cjs',
+  'r36-ui-hole-fastpath-smoke.cjs'
 )
 foreach ($name in $r36Support) {
   $src = Join-Path 'scripts' $name
@@ -41,14 +37,11 @@ node --check scripts/r36-handoff-ack-subtitle-stability.cjs
 Assert-Exit 'R36 transform syntax'
 node scripts/r36-handoff-ack-subtitle-stability.cjs
 Assert-Exit 'R36 product transform'
-node --check scripts/r36-handoff-ack-order-smoke.cjs
-Assert-Exit 'R36 ack-order smoke syntax'
-node --check scripts/r36-subtitle-determinism-smoke.cjs
-Assert-Exit 'R36 subtitle smoke syntax'
-node --check scripts/r36-native-ui-hole-smoke.cjs
-Assert-Exit 'R36 UI-hole smoke syntax'
+foreach ($script in @('r36-handoff-ack-order-smoke.cjs','r36-subtitle-determinism-smoke.cjs','r36-native-ui-hole-smoke.cjs','r36-ui-hole-fastpath-smoke.cjs')) {
+  node --check (Join-Path 'scripts' $script)
+  Assert-Exit "R36 smoke syntax $script"
+}
 
-# Static product invariants before native compilation.
 $nativeSource = Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
 $bridge = Get-Content 'electron/libmpv-shared-main.cjs' -Raw
 $entry = Get-Content 'src/libmpv-shared-entry.js' -Raw
@@ -59,42 +52,27 @@ $pkg = Get-Content package.json -Raw | ConvertFrom-Json
 if (-not $nativeSource.Contains('LILAC_R36_UNFOCUSED_HTML_UI_HOLES') -or
     -not $nativeSource.Contains('SetNativePresenterUiHoles') -or
     -not $nativeSource.Contains('R36ApplyPresenterRegionLocked') -or
-    -not $nativeSource.Contains('r36FirstHoleExcluded')) {
-  throw 'R36 native UI-hole source gate failed'
-}
+    -not $nativeSource.Contains('r36FirstHoleExcluded')) { throw 'R36 native UI-hole source gate failed' }
 if (-not $bridge.Contains('LILAC_R36_HANDOFF_ACK_ORDER') -or
     -not $bridge.Contains('r36FocusHandoffReleasedFrames') -or
     -not $bridge.Contains('R36_HANDOFF_FAIL_OPEN_MS = 1500') -or
     -not $bridge.Contains('r36TargetUiHoles') -or
     -not $bridge.Contains('LILAC_R36_UI_HOLES_ONLY_FASTPATH') -or
-    -not $bridge.Contains('r36SupplyGaps')) {
-  throw 'R36 bridge handoff/UI-hole/fast-path/diagnostic gate failed'
-}
+    -not $bridge.Contains('r36SupplyGaps')) { throw 'R36 bridge handoff/UI-hole/fast-path/diagnostic gate failed' }
 if (-not $entry.Contains('LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC') -or
     -not $entry.Contains("'sub-ass-override', 'strip'") -or
     $entry.Contains("'sub-ass-override', 'force'") -or
-    $entry.Contains("'sub-ass-override', 'scale'")) {
-  throw 'R36 deterministic native subtitle gate failed'
-}
+    $entry.Contains("'sub-ass-override', 'scale'")) { throw 'R36 deterministic native subtitle gate failed' }
 if (-not $appSource.Contains('LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') -or
     -not $appSource.Contains('LILAC_R36_UNFOCUSED_HTML_UI_HOLES') -or
     -not $appSource.Contains('R36_NATIVE_UI_HOLE_SELECTORS') -or
-    -not $appSource.Contains('r36UiHolesOnly:true')) {
-  throw 'R36 renderer UI/subtitle fast-path gate failed'
-}
-if (-not $preload.Contains("presentationMode = 'direct-receive-webgpu-copy'") -or
-    -not $preload.Contains('copyExternalImageToTexture')) {
-  throw 'R36 focused direct WebGPU path drifted'
-}
-if ($preload.Contains('LILAC_R28_FOCUS_SAFE_PLAYBACK') -or $preload.Contains('focus-staged-gpu-copy')) {
-  throw 'R36 resurrected failed R28 renderer path'
-}
+    -not $appSource.Contains('r36UiHolesOnly:true')) { throw 'R36 renderer UI/subtitle fast-path gate failed' }
+if (-not $preload.Contains("presentationMode = 'direct-receive-webgpu-copy'") -or -not $preload.Contains('copyExternalImageToTexture')) { throw 'R36 focused direct WebGPU path drifted' }
+if ($preload.Contains('LILAC_R28_FOCUS_SAFE_PLAYBACK') -or $preload.Contains('focus-staged-gpu-copy')) { throw 'R36 resurrected failed R28 renderer path' }
 if ($pkg.version -ne $env:APP_VERSION -or $pkg.build.appId -ne $env:STABLE_APP_ID -or
     $pkg.build.productName -ne $env:STABLE_PRODUCT_NAME -or
     $pkg.build.win.executableName -ne $env:STABLE_EXE_BASE -or
-    $pkg.build.win.artifactName -ne $env:INSTALLER_NAME) {
-  throw 'R36 stable package identity/version gate failed'
-}
+    $pkg.build.win.artifactName -ne $env:INSTALLER_NAME) { throw 'R36 stable package identity/version gate failed' }
 
 $presentStart = $nativeSource.IndexOf('bool R32PresentNativeFrame(')
 $presentEnd = $nativeSource.IndexOf('bool SetOption(', $presentStart)
@@ -119,10 +97,11 @@ node scripts/r36-handoff-ack-order-smoke.cjs
 Assert-Exit 'R36 bidirectional handoff ack-order smoke'
 node scripts/r36-subtitle-determinism-smoke.cjs
 Assert-Exit 'R36 subtitle determinism smoke'
+node scripts/r36-ui-hole-fastpath-smoke.cjs
+Assert-Exit 'R36 UI-hole-only fast-path smoke'
 
 $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
 $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
-
 node scripts/r34-run-smoke-with-timeout.cjs scripts/r32-native-producer-watchdog-smoke.cjs r36-r32-producer-watchdog 120000
 Assert-Exit 'R36 inherited native producer watchdog'
 node scripts/r34-run-smoke-with-timeout.cjs scripts/r33-owned-popup-visible-focus-smoke.cjs r36-r33-visible-autonomy 120000
@@ -139,10 +118,9 @@ for ($cycle = 1; $cycle -le 3; $cycle++) {
   node scripts/r34-run-smoke-with-timeout.cjs scripts/r34-focus-handoff-native-smoke.cjs "r36-repeat-active-handoff-$cycle" 120000
   Assert-Exit "R36 repeated active handoff $cycle"
 }
-
 Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
 Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
-Write-Host 'R36_RUNTIME_SMOKES_OK producerWatchdog=1 r33VisibleAutonomy=1 unfocusedHtmlUiHole=1 activeHandoff=1 pausedSubtitle=1 pausedNoSubtitle=1 activeHandoffRepeat=3 ackOrderCycles=200 subtitleDeterminism=1'
+Write-Host 'R36_RUNTIME_SMOKES_OK producerWatchdog=1 r33VisibleAutonomy=1 unfocusedHtmlUiHole=1 uiHoleFastpath=1 activeHandoff=1 pausedSubtitle=1 pausedNoSubtitle=1 activeHandoffRepeat=3 ackOrderCycles=200 subtitleDeterminism=1'
 
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64
@@ -161,20 +139,13 @@ $shipBridge = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-main.cjs
 $shipEntry = Get-Content (Join-Path $asarCheck 'src/libmpv-shared-entry.js') -Raw
 $shipApp = Get-Content (Join-Path $asarCheck 'src/app.js') -Raw
 $shipPreload = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-preload.cjs') -Raw
-
-if ($shipBridge -notmatch 'LILAC_R36_HANDOFF_ACK_ORDER' -or
-    $shipBridge -notmatch 'r36FocusHandoffReleasedFrames' -or
-    $shipBridge -notmatch 'R36_HANDOFF_FAIL_OPEN_MS = 1500' -or
-    $shipBridge -notmatch 'r36TargetUiHoles' -or
+if ($shipBridge -notmatch 'LILAC_R36_HANDOFF_ACK_ORDER' -or $shipBridge -notmatch 'r36FocusHandoffReleasedFrames' -or
+    $shipBridge -notmatch 'R36_HANDOFF_FAIL_OPEN_MS = 1500' -or $shipBridge -notmatch 'r36TargetUiHoles' -or
     $shipBridge -notmatch 'LILAC_R36_UI_HOLES_ONLY_FASTPATH') { throw 'packaged R36 bridge hardening/fast-path missing' }
-if ($shipEntry -notmatch 'LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC' -or
-    $shipEntry -notmatch "'sub-ass-override', 'strip'") { throw 'packaged R36 subtitle determinism missing' }
-if ($shipApp -notmatch 'LILAC_R36_UNFOCUSED_HTML_UI_HOLES' -or
-    $shipApp -notmatch 'R36_NATIVE_UI_HOLE_SELECTORS' -or
-    $shipApp -notmatch 'r36UiHolesOnly:true' -or
-    $shipApp -notmatch 'LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') { throw 'packaged R36 renderer UI/subtitle fast-path hardening missing' }
-if ($shipPreload -notmatch "presentationMode = 'direct-receive-webgpu-copy'" -or
-    $shipPreload -notmatch 'copyExternalImageToTexture') { throw 'packaged R36 direct WebGPU focused path missing' }
+if ($shipEntry -notmatch 'LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC' -or $shipEntry -notmatch "'sub-ass-override', 'strip'") { throw 'packaged R36 subtitle determinism missing' }
+if ($shipApp -notmatch 'LILAC_R36_UNFOCUSED_HTML_UI_HOLES' -or $shipApp -notmatch 'R36_NATIVE_UI_HOLE_SELECTORS' -or
+    $shipApp -notmatch 'r36UiHolesOnly:true' -or $shipApp -notmatch 'LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') { throw 'packaged R36 renderer UI/subtitle fast-path hardening missing' }
+if ($shipPreload -notmatch "presentationMode = 'direct-receive-webgpu-copy'" -or $shipPreload -notmatch 'copyExternalImageToTexture') { throw 'packaged R36 direct WebGPU focused path missing' }
 
 $packedAddon = 'dist/win-unpacked/resources/app.asar.unpacked/electron/lilac-libmpv-player-bridge.node'
 $packedDll = 'dist/win-unpacked/resources/app.asar.unpacked/electron/libmpv-2.dll'
@@ -218,11 +189,10 @@ $manifest = [ordered]@{
   r36UnfocusedUi = 'owned-popup-window-region-holes+html-controls-visible+native-video-autonomous'
   r36SubtitleFallback = 'plain-dialogue-source-first+ass-strip+r32-style-map'
   r36SupplyGapDiagnostics = 'cached-playback-state+focus-handoff-context+no-extra-native-poll'
-  r36RuntimeSmokes = 'ack-order-200-cycles+subtitle-determinism+native-ui-hole+active-handoff-repeat3+inherited-r33-r35'
+  r36RuntimeSmokes = 'ack-order-200-cycles+subtitle-determinism+ui-hole-fastpath+native-ui-hole+active-handoff-repeat3+inherited-r33-r35'
 }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 12) + [Environment]::NewLine), $utf8NoBom)
-
 "R34_ADDON_SHA256=$r36AddonSha" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
