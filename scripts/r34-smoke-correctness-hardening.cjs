@@ -42,6 +42,18 @@ if (r33.includes('LILAC_R34_R33_SMOKE_WATCHDOG')) {
     );
   }
 }
+
+// Hosted Windows desktopCapturer can return the runner's neutral gray desktop for
+// its first frame even after BrowserWindow.show(). That is capture-pipeline warmup,
+// not evidence that the product focused surface is black. Keep the exact same strict
+// blue color predicate, but require desktop capture to observe it within a bounded
+// warmup window before starting the real blur/native-popup assertions. Once warmed,
+// all later DWM samples remain strict and a single bad red/native sample still fails.
+if (!r33.includes('LILAC_R34_DWM_CAPTURE_WARMUP')) {
+  const oldFocusedBaseline = `    // Focused baseline: popup is hidden, so the known owner HTML should be blue.\n    await sleep(350);\n    const configured = addon.nativePresenterStats(id);\n    if (configured?.surfaceMode !== 'owned-popup' || configured?.isChild !== false || configured?.ownerMatches !== true) {\n      throw new Error(\`R33 owned popup identity invalid \${JSON.stringify(configured)}\`);\n    }\n    const baselineCapture = await capturePrimary();\n    const baseline = sampleMeans(baselineCapture, statsRect(configured));\n    const blueIndex = baseline.c0 >= baseline.c2 ? 0 : 2;\n    const redIndex = blueIndex === 0 ? 2 : 0;\n    const baselineChannels = [baseline.c0, baseline.c1, baseline.c2];\n    if (!(baselineChannels[blueIndex] > baselineChannels[redIndex] + 60 && baselineChannels[blueIndex] > baseline.c1 + 50)) {\n      throw new Error(\`focused owner baseline is not blue enough \${JSON.stringify(baseline)}\`);\n    }`;
+  const newFocusedBaseline = `    // Focused baseline: popup is hidden, so the known owner HTML should be blue.\n    // LILAC_R34_DWM_CAPTURE_WARMUP: desktopCapturer may initially expose the CI\n    // runner's neutral desktop before DWM has published this BrowserWindow. Calibrate\n    // capture readiness with the same strict blue predicate; do not lower it.\n    await sleep(350);\n    const configured = addon.nativePresenterStats(id);\n    if (configured?.surfaceMode !== 'owned-popup' || configured?.isChild !== false || configured?.ownerMatches !== true) {\n      throw new Error(\`R33 owned popup identity invalid \${JSON.stringify(configured)}\`);\n    }\n    const baselineDeadline = Date.now() + 5000;\n    let baseline = null, blueIndex = 0, redIndex = 2, baselineAttempts = 0, baselineReady = false;\n    while (Date.now() < baselineDeadline) {\n      baselineAttempts += 1;\n      const baselineCapture = await capturePrimary();\n      baseline = sampleMeans(baselineCapture, statsRect(configured));\n      blueIndex = baseline.c0 >= baseline.c2 ? 0 : 2;\n      redIndex = blueIndex === 0 ? 2 : 0;\n      const baselineChannels = [baseline.c0, baseline.c1, baseline.c2];\n      if (baselineChannels[blueIndex] > baselineChannels[redIndex] + 60 && baselineChannels[blueIndex] > baseline.c1 + 50) {\n        baselineReady = true;\n        break;\n      }\n      await sleep(120);\n    }\n    if (!baselineReady) {\n      throw new Error(\`focused owner baseline never became blue after DWM capture warmup attempts=\${baselineAttempts} sample=\${JSON.stringify(baseline)}\`);\n    }\n    console.log(\`R34_DWM_CAPTURE_WARMUP_OK attempts=\${baselineAttempts} c0=\${baseline.c0.toFixed(1)} c1=\${baseline.c1.toFixed(1)} c2=\${baseline.c2.toFixed(1)}\`);`;
+  r33 = replaceOnce(r33, oldFocusedBaseline, newFocusedBaseline, 'R34 DWM capture warmup');
+}
 fs.writeFileSync(r33Path, r33, 'utf8');
 
 // The R34 native handoff smoke exercises the same producer API as product code.
@@ -77,10 +89,10 @@ const finalR34 = fs.readFileSync(r34Path, 'utf8');
 if (finalR33.includes('LILAC_R34_R33_SMOKE_WATCHDOG') || finalR33.includes('LILAC_R34_R33_SMOKE_CHILD')) {
   throw new Error('nested Electron R33 smoke wrapper survived correctness hardening');
 }
-for (const marker of ['LILAC_R34_SMOKE_CORRECTNESS_HARDENING','R33_VISIBLE_FOCUS_SMOKE_OK','process.exit(1)']) {
+for (const marker of ['LILAC_R34_SMOKE_CORRECTNESS_HARDENING','LILAC_R34_DWM_CAPTURE_WARMUP','R34_DWM_CAPTURE_WARMUP_OK','R33_VISIBLE_FOCUS_SMOKE_OK','process.exit(1)']) {
   if (!finalR33.includes(marker)) throw new Error(`R33 correctness marker missing: ${marker}`);
 }
 for (const marker of ['LILAC_R34_SMOKE_CORRECTNESS_HARDENING','setUpdateCallback','R34_NATIVE_HANDOFF_SMOKE_OK','process.exit(1)']) {
   if (!finalR34.includes(marker)) throw new Error(`R34 correctness marker missing: ${marker}`);
 }
-console.log('R34_SMOKE_CORRECTNESS_OK r33NestedElectron=removed r33FailureExit=nonzero r34UpdateCallback=installed r34FailureExit=nonzero');
+console.log('R34_SMOKE_CORRECTNESS_OK r33NestedElectron=removed r33FailureExit=nonzero r33DwmCaptureWarmup=strict-blue-bounded r34UpdateCallback=installed r34FailureExit=nonzero');
