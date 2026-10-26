@@ -139,6 +139,12 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r37-e2e-'));
   let main, other, bridge;
   try {
+    // Register the bridge IPC listeners before the renderer preload can emit
+    // receiver-ready. Otherwise a fast preload could make the test miss the
+    // readiness edge even though the shared-texture receiver itself is valid.
+    bridge = createLibmpvSharedBridge();
+    await bridge.ensure();
+
     const preload = receiverPreload(dir);
     main = new BrowserWindow({
       show:true, width:800, height:600, backgroundColor:'#202020',
@@ -148,8 +154,6 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     await main.loadURL('data:text/html,<body style="margin:0;background:%23202020"></body>');
     await other.loadURL('data:text/html,<body style="background:%23303030"></body>');
 
-    bridge = createLibmpvSharedBridge();
-    await bridge.ensure();
     await bridge.attachWindow(main);
     bridge.resize({ x:0, y:0, width:640, height:360, visible:true });
     const opened = await bridge.open(pathToFileURL(fixture(dir)).href, {}, false, { x:0, y:0, width:640, height:360, visible:true });
