@@ -11,6 +11,7 @@ $r36Stash = Join-Path $env:RUNNER_TEMP 'lilac-r36-support'
 Remove-Item $r36Stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $r36Stash | Out-Null
 $r36Support = @(
+  'r36-transform-r35-anchor-compat.cjs',
   'r36-handoff-ack-subtitle-stability.cjs',
   'r36-handoff-ack-order-smoke.cjs',
   'r36-subtitle-determinism-smoke.cjs',
@@ -33,6 +34,8 @@ foreach ($name in $r36Support) {
   Copy-Item (Join-Path $r36Stash $name) (Join-Path 'scripts' $name) -Force
 }
 
+node scripts/r36-transform-r35-anchor-compat.cjs
+Assert-Exit 'R36 transform anchor normalize after R35 baseline'
 node --check scripts/r36-handoff-ack-subtitle-stability.cjs
 Assert-Exit 'R36 transform syntax'
 node scripts/r36-handoff-ack-subtitle-stability.cjs
