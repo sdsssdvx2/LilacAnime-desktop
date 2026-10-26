@@ -100,7 +100,6 @@ async function desktopSampleAt(screenX, screenY) {
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
 
-    // Underlying Chromium control content is really at the same relative rect.
     const ownerCapture = await owner.webContents.capturePage();
     const ownerGreen = sampleImage(ownerCapture, 190, 145);
     if (!green(ownerGreen)) throw new Error('underlying owner UI is not green: ' + JSON.stringify(ownerGreen));
@@ -120,7 +119,6 @@ async function desktopSampleAt(screenX, screenY) {
       throw new Error('native UI-hole region proof failed: ' + JSON.stringify(before));
     }
 
-    // Native-only presentation must remain autonomous while JS main is blocked.
     const presentedBefore = Number(before.presentedFrames || 0), nativeOnlyBefore = Number(before.nativeOnlyFrames || 0);
     blockMain(900);
     const afterBlock = addon.nativePresenterStats(id);
@@ -130,7 +128,6 @@ async function desktopSampleAt(screenX, screenY) {
       throw new Error('native autonomy/UI-hole failed through main block: ' + JSON.stringify({presentedDelta,nativeOnlyDelta,afterBlock}));
     }
 
-    // Native-only mode must still avoid Chromium delivery entirely.
     let queued = 0;
     for (let i = 0; i < 7; i++) {
       const frame = addon.popProducedFrame(id);
@@ -139,7 +136,27 @@ async function desktopSampleAt(screenX, screenY) {
     }
     if (queued !== 0) throw new Error('UI-hole mode broke native-only delivery queued=' + queued);
 
-    // Changing holes and geometry while visible must reapply a valid region.
+    // Stress region mutation far harder than real control visibility changes. The
+    // native producer must continue presenting while main performs Win32 region
+    // updates, proving these rare UI operations do not enter the producer path.
+    const stressBefore = addon.nativePresenterStats(id);
+    const stressPresentedBefore = Number(stressBefore.presentedFrames || 0);
+    const stressNativeBefore = Number(stressBefore.nativeOnlyFrames || 0);
+    const stressStarted = Date.now();
+    for (let i = 0; i < 30; i++) {
+      const next = (i & 1) ? hole : [330,240,220,80];
+      if (addon.setNativePresenterUiHoles(id, next) !== true) throw new Error('region stress update failed at ' + i);
+      await sleep(15);
+    }
+    const stressElapsed = Date.now() - stressStarted;
+    const stressAfter = addon.nativePresenterStats(id);
+    const stressPresentedDelta = Number(stressAfter.presentedFrames || 0) - stressPresentedBefore;
+    const stressNativeDelta = Number(stressAfter.nativeOnlyFrames || 0) - stressNativeBefore;
+    if (stressPresentedDelta < 5 || stressNativeDelta < 5 || Number(stressAfter.r36UiRegionFailures) !== 0) {
+      throw new Error('region stress starved native presenter ' + JSON.stringify({stressElapsed,stressPresentedDelta,stressNativeDelta,stressAfter}));
+    }
+    if (addon.setNativePresenterUiHoles(id, hole) !== true) throw new Error('restore UI hole after stress failed');
+
     if (addon.setNativePresenterUiHoles(id, [330,240,220,80]) !== true) throw new Error('second UI-hole update failed');
     let changed = addon.nativePresenterStats(id);
     if (Number(changed.r36UiHoleCount) !== 1 || changed.r36FirstHoleExcluded !== true || Number(changed.r36UiRegionFailures) !== 0) throw new Error('second UI-hole region invalid ' + JSON.stringify(changed));
@@ -151,8 +168,6 @@ async function desktopSampleAt(screenX, screenY) {
     if (Number(cleared.r36UiHoleCount) !== 0 || Number(cleared.r36UiRegionFailures) !== 0) throw new Error('clear UI holes invalid ' + JSON.stringify(cleared));
     if (addon.setNativePresenterUiHoles(id, hole) !== true) throw new Error('restore UI hole failed');
 
-    // Optional DWM proof. Hosted Windows sometimes exposes a neutral desktop; in
-    // that case native GetWindowRgn + capturePage remain authoritative.
     let dwm = 'unobservable';
     try {
       const stats = addon.nativePresenterStats(id);
@@ -164,7 +179,7 @@ async function desktopSampleAt(screenX, screenY) {
 
     const finalStats = addon.nativePresenterStats(id);
     if (finalStats.r36FirstHoleExcluded !== true || Number(finalStats.r36UiRegionFailures) !== 0) throw new Error('final UI-hole proof invalid ' + JSON.stringify(finalStats));
-    console.log('R36_NATIVE_UI_HOLE_SMOKE_OK regionHoleExcluded=1 ownerUi=green dwm=' + dwm + ' mainBlockMs=900 autonomousPresented=' + presentedDelta + ' autonomousNativeOnly=' + nativeOnlyDelta + ' nativeOnlyQueued=0 regionUpdates=' + Number(finalStats.r36UiRegionUpdates || 0) + ' regionFailures=0 deviceMode=' + created.deviceMode);
+    console.log('R36_NATIVE_UI_HOLE_SMOKE_OK regionHoleExcluded=1 ownerUi=green dwm=' + dwm + ' mainBlockMs=900 autonomousPresented=' + presentedDelta + ' autonomousNativeOnly=' + nativeOnlyDelta + ' nativeOnlyQueued=0 regionStressUpdates=30 regionStressMs=' + stressElapsed + ' regionStressPresented=' + stressPresentedDelta + ' regionStressNativeOnly=' + stressNativeDelta + ' regionUpdates=' + Number(finalStats.r36UiRegionUpdates || 0) + ' regionFailures=0 deviceMode=' + created.deviceMode);
   } finally {
     if (id != null) {
       try { addon.setNativePresenterUiHoles(id, []); } catch {}
