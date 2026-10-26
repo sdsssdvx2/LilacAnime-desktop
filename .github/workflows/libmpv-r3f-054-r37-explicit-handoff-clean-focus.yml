@@ -5,6 +5,7 @@ on:
     branches: [libmpv-r3f-054-r37-explicit-handoff-clean-focus]
     paths:
       - .github/workflows/libmpv-r3f-054-r37-explicit-handoff-clean-focus.yml
+      - scripts/r37-transform-anchor-compat.cjs
       - scripts/r37-explicit-handoff-clean-focus.cjs
       - scripts/r37-native-handoff-freeze-smoke.cjs
       - scripts/r37-explicit-handoff-e2e-smoke.cjs
@@ -67,13 +68,19 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          node --check scripts/r37-transform-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-explicit-handoff-clean-focus.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-native-handoff-freeze-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          Write-Host 'R37_PREFLIGHT_SYNTAX_OK'
+          node scripts/r37-transform-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r37-explicit-handoff-clean-focus.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R37_PREFLIGHT_SYNTAX_OK transformCompat=qualified-r36-r27-tail+exact-exe'
 
       - name: Build and qualify R37
         shell: powershell
