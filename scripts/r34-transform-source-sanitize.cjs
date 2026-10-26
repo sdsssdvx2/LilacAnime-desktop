@@ -52,5 +52,14 @@ states.push(replaceExactOrAlready(
   'R34 R33 bridge require replacement'
 ));
 
+// Do not claim the native fallback subtitle is loaded unless mpv accepted sub-add.
+// This prevents a later track replacement from reintroducing the sub-remove failure
+// seen in the user's R33 diagnostic when the first native subtitle was not present.
+states.push(replaceExactOrAlready(
+  `        await this._command(['sub-add', r32NativeSubtitle, 'select']);\n        this._r34NativeSubtitleLoaded = true;`,
+  `        this._r34NativeSubtitleLoaded = await this._command(['sub-add', r32NativeSubtitle, 'select']);`,
+  'R34 native subtitle loaded acknowledgement'
+));
+
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware subtitleLoadAck=1`);
