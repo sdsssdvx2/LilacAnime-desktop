@@ -4,7 +4,9 @@ function Sha256([string]$path){return (Get-FileHash $path -Algorithm SHA256).Has
 
 # R33 is the exact user-tested baseline. Preserve every R34 support transform
 # across R33's pinned reconstruction, then apply R34 only to the concrete,
-# qualified R33 working tree.
+# qualified R33 working tree. The one R33 visible-focus runtime smoke is deferred
+# until after R34 repairs its blocking native Present path; every R33 source gate
+# and transform still runs unchanged.
 $r34Stash=Join-Path $env:RUNNER_TEMP 'lilac-r34-support'
 Remove-Item $r34Stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $r34Stash|Out-Null
@@ -17,8 +19,8 @@ $r34Support=@(
 )
 foreach($name in $r34Support){$src=Join-Path 'scripts' $name;if(-not(Test-Path $src)){throw "R34 support missing: $name"};Copy-Item $src (Join-Path $r34Stash $name) -Force}
 
-& ./scripts/r33-owned-popup-focus-build.ps1
-Assert-Exit 'qualified R33 baseline build'
+& ./scripts/r34-r33-baseline-defer.ps1
+Assert-Exit 'qualified R33 baseline build with visible smoke deferred'
 New-Item -ItemType Directory -Force -Path scripts|Out-Null
 foreach($name in $r34Support){Copy-Item (Join-Path $r34Stash $name) (Join-Path 'scripts' $name) -Force}
 
@@ -68,8 +70,10 @@ $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridg
 $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
 & node_modules/.bin/electron.cmd scripts/r32-native-producer-watchdog-smoke.cjs
 Assert-Exit 'R34 inherited native producer watchdog smoke'
+# This is the exact R33 DWM focus smoke deferred above. It now exercises the
+# repaired R34 nonblocking presenter instead of the known blocking R33 Present.
 & node_modules/.bin/electron.cmd scripts/r33-owned-popup-visible-focus-smoke.cjs
-Assert-Exit 'R34 inherited visible owned-popup DWM smoke'
+Assert-Exit 'R34 post-fix inherited visible owned-popup DWM smoke'
 & node_modules/.bin/electron.cmd scripts/r34-focus-handoff-native-smoke.cjs
 Assert-Exit 'R34 dual-path focus handoff smoke'
 Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
