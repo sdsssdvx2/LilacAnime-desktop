@@ -151,7 +151,7 @@ const focusReplacement = String.raw`  function r34SetNativeSubtitleVisible(visib
     try {
       return addon.setNativePresenterMirrorChromium(playerId, true) === true;
     } catch (error) {
-      lastError = `R34 focus handoff arm failed: ${String(error?.message || error).slice(0, 180)}`;
+      lastError = 'R34 focus handoff arm failed: ' + String(error?.message || error).slice(0, 180);
       r34FocusHandoffPending = false;
       return false;
     }
@@ -197,7 +197,7 @@ const focusReplacement = String.raw`  function r34SetNativeSubtitleVisible(visib
     } catch (error) {
       r33NativePresenterActive = false;
       r34SetNativeSubtitleVisible(false, 'blur-fail-open');
-      lastError = `R34 native presenter focus failed: ${String(error?.message || error).slice(0, 180)}`;
+      lastError = 'R34 native presenter focus failed: ' + String(error?.message || error).slice(0, 180);
     }
   }`;
 bridge = bridge.slice(0, focusStart) + focusReplacement + bridge.slice(focusEnd);
@@ -346,7 +346,7 @@ function r34EnsureCacheWriteWorker(){
 function r34QueueJsonWrite(target,value){
   try{r34CacheWriteSubmitted+=1;r34EnsureCacheWriteWorker().postMessage({target,value})}catch{r34CacheWriteErrors+=1}
 }
-function saveCatalogFile(provider,name,value){const key=`${provider}-${name}`;clearTimeout(indexSaveTimers[key]);indexSaveTimers[key]=setTimeout(()=>{try{r34QueueJsonWrite(path.join(app.getPath('userData'),`${key}.json`),value())}catch{}},2000)} // LILAC_R34_CACHE_WRITE_WORKER`;
+function saveCatalogFile(provider,name,value){const key=String(provider)+'-'+String(name);clearTimeout(indexSaveTimers[key]);indexSaveTimers[key]=setTimeout(()=>{try{r34QueueJsonWrite(path.join(app.getPath('userData'),key+'.json'),value())}catch{}},2000)} // LILAC_R34_CACHE_WRITE_WORKER`;
 main = main.replace(catalogAnchor, cacheHelpers);
 
 main = replaceOnce(
