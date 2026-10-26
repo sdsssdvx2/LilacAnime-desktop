@@ -292,13 +292,21 @@ entry = replaceOnce(
 );
 entry = replaceOnce(
   entry,
-  `    this._playerOpen = false;
-    this._openPromise = null;`,
-  `    this._playerOpen = false;
-    this._openPromise = null;
-    this._r34NativeSubtitleLoaded = false;`,
-  'R34 subtitle loaded reset'
+  '    this._trackByElement = new Map();',
+  '    this._trackByElement = new Map();\n    this._r34NativeSubtitleLoaded = false;',
+  'R34 subtitle loaded constructor init'
 );
+const r34OpenStart = entry.indexOf('  async openLilacSource(');
+const r34OpenEnd = entry.indexOf('\n  async play()', r34OpenStart);
+if (r34OpenStart < 0 || r34OpenEnd <= r34OpenStart) throw new Error('R34 openLilacSource structural boundary missing');
+let r34OpenBlock = entry.slice(r34OpenStart, r34OpenEnd);
+r34OpenBlock = replaceOnce(
+  r34OpenBlock,
+  '    const token = ++this._openToken;',
+  '    const token = ++this._openToken;\n    this._r34NativeSubtitleLoaded = false;',
+  'R34 subtitle loaded open reset'
+);
+entry = entry.slice(0, r34OpenStart) + r34OpenBlock + entry.slice(r34OpenEnd);
 
 // ---------------------------------------------------------------------------
 // C) Remove the largest known synchronous background disk writes from Electron
