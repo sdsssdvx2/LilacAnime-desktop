@@ -1,0 +1,31 @@
+name: LilacAnime R34 transform fast preflight
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r34-focus-handoff-stall-fix]
+    paths:
+      - .github/workflows/libmpv-r34-transform-preflight.yml
+      - scripts/r34-transform-source-sanitize.cjs
+      - scripts/r34-focus-handoff-stall-fix.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-r34-transform-fast-preflight
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sanitize and syntax-check R34 transform
+        shell: bash
+        run: |
+          node scripts/r34-transform-source-sanitize.cjs
+          node --check scripts/r34-transform-source-sanitize.cjs
+          node --check scripts/r34-focus-handoff-stall-fix.cjs
+          echo 'R34_FAST_TRANSFORM_PREFLIGHT_OK sanitizer=1 syntax=1'
