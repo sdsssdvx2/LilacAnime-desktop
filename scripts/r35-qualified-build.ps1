@@ -16,14 +16,16 @@ $source = Replace-Once $source `
    "  'r34-hosted-visual-proof.cjs'," + "`n" +
    "  'r34-hosted-refocus-hardening.cjs'," + "`n" +
    "  'r34-run-smoke-with-timeout.cjs'," + "`n" +
+   "  'r35-hosted-native-startup-hardening.cjs'," + "`n" +
    "  'r35-paused-handoff-ui-recovery.cjs'," + "`n" +
    "  'r35-paused-handoff-redraw-smoke.cjs'," + "`n" +
    "  'r35-run-smoke-with-timeout.cjs'," + "`n" +
    "  'r35-cache-worker-heartbeat-smoke.cjs'") `
   'R35 support stash'
 
-# Reapply the final hosted R34 proof transforms, then R35. The product tree is
-# modified only after reconstruction, never before the pinned checkout.
+# Reapply the final hosted R34 proof transforms, add R35 hosted-startup telemetry,
+# then apply the product transform. The hosted hardening only widens observation
+# time; exact-S_OK/non-S_OK/900ms-autonomy proof remains unchanged.
 $source = Replace-Once $source `
   "Assert-Exit 'R34 smoke correctness hardening'" `
   ("Assert-Exit 'R34 smoke correctness hardening'" + "`n" +
@@ -35,6 +37,10 @@ $source = Replace-Once $source `
    "Assert-Exit 'R34 hosted refocus hardening syntax'" + "`n" +
    "node scripts/r34-hosted-refocus-hardening.cjs" + "`n" +
    "Assert-Exit 'R34 hosted refocus hardening transform'" + "`n" +
+   "node --check scripts/r35-hosted-native-startup-hardening.cjs" + "`n" +
+   "Assert-Exit 'R35 hosted startup hardening syntax'" + "`n" +
+   "node scripts/r35-hosted-native-startup-hardening.cjs" + "`n" +
+   "Assert-Exit 'R35 hosted startup hardening transform'" + "`n" +
    "node --check scripts/r35-paused-handoff-ui-recovery.cjs" + "`n" +
    "Assert-Exit 'R35 transform syntax'" + "`n" +
    "node scripts/r35-paused-handoff-ui-recovery.cjs" + "`n" +
@@ -99,6 +105,6 @@ $source = Replace-Once $source `
 
 $temp = Join-Path $env:RUNNER_TEMP 'r35-qualified-build-generated.ps1'
 [System.IO.File]::WriteAllText($temp,$source,(New-Object System.Text.UTF8Encoding($false)))
-Write-Host 'R35_QUALIFIED_BUILD_WRAPPER_OK base=R34 hostedVisual=preserved pausedHandoff=redraw+ack assOverride=scale cacheHeartbeat=stress'
+Write-Host 'R35_QUALIFIED_BUILD_WRAPPER_OK base=R34 hostedVisual=strict+startup-telemetry pausedHandoff=redraw+ack assOverride=scale cacheHeartbeat=stress'
 & $temp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
