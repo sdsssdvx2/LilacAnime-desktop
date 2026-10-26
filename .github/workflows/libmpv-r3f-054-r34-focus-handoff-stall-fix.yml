@@ -5,6 +5,7 @@ on:
     branches: [libmpv-r3f-054-r34-focus-handoff-stall-fix]
     paths:
       - .github/workflows/libmpv-r3f-054-r34-focus-handoff-stall-fix.yml
+      - scripts/r34-transform-source-sanitize.cjs
       - scripts/r34-focus-handoff-stall-fix.cjs
       - scripts/r34-focus-handoff-native-smoke.cjs
       - scripts/r34-focus-handoff-stall-build.ps1
@@ -61,6 +62,12 @@ jobs:
           node scripts/r32-transform-source-sanitize.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/r33-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Sanitize R34 before R33 reconstructs the tree so the stashed transform
+          # is already syntax-safe. The build script repeats this after restore.
+          node scripts/r34-transform-source-sanitize.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check scripts/r34-focus-handoff-stall-fix.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/r34-focus-handoff-stall-build.ps1
       - name: Upload qualified R34 artifact
