@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
@@ -9,17 +10,19 @@ const timeoutMs = Math.max(10_000, Number(process.argv[4]) || 120_000);
 if (!script) throw new Error('usage: node r34-run-smoke-with-timeout.cjs <script> [label] [timeoutMs]');
 
 const root = path.resolve(__dirname, '..');
-const electronCmd = path.join(root, 'node_modules', '.bin', 'electron.cmd');
 const childScript = path.resolve(root, script);
-const comspec = process.env.ComSpec || 'cmd.exe';
-// Windows cmd.exe /s /c has special first/last-quote stripping rules. Invoking a
-// .cmd file as a bare quoted command can therefore leave the quote characters in
-// argv[0] (the previous wrapper failed with '"...electron.cmd" is not recognized').
-// CALL gives cmd.exe an explicit batch-command target and preserves quoted paths.
-const commandLine = `call "${electronCmd}" "${childScript}"`;
-console.log(`R34_SMOKE_PARENT_START label=${label} timeoutMs=${timeoutMs} script=${script}`);
+// Do not go through node_modules/.bin/electron.cmd or cmd.exe here. Windows
+// cmd /S /C quote stripping made the quoted .cmd path itself become argv[0] in
+// hosted CI. The electron npm package exposes the concrete electron.exe path
+// when required from ordinary Node, so spawn that executable directly.
+const electronExe = require('electron');
+if (typeof electronExe !== 'string' || !fs.existsSync(electronExe)) {
+  throw new Error(`Electron executable not found: ${String(electronExe)}`);
+}
+if (!fs.existsSync(childScript)) throw new Error(`Smoke script not found: ${childScript}`);
+console.log(`R34_SMOKE_PARENT_START label=${label} timeoutMs=${timeoutMs} script=${script} launcher=electron-exe-direct`);
 
-const child = spawn(comspec, ['/d', '/s', '/c', commandLine], {
+const child = spawn(electronExe, [childScript], {
   cwd: root,
   env: process.env,
   stdio: 'inherit',
