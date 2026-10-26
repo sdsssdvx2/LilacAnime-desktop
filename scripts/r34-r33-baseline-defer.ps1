@@ -25,11 +25,9 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 # Preserve the R34 smoke-hardening helper across the nested R31/R32 pinned checkout.
 $supportOld = '"  ''r33-owned-popup-visible-focus-smoke.cjs''")'
 $supportNew = '"  ''r33-owned-popup-visible-focus-smoke.cjs'',''" + "`n" + "  ''r34-producer-watchdog-smoke-hardening.cjs''")'
-# The PowerShell literal above intentionally represents this generated R33 source:
-#   "  'r33-owned-popup-visible-focus-smoke.cjs'," + "`n" + "  'r34-producer-watchdog-smoke-hardening.cjs'")
-# Normalize the one embedded quote that PowerShell single-quote escaping otherwise
-# leaves after the comma.
-$supportNew = $supportNew.Replace("cjs','`\"", "cjs',`\"")
+# Build the exact generated source without relying on an ambiguous doubled quote
+# after the comma.
+$supportNew = $supportNew.Replace("cjs','`"", "cjs',`"")
 $source = Replace-Once $source $supportOld $supportNew 'R34 producer smoke support injection'
 
 # Run the helper after R32/R33 support files have been restored but before the
@@ -43,12 +41,10 @@ $new = '  ''cmd.exe /d /c "exit 0"; Write-Host "R34_R33_BASELINE_VISIBLE_SMOKE_D
 $source = Replace-Once $source $old $new 'R34 R33 smoke-defer anchor'
 
 # Validate the generated R33 builder text before executing any pinned checkout.
-if (-not $source.Contains("'r33-owned-popup-visible-focus-smoke.cjs'," + '" + "`n" + "' + "  'r34-producer-watchdog-smoke-hardening.cjs'")) {
-  throw 'R34 producer smoke support list generation malformed'
-}
-if (-not $source.Contains('node scripts/r34-producer-watchdog-smoke-hardening.cjs')) {
-  throw 'R34 producer smoke hardening execution injection missing'
-}
+$expectedSupport = '"  ''r33-owned-popup-visible-focus-smoke.cjs'',''" + "`n" + "  ''r34-producer-watchdog-smoke-hardening.cjs''")'
+$expectedSupport = $expectedSupport.Replace("cjs','`"", "cjs',`"")
+if (-not $source.Contains($expectedSupport)) { throw 'R34 producer smoke support list generation malformed' }
+if (-not $source.Contains('node scripts/r34-producer-watchdog-smoke-hardening.cjs')) { throw 'R34 producer smoke hardening execution injection missing' }
 
 $temp = Join-Path $env:RUNNER_TEMP 'r34-r33-baseline-deferred.ps1'
 [System.IO.File]::WriteAllText($temp, $source, (New-Object System.Text.UTF8Encoding($false)))
