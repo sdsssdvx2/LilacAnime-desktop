@@ -62,6 +62,15 @@ function replaceLineStarting(needle, replacement, label) {
   throw new Error(`${label}: expected one definition line or one sanitized line, found offending=${matches.length} sanitized=${already.length}`);
 }
 
+function replaceSection(startMarker, endMarker, replacement, alreadyMarker, label) {
+  if (text.includes(alreadyMarker)) return 'already';
+  const start = text.indexOf(startMarker);
+  const end = text.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end <= start) throw new Error(`${label}: section boundary missing`);
+  text = text.slice(0, start) + replacement + text.slice(end);
+  return 'replaced';
+}
+
 const states = [];
 
 // The R34 transform itself generates JavaScript with String.raw template literals.
@@ -102,19 +111,31 @@ states.push(replaceExactOrAlready(
   'R34 R33 bridge require replacement'
 ));
 
-// R31 inserted state-cache invalidation between addon.command() and the return.
-// The actual command() function is indented four spaces inside the bridge. Earlier
-// R34 preflight normalized this to six spaces, which syntax-checked but could never
-// match the reconstructed R33 product. Normalize to the exact R31 bridge shape.
-states.push(replaceExactOrAlready(
-  "  '      addon.command(playerId, commandArray);\\n      return { ok: true };',",
-  "  \"    addon.command(playerId, commandArray);\\n    if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\\n      r31LastPlaybackPollPerfMs = -Infinity;\\n    }\\n    return { ok: true };\",",
-  'R34 final R31 command needle'
-));
-states.push(replaceExactOrAlready(
-  "`      addon.command(playerId, commandArray);\n      if (commandArray[0] === 'sub-add') {\n        r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n      }\n      return { ok: true };`,",
-  "`    addon.command(playerId, commandArray);\n    if (commandArray[0] === 'sub-add') {\n      r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n    }\n    if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\n      r31LastPlaybackPollPerfMs = -Infinity;\n    }\n    return { ok: true };`,",
-  'R34 preserve R31 command invalidation'
+// Stop depending on the exact text following addon.command(). R31 appends state
+// cache invalidation there, and future qualified stages may append more. Replace
+// the whole transform section with a command()-bounded patch which searches only
+// for the one native call inside that function and inserts authority immediately
+// after it while preserving everything that follows.
+const structuralCommandPatch = [
+  '// After renderer sub-add, main immediately reapplies the authoritative focus state.',
+  '// Renderer no longer races BrowserWindow focus with document.hasFocus().',
+  '// LILAC_R34_STRUCTURAL_SUBTITLE_COMMAND_PATCH',
+  "const commandStart = bridge.indexOf('  function command(value) {');",
+  "const commandEnd = bridge.indexOf('\\n\\n  function ', commandStart + 1);",
+  "if (commandStart < 0 || commandEnd <= commandStart) throw new Error('R34 command() structural boundary missing');",
+  'let commandBlock = bridge.slice(commandStart, commandEnd);',
+  "const commandCall = '    addon.command(playerId, commandArray);';",
+  "commandBlock = replaceOnce(commandBlock, commandCall, commandCall + \"\\n    if (commandArray[0] === 'sub-add') {\\n      r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\\n    }\", 'R34 subtitle authority inside command()');",
+  'bridge = bridge.slice(0, commandStart) + commandBlock + bridge.slice(commandEnd);',
+  '',
+  ''
+].join('\n');
+states.push(replaceSection(
+  '// After renderer sub-add, main immediately reapplies the authoritative focus state.',
+  '// Add bounded handoff state to the existing diagnostics object without adding any',
+  structuralCommandPatch,
+  'LILAC_R34_STRUCTURAL_SUBTITLE_COMMAND_PATCH',
+  'R34 structural subtitle command patch'
 ));
 
 // R33's actual low-rate event-loop probe uses the original names from
@@ -143,12 +164,14 @@ for (const forbidden of [
   'lastError = `R34 focus handoff arm failed:',
   'lastError = `R34 native presenter focus failed:',
   'R33_MAIN_HEARTBEAT_MS',
-  'r33MainStallCount'
+  'r33MainStallCount',
+  "'      addon.command(playerId, commandArray);\\n      return { ok: true };'"
 ]) {
   if (text.includes(forbidden)) throw new Error(`R34 syntax sanitizer left forbidden/stale transform text: ${forbidden}`);
 }
 const cacheDefinitionLines = text.split('\n').filter(line => line.startsWith('function saveCatalogFile(provider,name,value){const key=`'));
 if (cacheDefinitionLines.length) throw new Error(`R34 syntax sanitizer left ${cacheDefinitionLines.length} nested-template cache definition(s)`);
+if (!text.includes('LILAC_R34_STRUCTURAL_SUBTITLE_COMMAND_PATCH')) throw new Error('R34 structural subtitle command patch marker missing');
 
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-four-space heartbeatAnchor=R33-shipped subtitleLoadAck=1`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandPatch=structural-function-boundary heartbeatAnchor=R33-shipped subtitleLoadAck=1`);
