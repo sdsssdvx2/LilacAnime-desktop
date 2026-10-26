@@ -52,6 +52,20 @@ states.push(replaceExactOrAlready(
   'R34 R33 bridge require replacement'
 ));
 
+// R31 inserted state-cache invalidation between addon.command() and the return.
+// Normalize both the match and replacement in the R34 transform so subtitle
+// authority is added without deleting that already-qualified R31 behavior.
+states.push(replaceExactOrAlready(
+  "  '      addon.command(playerId, commandArray);\\n      return { ok: true };',",
+  "  \"      addon.command(playerId, commandArray);\\n      if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\\n        r31LastPlaybackPollPerfMs = -Infinity;\\n      }\\n      return { ok: true };\",",
+  'R34 final R31 command needle'
+));
+states.push(replaceExactOrAlready(
+  "`      addon.command(playerId, commandArray);\n      if (commandArray[0] === 'sub-add') {\n        r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n      }\n      return { ok: true };`,",
+  "`      addon.command(playerId, commandArray);\n      if (commandArray[0] === 'sub-add') {\n        r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n      }\n      if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\n        r31LastPlaybackPollPerfMs = -Infinity;\n      }\n      return { ok: true };`,",
+  'R34 preserve R31 command invalidation'
+));
+
 // Do not claim the native fallback subtitle is loaded unless mpv accepted sub-add.
 // This prevents a later track replacement from reintroducing the sub-remove failure
 // seen in the user's R33 diagnostic when the first native subtitle was not present.
@@ -62,4 +76,4 @@ states.push(replaceExactOrAlready(
 ));
 
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware subtitleLoadAck=1`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-aware subtitleLoadAck=1`);
