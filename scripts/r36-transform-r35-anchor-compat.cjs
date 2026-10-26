@@ -6,6 +6,7 @@ const path = require('node:path');
 const target = path.resolve(__dirname, 'r36-handoff-ack-subtitle-stability.cjs');
 const generatedBridge = path.resolve(__dirname, '..', 'electron', 'libmpv-shared-main.cjs');
 const generatedApp = path.resolve(__dirname, '..', 'src', 'app.js');
+const generatedSmokeRunner = path.resolve(__dirname, 'r35-run-smoke-with-timeout.cjs');
 
 // The workflow may invoke this before the qualified R35 reconstruction. Keep that
 // checkout untouched so the pinned-source builder can switch refs safely. The R36
@@ -20,6 +21,31 @@ if (!bridge.includes('LILAC_R35_PAUSED_HANDOFF_UI_RECOVERY') || !bridge.includes
   process.exit(0);
 }
 const app = fs.readFileSync(generatedApp, 'utf8').replace(/\r\n/g, '\n');
+if (!fs.existsSync(generatedSmokeRunner)) {
+  throw new Error('R36 qualified R35 smoke runner missing: ' + generatedSmokeRunner);
+}
+
+// R36 reuses the already-qualified R35 Electron smoke parent, but the inherited
+// parent intentionally whitelists success markers by child filename. Teach that
+// runner the single new R36 native UI-hole marker after the exact R35 tree has been
+// reconstructed. This changes only test orchestration; product runtime code is not
+// touched. Keeping the whitelist explicit also prevents a zero-exit child without
+// the proof marker from being accepted.
+let smokeRunner = fs.readFileSync(generatedSmokeRunner, 'utf8').replace(/\r\n/g, '\n');
+const runnerAnchor = "  ['r35-paused-no-subtitle-handoff-smoke.cjs', 'R35_PAUSED_NO_SUBTITLE_HANDOFF_OK']";
+const r36RunnerEntry = "  ['r36-native-ui-hole-smoke.cjs', 'R36_NATIVE_UI_HOLE_SMOKE_OK']";
+let runnerMarkerState = 'already';
+if (!smokeRunner.includes(r36RunnerEntry)) {
+  const anchorCount = smokeRunner.split(runnerAnchor).length - 1;
+  if (anchorCount !== 1) throw new Error('R36 inherited R35 smoke-runner marker anchor expected once, found ' + anchorCount);
+  smokeRunner = smokeRunner.replace(runnerAnchor, runnerAnchor + ',\n' + r36RunnerEntry);
+  fs.writeFileSync(generatedSmokeRunner, smokeRunner, 'utf8');
+  runnerMarkerState = 'normalized';
+}
+const finalSmokeRunner = fs.readFileSync(generatedSmokeRunner, 'utf8').replace(/\r\n/g, '\n');
+if (!finalSmokeRunner.includes(r36RunnerEntry)) {
+  throw new Error('R36 UI-hole success marker did not persist in inherited smoke runner');
+}
 
 // R32 added setNativePresenterBounds and R34's sanitizer deliberately preserved it
 // between the handoff mirror export and nativePresenterStats. Detect the exact
@@ -162,4 +188,4 @@ if (final.includes(legacyOldShowDecl) || final.includes(legacyR36Show)) {
 if (!final.includes(safeRegionType) || final.includes(legacyRegionType)) {
   throw new Error('R36 undefined Int32Value region diagnostic helper survived normalization');
 }
-console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds controlsPolicy=R2M-mouse-or-settings controlsAnchor=' + controlsAnchorState + ' controlsReplacement=' + controlsReplacementState + ' uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(',') + ' regionTypeHelper=' + regionTypeState + ':DoubleValue');
+console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds controlsPolicy=R2M-mouse-or-settings controlsAnchor=' + controlsAnchorState + ' controlsReplacement=' + controlsReplacementState + ' uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(',') + ' regionTypeHelper=' + regionTypeState + ':DoubleValue smokeRunnerR36Marker=' + runnerMarkerState);
