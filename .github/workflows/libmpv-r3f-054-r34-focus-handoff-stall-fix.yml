@@ -63,12 +63,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/r33-transform-source-sanitize.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Sanitize R34 before R33 reconstructs the tree so the stashed transform
-          # is already syntax-safe. The build script repeats this after restore.
-          node scripts/r34-transform-source-sanitize.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --check scripts/r34-focus-handoff-stall-fix.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # R34's own build script stashes its support files, performs the pinned
+          # R33 reconstruction, restores them, then sanitizes + syntax-checks R34.
+          # Do not mutate the R34 transform here or git checkout would see a dirty tree.
           ./scripts/r34-focus-handoff-stall-build.ps1
       - name: Upload qualified R34 artifact
         uses: actions/upload-artifact@v4
