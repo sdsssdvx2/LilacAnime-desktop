@@ -20,13 +20,13 @@ assert(app.includes('LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE'), 'plain native sub
 assert(app.includes("const nativeSubtitlePath=(options.path||options.assPath)||'';"), 'native subtitle does not prefer plain dialogue path');
 
 // Lock the semantic R32 fallback contract without freezing historical defaults or
-// clamp ranges that R2P/R2V are allowed to calibrate. Each native style variable
-// must still be sourced from the same user-facing setting key, and the final mpv
-// command mapping must remain exactly the R32 mapping that the generated product
-// actually ships. This catches real behavior drift while tolerating preset tuning.
+// clamp ranges that R2P/R2V are allowed to calibrate. R32 deliberately maps the
+// shared Lilac subtitle controls to subtitleSize/subtitlePosition, while outline
+// and weight retain their vtt* storage keys. Verify those real user-facing keys
+// and the final mpv command mapping instead of brittle default-value strings.
 const sourceBindings = [
-  ['position', 'vttPosition'],
-  ['size', 'vttSize'],
+  ['position', 'subtitlePosition'],
+  ['size', 'subtitleSize'],
   ['outline', 'vttOutline'],
   ['weight', 'vttWeight'],
   ['syncMs', 'subtitleSync']
@@ -63,7 +63,7 @@ for (const [property, label] of [
 
 // Ensure the generated renderer bundle carries the same source/override semantics,
 // not merely the editable source file.
-assert(bundle.includes('vttPosition') && bundle.includes('vttSize') && bundle.includes('vttOutline') && bundle.includes('vttWeight') && bundle.includes('subtitleSync'), 'bundled native subtitle settings bindings missing');
+assert(bundle.includes('subtitlePosition') && bundle.includes('subtitleSize') && bundle.includes('vttOutline') && bundle.includes('vttWeight') && bundle.includes('subtitleSync'), 'bundled native subtitle settings bindings missing');
 assert(bundle.includes('sub-pos') && bundle.includes('sub-font-size') && bundle.includes('sub-border-size') && bundle.includes('sub-bold') && bundle.includes('sub-delay'), 'bundled native subtitle command mappings missing');
 
-console.log('R36_SUBTITLE_DETERMINISM_SMOKE_OK source=plain-first assOverride=strip settings=vttPosition+vttSize+vttOutline+vttWeight+subtitleSync position=R32-sub-pos size=R32-relative-font-size border=R32-outline weight=R32-bold sync=R32-delay styleOwner=single defaults=calibration-tolerant focusedOwner=html nativeOwner=unfocused');
+console.log('R36_SUBTITLE_DETERMINISM_SMOKE_OK source=plain-first assOverride=strip settings=subtitlePosition+subtitleSize+vttOutline+vttWeight+subtitleSync position=R32-sub-pos size=R32-relative-font-size border=R32-outline weight=R32-bold sync=R32-delay styleOwner=single defaults=calibration-tolerant focusedOwner=html nativeOwner=unfocused');
