@@ -23,17 +23,28 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 }
 
 # Preserve the R34 smoke-hardening helper across the nested R31/R32 pinned checkout.
-$supportOld = '"  ''r33-owned-popup-visible-focus-smoke.cjs''")'
-$supportNew = '"  ''r33-owned-popup-visible-focus-smoke.cjs'',''" + "`n" + "  ''r34-producer-watchdog-smoke-hardening.cjs''")'
-# Build the exact generated source without relying on an ambiguous doubled quote
-# after the comma.
-$supportNew = $supportNew.Replace("cjs','`"", "cjs',`"")
+# Here-strings intentionally spell the generated R33 source literally so nested quote
+# escaping cannot silently create an extra quote/comma.
+$supportOld = @'
+"  'r33-owned-popup-visible-focus-smoke.cjs'")
+'@
+$supportNew = @'
+"  'r33-owned-popup-visible-focus-smoke.cjs'," + "`n" + "  'r34-producer-watchdog-smoke-hardening.cjs'")
+'@
+$supportOld = $supportOld.Trim()
+$supportNew = $supportNew.Trim()
 $source = Replace-Once $source $supportOld $supportNew 'R34 producer smoke support injection'
 
 # Run the helper after R32/R33 support files have been restored but before the
 # inherited compiled producer watchdog smoke is launched.
-$execOld = '"node scripts/r33-visible-smoke-hardening.cjs" + "`n" + "Assert-Exit ''R33 visible smoke hardening''")'
-$execNew = '"node scripts/r33-visible-smoke-hardening.cjs" + "`n" + "Assert-Exit ''R33 visible smoke hardening''" + "`n" + "node --check scripts/r34-producer-watchdog-smoke-hardening.cjs" + "`n" + "Assert-Exit ''R34 producer watchdog smoke hardening syntax''" + "`n" + "node scripts/r34-producer-watchdog-smoke-hardening.cjs" + "`n" + "Assert-Exit ''R34 producer watchdog smoke hardening''")'
+$execOld = @'
+"node scripts/r33-visible-smoke-hardening.cjs" + "`n" + "Assert-Exit 'R33 visible smoke hardening'")
+'@
+$execNew = @'
+"node scripts/r33-visible-smoke-hardening.cjs" + "`n" + "Assert-Exit 'R33 visible smoke hardening'" + "`n" + "node --check scripts/r34-producer-watchdog-smoke-hardening.cjs" + "`n" + "Assert-Exit 'R34 producer watchdog smoke hardening syntax'" + "`n" + "node scripts/r34-producer-watchdog-smoke-hardening.cjs" + "`n" + "Assert-Exit 'R34 producer watchdog smoke hardening'")
+'@
+$execOld = $execOld.Trim()
+$execNew = $execNew.Trim()
 $source = Replace-Once $source $execOld $execNew 'R34 producer smoke execution injection'
 
 $old = '  ''& node_modules/.bin/electron.cmd scripts/r33-owned-popup-visible-focus-smoke.cjs'' `'
@@ -41,9 +52,7 @@ $new = '  ''cmd.exe /d /c "exit 0"; Write-Host "R34_R33_BASELINE_VISIBLE_SMOKE_D
 $source = Replace-Once $source $old $new 'R34 R33 smoke-defer anchor'
 
 # Validate the generated R33 builder text before executing any pinned checkout.
-$expectedSupport = '"  ''r33-owned-popup-visible-focus-smoke.cjs'',''" + "`n" + "  ''r34-producer-watchdog-smoke-hardening.cjs''")'
-$expectedSupport = $expectedSupport.Replace("cjs','`"", "cjs',`"")
-if (-not $source.Contains($expectedSupport)) { throw 'R34 producer smoke support list generation malformed' }
+if (-not $source.Contains($supportNew)) { throw 'R34 producer smoke support list generation malformed' }
 if (-not $source.Contains('node scripts/r34-producer-watchdog-smoke-hardening.cjs')) { throw 'R34 producer smoke hardening execution injection missing' }
 
 $temp = Join-Path $env:RUNNER_TEMP 'r34-r33-baseline-deferred.ps1'
