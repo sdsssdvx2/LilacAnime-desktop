@@ -17,6 +17,40 @@ let bridge = read('electron/libmpv-shared-main.cjs');
 if (!native.includes('LILAC_R33_NATIVE_ONLY_UNFOCUSED') || !bridge.includes('LILAC_R33_OWNED_POPUP_FOCUS_SURFACE')) throw new Error('R33 stall attribution requires R33 focus fix');
 if (native.includes('LILAC_R33_STALL_ATTRIBUTION') || bridge.includes('LILAC_R33_STALL_ATTRIBUTION')) throw new Error('R33 stall attribution already applied');
 
+// R32's bounds diagnostics introduced Int32Value() calls but the qualified addon
+// only defines Uint32Value()/DoubleValue(). R33 rebuilds the native source, so make
+// signed client/screen coordinates explicit JS Numbers before compilation. Using
+// uint32 would corrupt negative coordinates on left/top secondary monitors.
+if (!native.includes('napi_value Int32Value(')) {
+  native = replaceOnce(
+    native,
+    'Int32Value(env, player->nativePresenterX)',
+    'DoubleValue(env, static_cast<double>(player->nativePresenterX))',
+    'R33 signed native presenter X diagnostic'
+  );
+  native = replaceOnce(
+    native,
+    'Int32Value(env, player->nativePresenterY)',
+    'DoubleValue(env, static_cast<double>(player->nativePresenterY))',
+    'R33 signed native presenter Y diagnostic'
+  );
+  native = replaceOnce(
+    native,
+    'Int32Value(env, r33WindowRect.left)',
+    'DoubleValue(env, static_cast<double>(r33WindowRect.left))',
+    'R33 signed presenter screen-left diagnostic'
+  );
+  native = replaceOnce(
+    native,
+    'Int32Value(env, r33WindowRect.top)',
+    'DoubleValue(env, static_cast<double>(r33WindowRect.top))',
+    'R33 signed presenter screen-top diagnostic'
+  );
+}
+if (native.includes('Int32Value(') && !native.includes('napi_value Int32Value(')) {
+  throw new Error('R33 final native source still references undefined Int32Value helper');
+}
+
 native = replaceOnce(
   native,
   '  uint64_t r33NativeOnlyFrames = 0; // LILAC_R33_NATIVE_ONLY_UNFOCUSED\n',
@@ -61,6 +95,8 @@ bridge = replaceOnce(
 
 write('native/libmpv-d3d11-bridge/player_addon.cc', native);
 write('electron/libmpv-shared-main.cjs', bridge);
-for (const marker of ['LILAC_R33_STALL_ATTRIBUTION','r33LongRenderCount','lastLongRenderWallMs']) if (!read('native/libmpv-d3d11-bridge/player_addon.cc').includes(marker)) throw new Error(`R33 native attribution marker missing ${marker}`);
+const finalNative = read('native/libmpv-d3d11-bridge/player_addon.cc');
+if (finalNative.includes('Int32Value(') && !finalNative.includes('napi_value Int32Value(')) throw new Error('R33 undefined Int32Value helper survived final native source');
+for (const marker of ['LILAC_R33_STALL_ATTRIBUTION','r33LongRenderCount','lastLongRenderWallMs']) if (!finalNative.includes(marker)) throw new Error(`R33 native attribution marker missing ${marker}`);
 for (const marker of ['LILAC_R33_STALL_ATTRIBUTION','R33_HEARTBEAT_MS','eventLoopHeartbeat']) if (!read('electron/libmpv-shared-main.cjs').includes(marker)) throw new Error(`R33 bridge attribution marker missing ${marker}`);
-console.log('R33_STALL_ATTRIBUTION_OK mainHeartbeatMs=50 mainStallThresholdMs=80 nativeRenderThresholdMs=60 overhead=fixed-low-rate');
+console.log('R33_STALL_ATTRIBUTION_OK mainHeartbeatMs=50 mainStallThresholdMs=80 nativeRenderThresholdMs=60 signedCoords=DoubleValue undefinedInt32Helper=0 overhead=fixed-low-rate');
