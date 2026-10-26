@@ -1,0 +1,140 @@
+name: LilacAnime Libmpv R36 handoff ack subtitle stability
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r36-handoff-ack-subtitle-stability]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r36-handoff-ack-subtitle-stability.yml
+      - scripts/r36-handoff-ack-subtitle-stability.cjs
+      - scripts/r36-handoff-ack-order-smoke.cjs
+      - scripts/r36-subtitle-determinism-smoke.cjs
+      - scripts/r36-qualified-build.ps1
+      - scripts/r35-hosted-native-startup-hardening.cjs
+      - scripts/r35-paused-handoff-ui-recovery.cjs
+      - scripts/r35-paused-handoff-redraw-smoke.cjs
+      - scripts/r35-paused-no-subtitle-handoff-smoke.cjs
+      - scripts/r35-run-smoke-with-timeout.cjs
+      - scripts/r35-cache-worker-heartbeat-smoke.cjs
+      - scripts/r34-focus-handoff-stall-build.ps1
+      - scripts/r34-r33-baseline-defer.ps1
+      - scripts/r34-transform-source-sanitize.cjs
+      - scripts/r34-focus-handoff-stall-fix.cjs
+      - scripts/r34-handoff-ack-hardening.cjs
+      - scripts/r34-main-stall-hardening.cjs
+      - scripts/r34-smoke-correctness-hardening.cjs
+      - scripts/r34-hosted-visual-proof.cjs
+      - scripts/r34-hosted-refocus-hardening.cjs
+      - scripts/r34-focus-handoff-native-smoke.cjs
+      - scripts/r34-run-smoke-with-timeout.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r36-handoff-ack-subtitle-stability
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r36
+  INSTALLER_NAME: LilacAnime-Libmpv-R36-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r36-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc16
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Preflight R36 scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r35-hosted-native-startup-hardening.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-paused-handoff-ui-recovery.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-paused-handoff-redraw-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r35-paused-no-subtitle-handoff-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r36-handoff-ack-subtitle-stability.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r36-handoff-ack-order-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r36-subtitle-determinism-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R36_PREFLIGHT_SYNTAX_OK'
+      - name: Build and qualify R36
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r36-qualified-build.ps1
+      - name: Upload qualified R36 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r36-handoff-ack-subtitle-stability
+          path: |
+            dist/LilacAnime-Libmpv-R36-Setup.exe
+            dist/lilacanime-libmpv-r36-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish and reverify public R36 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r36 handoff ack and subtitle stability' --notes 'R36 is a targeted correction based on the R35 user recording and diagnostic trace. It preserves the R33 owned-popup native-only unfocused path and direct WebGPU focused path. It fixes the release-before-send handoff acknowledgement race that could leave the native popup covering Chromium UI, rejects inactive handoff redraws, adds a bounded focused fail-open, and makes native fallback subtitles deterministic by preferring the plain dialogue source and stripping ASS positioning/styles while retaining the explicit Lilac subtitle position/size mapping. R36 also records low-overhead cached playback/focus context around long supply gaps so any remaining stutter can be attributed from one diagnostic capture without adding synchronous native polling. Qualification keeps the R33 900 ms autonomy proof, R34 active handoff proof, both R35 paused handoff smokes, 200 alternating acknowledgement-order cycles, deterministic subtitle source/bundle gates, and three repeated active handoff runs.'
+          if($LASTEXITCODE-ne 0){throw 'R36 release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R36 release upload failed'}
+          $v=Join-Path $env:RUNNER_TEMP 'r36-public';Remove-Item $v -Recurse -Force -ErrorAction SilentlyContinue;New-Item -ItemType Directory -Force -Path $v|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $v --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R36 public redownload failed'}
+          $e=Join-Path $v $env:INSTALLER_NAME
+          $m=Get-Content (Join-Path $v $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne $env:R34_INSTALLER_SHA256 -or $z-ne [long]$env:R34_INSTALLER_SIZE){throw 'R36 public installer byte mismatch'}
+          if($m.version-ne $env:APP_VERSION -or $m.qualifiedSourceSha-ne $env:QUALIFIED_SOURCE_SHA -or $m.installerSha256-ne $h -or $m.electron-ne $env:ELECTRON_VERSION -or $m.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R36 public runtime identity mismatch'}
+          if($m.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or $m.r33OwnedPopupBlackErase-ne $false -or $m.r33ChromiumDuplicateDelivery-ne $false){throw 'R36 lost R33 native-only proof'}
+          if($m.r34FocusHandoff-ne 'native-present+chromium-mirror-until-successful-send+allReferencesReleased-then-hide'){throw 'R36 lost R34 active handoff proof'}
+          if($m.r34NativePresent-ne 'DXGI_PRESENT_DO_NOT_WAIT+busy-keep-last-native-frame'){throw 'R36 lost R34 native present proof'}
+          if($m.r34SubtitleOwnership-ne 'main-only-focus-authority+html-focused+libmpv-unfocused+ass-override-strip'){throw 'R36 subtitle manifest mismatch'}
+          if($m.r35PausedHandoff-ne 'mirror-first+sub-visibility-redraw+successful-send+allReferencesReleased-then-hide'){throw 'R36 lost R35 paused handoff proof'}
+          if($m.r36HandoffAck-ne 'bidirectional-send-release-order+1500ms-focused-fail-open'){throw 'R36 handoff acknowledgement proof mismatch'}
+          if($m.r36SubtitleFallback-ne 'plain-dialogue-source-first+ass-strip+r32-style-map'){throw 'R36 subtitle fallback proof mismatch'}
+          if($m.r36SupplyGapDiagnostics-ne 'cached-playback-state+focus-handoff-context+no-extra-native-poll'){throw 'R36 supply-gap diagnostics proof mismatch'}
+          if($m.r36RuntimeSmokes-ne 'ack-order-200-cycles+subtitle-determinism+active-handoff-repeat3+inherited-r33-r35'){throw 'R36 runtime smoke proof mismatch'}
+          Write-Host "R36_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) handoff=bidirectional-ack+fail-open subtitle=plain+strip repeatedHandoff=3"
