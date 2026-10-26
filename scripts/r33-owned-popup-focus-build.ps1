@@ -15,12 +15,12 @@ $r33Injection = @'
 # ---- R33 owned-popup / native-only qualification injection ----
 $core = Replace-Once $core `
   "  'r32-presenter-api-relocate.cjs'" `
-  ("  'r32-presenter-api-relocate.cjs'," + "`n" + "  'r33-owned-popup-focus-fix.cjs'," + "`n" + "  'r33-stall-attribution-probe.cjs'," + "`n" + "  'r33-owned-popup-visible-focus-smoke.cjs'") `
+  ("  'r32-presenter-api-relocate.cjs'," + "`n" + "  'r33-transform-source-sanitize.cjs'," + "`n" + "  'r33-owned-popup-focus-fix.cjs'," + "`n" + "  'r33-stall-attribution-probe.cjs'," + "`n" + "  'r33-owned-popup-visible-focus-smoke.cjs'") `
   'R33 support entries'
 
 $core = Replace-Once $core `
   ("node scripts/r32-presenter-api-relocate.cjs" + "`n" + "Assert-Exit 'R32 presenter API relocate'") `
-  ("node scripts/r32-presenter-api-relocate.cjs" + "`n" + "Assert-Exit 'R32 presenter API relocate'" + "`n" + "node --check scripts/r33-owned-popup-focus-fix.cjs" + "`n" + "Assert-Exit 'R33 owned popup transform syntax'" + "`n" + "node scripts/r33-owned-popup-focus-fix.cjs" + "`n" + "Assert-Exit 'R33 owned popup transform'" + "`n" + "node --check scripts/r33-stall-attribution-probe.cjs" + "`n" + "Assert-Exit 'R33 stall attribution syntax'" + "`n" + "node scripts/r33-stall-attribution-probe.cjs" + "`n" + "Assert-Exit 'R33 stall attribution probe'") `
+  ("node scripts/r32-presenter-api-relocate.cjs" + "`n" + "Assert-Exit 'R32 presenter API relocate'" + "`n" + "node --check scripts/r33-transform-source-sanitize.cjs" + "`n" + "Assert-Exit 'R33 transform sanitizer syntax'" + "`n" + "`$env:LILAC_R33_APPLY_SANITIZE = '1'" + "`n" + "node scripts/r33-transform-source-sanitize.cjs" + "`n" + "`$r33SanitizeExit = `$LASTEXITCODE" + "`n" + "Remove-Item Env:LILAC_R33_APPLY_SANITIZE -ErrorAction SilentlyContinue" + "`n" + "if (`$r33SanitizeExit -ne 0) { throw 'R33 post-reconstruction transform sanitizer failed' }" + "`n" + "node --check scripts/r33-owned-popup-focus-fix.cjs" + "`n" + "Assert-Exit 'R33 owned popup transform syntax'" + "`n" + "node scripts/r33-owned-popup-focus-fix.cjs" + "`n" + "Assert-Exit 'R33 owned popup transform'" + "`n" + "node --check scripts/r33-stall-attribution-probe.cjs" + "`n" + "Assert-Exit 'R33 stall attribution syntax'" + "`n" + "node scripts/r33-stall-attribution-probe.cjs" + "`n" + "Assert-Exit 'R33 stall attribution probe'") `
   'R33 apply after final R32 safety pass'
 
 $core = Replace-Once $core `
