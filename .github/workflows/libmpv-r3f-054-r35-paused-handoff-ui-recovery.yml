@@ -5,6 +5,7 @@ on:
     branches: [libmpv-r3f-054-r35-paused-handoff-ui-recovery]
     paths:
       - .github/workflows/libmpv-r3f-054-r35-paused-handoff-ui-recovery.yml
+      - scripts/r35-hosted-native-startup-hardening.cjs
       - scripts/r35-paused-handoff-ui-recovery.cjs
       - scripts/r35-paused-handoff-redraw-smoke.cjs
       - scripts/r35-run-smoke-with-timeout.cjs
@@ -69,6 +70,8 @@ jobs:
       - name: Preflight R35 scripts
         shell: powershell
         run: |
+          node --check scripts/r35-hosted-native-startup-hardening.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-paused-handoff-ui-recovery.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r35-paused-handoff-redraw-smoke.cjs
