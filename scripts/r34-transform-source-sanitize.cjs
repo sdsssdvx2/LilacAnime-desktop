@@ -92,16 +92,17 @@ states.push(replaceExactOrAlready(
 ));
 
 // R31 inserted state-cache invalidation between addon.command() and the return.
-// Normalize both the match and replacement in the R34 transform so subtitle
-// authority is added without deleting that already-qualified R31 behavior.
+// The actual command() function is indented four spaces inside the bridge. Earlier
+// R34 preflight normalized this to six spaces, which syntax-checked but could never
+// match the reconstructed R33 product. Normalize to the exact R31 bridge shape.
 states.push(replaceExactOrAlready(
   "  '      addon.command(playerId, commandArray);\\n      return { ok: true };',",
-  "  \"      addon.command(playerId, commandArray);\\n      if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\\n        r31LastPlaybackPollPerfMs = -Infinity;\\n      }\\n      return { ok: true };\",",
+  "  \"    addon.command(playerId, commandArray);\\n    if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\\n      r31LastPlaybackPollPerfMs = -Infinity;\\n    }\\n    return { ok: true };\",",
   'R34 final R31 command needle'
 ));
 states.push(replaceExactOrAlready(
   "`      addon.command(playerId, commandArray);\n      if (commandArray[0] === 'sub-add') {\n        r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n      }\n      return { ok: true };`,",
-  "`      addon.command(playerId, commandArray);\n      if (commandArray[0] === 'sub-add') {\n        r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n      }\n      if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\n        r31LastPlaybackPollPerfMs = -Infinity;\n      }\n      return { ok: true };`,",
+  "`    addon.command(playerId, commandArray);\n    if (commandArray[0] === 'sub-add') {\n      r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\n    }\n    if (commandArray[0] === 'set_property' && ['time-pos', 'pause', 'speed'].includes(commandArray[1])) {\n      r31LastPlaybackPollPerfMs = -Infinity;\n    }\n    return { ok: true };`,",
   'R34 preserve R31 command invalidation'
 ));
 
@@ -122,4 +123,4 @@ const cacheDefinitionLines = text.split('\n').filter(line => line.startsWith('fu
 if (cacheDefinitionLines.length) throw new Error(`R34 syntax sanitizer left ${cacheDefinitionLines.length} nested-template cache definition(s)`);
 
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-aware subtitleLoadAck=1`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandAnchor=R31-four-space subtitleLoadAck=1`);
