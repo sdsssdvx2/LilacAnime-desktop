@@ -142,9 +142,33 @@ const oldMoved = `    const movedMeans = sampleMeans(await capturePrimary(), sta
 const newMoved = `    if (r34DesktopCaptureObservable) {\n      const movedMeans = sampleMeans(await capturePrimary(), statsRect(afterMove));\n      const movedChannels = [movedMeans.c0, movedMeans.c1, movedMeans.c2];\n      if (!(movedChannels[redIndex] > movedChannels[blueIndex] + 70 && movedChannels[redIndex] > movedMeans.c1 + 55)) {\n        throw new Error(\`owned popup lost observable DWM output after owner move \${JSON.stringify(movedMeans)}\`);\n      }\n    }`;
 r33 = replaceOnce(r33, oldMoved, newMoved, 'R34 optional moved DWM proof');
 
-const oldRecovery = `    const focusedStats = addon.nativePresenterStats(id);\n    const focusedMeans = sampleMeans(await capturePrimary(), statsRect(focusedStats));\n    const focusedChannels = [focusedMeans.c0, focusedMeans.c1, focusedMeans.c2];\n    if (!(focusedChannels[blueIndex] > focusedChannels[redIndex] + 60 && focusedChannels[blueIndex] > focusedMeans.c1 + 50)) {\n      throw new Error(\`focused recovery did not expose owner/WebGPU plane \${JSON.stringify(focusedMeans)}\`);\n    }\n\n    console.log(\`R33_VISIBLE_FOCUS_SMOKE_OK mode=owned-popup ownerMatches=1 child=0 dwmRedSamples=\${redSamples.length + 1} mainBlockMs=900 autonomousPresented=\${presentedDelta} autonomousNativeOnly=\${nativeOnlyDelta} moved=28x22 focusRecovery=hidden deviceMode=\${created.deviceMode}\`);`;
-const newRecovery = `    const focusedStats = addon.nativePresenterStats(id);\n    if (focusedStats?.windowVisible === true || focusedStats?.requestedVisible === true) throw new Error('native popup remained visible after refocus ' + JSON.stringify(focusedStats));\n    const focusedMeans = r34SampleImageCenter(await main.webContents.capturePage());\n    if (!r34BlueProof(focusedMeans).ok) throw new Error(\`focused recovery capturePage is not blue \${JSON.stringify(focusedMeans)}\`);\n\n    console.log(\`R33_VISIBLE_FOCUS_SMOKE_OK mode=owned-popup ownerMatches=1 child=0 visualProof=capturePage+exact-S_OK+visible-HWND dwm=\${r34DesktopCaptureObservable?'observed':'hosted-unobservable'} dwmRedSamples=\${redSamples.length} mainBlockMs=900 autonomousPresented=\${presentedDelta} autonomousNativeOnly=\${nativeOnlyDelta} moved=28x22 focusRecovery=hidden deviceMode=\${created.deviceMode}\`);`;
-r33 = replaceOnce(r33, oldRecovery, newRecovery, 'R34 capturePage focus recovery');
+// Earlier R34 watchdog hardening inserts stage markers inside this block. Replace
+// the whole semantic recovery section rather than matching its exact line layout.
+const recoverySection = String.raw`    // Focus recovery must hide the native popup so the qualified WebGPU path can own
+    // focused playback again. The smoke's owner page becomes blue at the same rect.
+    console.log('R34_R33_SMOKE_STAGE=before-refocus');
+    main.focus();
+    await waitUntil(() => main.isFocused(), 3000, 'owner refocus');
+    console.log('R34_R33_SMOKE_STAGE=refocused');
+    await waitUntil(() => addon.nativePresenterStats(id)?.windowVisible === false, 3000, 'popup hide on refocus');
+    await sleep(250);
+    const focusedStats = addon.nativePresenterStats(id);
+    if (focusedStats?.windowVisible === true || focusedStats?.requestedVisible === true) throw new Error('native popup remained visible after refocus ' + JSON.stringify(focusedStats));
+    const focusedMeans = r34SampleImageCenter(await main.webContents.capturePage());
+    if (!r34BlueProof(focusedMeans).ok) throw new Error('focused recovery capturePage is not blue ' + JSON.stringify(focusedMeans));
+
+    console.log('R33_VISIBLE_FOCUS_SMOKE_OK mode=owned-popup ownerMatches=1 child=0 visualProof=capturePage+exact-S_OK+visible-HWND dwm=' +
+      (r34DesktopCaptureObservable ? 'observed' : 'hosted-unobservable') + ' dwmRedSamples=' + redSamples.length +
+      ' mainBlockMs=900 autonomousPresented=' + presentedDelta + ' autonomousNativeOnly=' + nativeOnlyDelta +
+      ' moved=28x22 focusRecovery=hidden deviceMode=' + created.deviceMode);
+`;
+r33 = replaceSection(
+  r33,
+  '    // Focus recovery must hide the native popup so the qualified WebGPU path can own',
+  '  } finally {',
+  recoverySection,
+  'R34 structural capturePage focus recovery'
+);
 fs.writeFileSync(r33Path, r33, 'utf8');
 
 // Strengthen R34 dual-delivery smoke with real source pixel proof. This samples the
