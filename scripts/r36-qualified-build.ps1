@@ -37,7 +37,6 @@ foreach ($name in $r36Support) {
   Copy-Item (Join-Path $r36Stash $name) (Join-Path 'scripts' $name) -Force
 }
 
-# Apply R36 only after the fully qualified R35 working tree exists.
 node --check scripts/r36-handoff-ack-subtitle-stability.cjs
 Assert-Exit 'R36 transform syntax'
 node scripts/r36-handoff-ack-subtitle-stability.cjs
@@ -67,8 +66,9 @@ if (-not $bridge.Contains('LILAC_R36_HANDOFF_ACK_ORDER') -or
     -not $bridge.Contains('r36FocusHandoffReleasedFrames') -or
     -not $bridge.Contains('R36_HANDOFF_FAIL_OPEN_MS = 1500') -or
     -not $bridge.Contains('r36TargetUiHoles') -or
+    -not $bridge.Contains('LILAC_R36_UI_HOLES_ONLY_FASTPATH') -or
     -not $bridge.Contains('r36SupplyGaps')) {
-  throw 'R36 bridge handoff/UI-hole/diagnostic gate failed'
+  throw 'R36 bridge handoff/UI-hole/fast-path/diagnostic gate failed'
 }
 if (-not $entry.Contains('LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC') -or
     -not $entry.Contains("'sub-ass-override', 'strip'") -or
@@ -79,8 +79,8 @@ if (-not $entry.Contains('LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC') -or
 if (-not $appSource.Contains('LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') -or
     -not $appSource.Contains('LILAC_R36_UNFOCUSED_HTML_UI_HOLES') -or
     -not $appSource.Contains('R36_NATIVE_UI_HOLE_SELECTORS') -or
-    -not $appSource.Contains('libmpvSharedResize(payload)')) {
-  throw 'R36 renderer UI/subtitle gate failed'
+    -not $appSource.Contains('r36UiHolesOnly:true')) {
+  throw 'R36 renderer UI/subtitle fast-path gate failed'
 }
 if (-not $preload.Contains("presentationMode = 'direct-receive-webgpu-copy'") -or
     -not $preload.Contains('copyExternalImageToTexture')) {
@@ -103,10 +103,8 @@ $presentBody = $nativeSource.Substring($presentStart, $presentEnd - $presentStar
 foreach ($forbidden in @('SetWindowRgn(', 'CreateRectRgn(', 'CombineRgn(', 'SetWindowPos(', 'ShowWindow(')) {
   if ($presentBody.Contains($forbidden)) { throw "R36 producer hot path contains UI operation: $forbidden" }
 }
-Write-Host 'R36_SOURCE_GATES_OK r33NativeOnly=preserved focused=direct-webgpu ack=bidirectional+1500ms-fail-open ui=owned-popup-region-holes-main-only subtitle=plain-first+ass-strip supplyGap=cached-state-no-extra-poll'
+Write-Host 'R36_SOURCE_GATES_OK r33NativeOnly=preserved focused=direct-webgpu ack=bidirectional+1500ms-fail-open ui=owned-popup-region-holes-main-only+ui-holes-only-fastpath subtitle=plain-first+ass-strip supplyGap=cached-state-no-extra-poll'
 
-# R36 adds a new native N-API and Win32 region handling, so rebuild the addon
-# against the same Electron/libmpv headers already pinned by the R35 baseline.
 if (-not (Test-Path 'native/libmpv-d3d11-bridge/vendor/include/mpv/client.h')) { throw 'R36 inherited pinned libmpv headers missing' }
 & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
 Assert-Exit 'R36 native addon rebuild'
@@ -117,15 +115,11 @@ $r36AddonSha = Sha256 'electron/lilac-libmpv-player-bridge.node'
 $dllSha = Sha256 'electron/libmpv-2.dll'
 if ($dllSha -ne $env:QUALIFIED_DLL_SHA256) { throw "R36 libmpv DLL drifted: $dllSha" }
 
-# Source/model smokes catch state-machine and style regressions independently of
-# Electron graphics availability.
 node scripts/r36-handoff-ack-order-smoke.cjs
 Assert-Exit 'R36 bidirectional handoff ack-order smoke'
 node scripts/r36-subtitle-determinism-smoke.cjs
 Assert-Exit 'R36 subtitle determinism smoke'
 
-# Hardware/native qualification. All child trees are supervised externally so a
-# synchronous driver/Win32 hang becomes a CI failure instead of hanging forever.
 $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
 $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
 
@@ -150,15 +144,12 @@ Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
 Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
 Write-Host 'R36_RUNTIME_SMOKES_OK producerWatchdog=1 r33VisibleAutonomy=1 unfocusedHtmlUiHole=1 activeHandoff=1 pausedSubtitle=1 pausedNoSubtitle=1 activeHandoffRepeat=3 ackOrderCycles=200 subtitleDeterminism=1'
 
-# Final packaging happens only after every post-R36 runtime gate has passed.
-# R35 already applied the requested stable identity and APP_VERSION to package.json.
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64
 Assert-Exit 'R36 final package'
 $installer = Join-Path 'dist' $env:INSTALLER_NAME
 if (-not (Test-Path $installer)) { throw "R36 installer missing: $installer" }
 
-# Inspect the actual packaged app, not only the working tree.
 $asarCli = 'node_modules/.bin/asar.cmd'
 if (-not (Test-Path $asarCli)) { throw 'R36 asar helper missing' }
 $asarCheck = Join-Path $env:RUNNER_TEMP 'r36-asar-check'
@@ -174,12 +165,14 @@ $shipPreload = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-preload
 if ($shipBridge -notmatch 'LILAC_R36_HANDOFF_ACK_ORDER' -or
     $shipBridge -notmatch 'r36FocusHandoffReleasedFrames' -or
     $shipBridge -notmatch 'R36_HANDOFF_FAIL_OPEN_MS = 1500' -or
-    $shipBridge -notmatch 'r36TargetUiHoles') { throw 'packaged R36 bridge hardening missing' }
+    $shipBridge -notmatch 'r36TargetUiHoles' -or
+    $shipBridge -notmatch 'LILAC_R36_UI_HOLES_ONLY_FASTPATH') { throw 'packaged R36 bridge hardening/fast-path missing' }
 if ($shipEntry -notmatch 'LILAC_R36_NATIVE_SUBTITLE_DETERMINISTIC' -or
     $shipEntry -notmatch "'sub-ass-override', 'strip'") { throw 'packaged R36 subtitle determinism missing' }
 if ($shipApp -notmatch 'LILAC_R36_UNFOCUSED_HTML_UI_HOLES' -or
     $shipApp -notmatch 'R36_NATIVE_UI_HOLE_SELECTORS' -or
-    $shipApp -notmatch 'LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') { throw 'packaged R36 renderer UI/subtitle hardening missing' }
+    $shipApp -notmatch 'r36UiHolesOnly:true' -or
+    $shipApp -notmatch 'LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE') { throw 'packaged R36 renderer UI/subtitle fast-path hardening missing' }
 if ($shipPreload -notmatch "presentationMode = 'direct-receive-webgpu-copy'" -or
     $shipPreload -notmatch 'copyExternalImageToTexture') { throw 'packaged R36 direct WebGPU focused path missing' }
 
@@ -189,10 +182,8 @@ $worker = 'dist/win-unpacked/resources/app.asar.unpacked/electron/cache-write-wo
 if (-not (Test-Path $packedAddon) -or (Sha256 $packedAddon) -ne $r36AddonSha) { throw 'packaged R36 addon hash mismatch' }
 if (-not (Test-Path $packedDll) -or (Sha256 $packedDll) -ne $env:QUALIFIED_DLL_SHA256) { throw 'packaged R36 DLL hash mismatch' }
 if (-not (Test-Path $worker)) { throw 'packaged R34/R35 cache worker missing in R36' }
-Write-Host "R36_PACKAGED_SOURCE_OK addon=$r36AddonSha dll=$dllSha bridge=ack+ui-holes entry=ass-strip app=html-ui-holes focused=direct-webgpu"
+Write-Host "R36_PACKAGED_SOURCE_OK addon=$r36AddonSha dll=$dllSha bridge=ack+ui-holes-fastpath entry=ass-strip app=precise-html-ui-holes focused=direct-webgpu"
 
-# Final self-contained manifest. Keep inherited proof fields because the public
-# verification step checks that R36 did not silently drop a qualified layer.
 $hash = Sha256 $installer
 $size = (Get-Item $installer).Length
 $manifestPath = Join-Path 'dist' $env:MANIFEST_NAME
@@ -232,9 +223,7 @@ $manifest = [ordered]@{
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 12) + [Environment]::NewLine), $utf8NoBom)
 
-# The public-release workflow historically consumes these names. Overwrite them
-# with the FINAL R36 package bytes, not the discarded intermediate R35 package.
 "R34_ADDON_SHA256=$r36AddonSha" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SHA256=$hash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "R34_INSTALLER_SIZE=$size" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-Write-Host "R36_BUILD_OK sha256=$hash size=$size addon=$r36AddonSha dll=$dllSha ui=html-holes+native-autonomy handoff=bidirectional-ack+fail-open subtitle=plain+strip repeatHandoff=3"
+Write-Host "R36_BUILD_OK sha256=$hash size=$size addon=$r36AddonSha dll=$dllSha ui=precise-html-holes+native-autonomy+resize-fastpath handoff=bidirectional-ack+fail-open subtitle=plain+strip repeatHandoff=3"
