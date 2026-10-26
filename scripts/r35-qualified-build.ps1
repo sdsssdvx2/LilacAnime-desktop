@@ -19,6 +19,7 @@ $source = Replace-Once $source `
    "  'r35-hosted-native-startup-hardening.cjs'," + "`n" +
    "  'r35-paused-handoff-ui-recovery.cjs'," + "`n" +
    "  'r35-paused-handoff-redraw-smoke.cjs'," + "`n" +
+   "  'r35-paused-no-subtitle-handoff-smoke.cjs'," + "`n" +
    "  'r35-run-smoke-with-timeout.cjs'," + "`n" +
    "  'r35-cache-worker-heartbeat-smoke.cjs'") `
   'R35 support stash'
@@ -80,9 +81,11 @@ $source = Replace-Once $source `
   ("Assert-Exit 'R34 dual-path focus handoff smoke'" + "`n" +
    "node scripts/r35-run-smoke-with-timeout.cjs scripts/r35-paused-handoff-redraw-smoke.cjs r35-paused-redraw 120000" + "`n" +
    "Assert-Exit 'R35 paused focus handoff redraw smoke'" + "`n" +
+   "node scripts/r35-run-smoke-with-timeout.cjs scripts/r35-paused-no-subtitle-handoff-smoke.cjs r35-paused-no-subtitle 120000" + "`n" +
+   "Assert-Exit 'R35 paused no-subtitle focus handoff smoke'" + "`n" +
    "node scripts/r35-cache-worker-heartbeat-smoke.cjs" + "`n" +
    "Assert-Exit 'R35 cache worker heartbeat smoke'" + "`n" +
-   "Write-Host 'R35_RUNTIME_SMOKES_OK r33Visible=1 r34ActiveHandoff=1 r35PausedHandoff=1 cacheHeartbeat=1'") `
+   "Write-Host 'R35_RUNTIME_SMOKES_OK r33Visible=1 r34ActiveHandoff=1 r35PausedSubtitle=1 r35PausedNoSubtitle=1 cacheHeartbeat=1'") `
   'R35 runtime smokes'
 
 # Preserve the final R34 hosted visual manifest proof and add R35-specific evidence.
@@ -92,7 +95,7 @@ $source = Replace-Once $source `
    "  r34RuntimeSmokes='producer-watchdog+r33-hosted-visual-proof+r34-dual-handoff-red-source+explicit-markers'" + "`n" +
    "  r35PausedHandoff='mirror-first+sub-visibility-redraw+successful-send+allReferencesReleased-then-hide'" + "`n" +
    "  r35SubtitleOwnership='main-only+focus-native-off+unfocused-native-on+ass-override-scale'" + "`n" +
-   "  r35RuntimeSmokes='r33-hosted-visual+r34-active-handoff+r35-paused-redraw+r35-cache-heartbeat'") `
+   "  r35RuntimeSmokes='r33-hosted-visual+r34-active-handoff+r35-paused-redraw+r35-paused-no-subtitle+r35-cache-heartbeat'") `
   'R35 manifest fields'
 
 # Verify the R35 markers survived into app.asar before installer creation finishes.
@@ -105,6 +108,6 @@ $source = Replace-Once $source `
 
 $temp = Join-Path $env:RUNNER_TEMP 'r35-qualified-build-generated.ps1'
 [System.IO.File]::WriteAllText($temp,$source,(New-Object System.Text.UTF8Encoding($false)))
-Write-Host 'R35_QUALIFIED_BUILD_WRAPPER_OK base=R34 hostedVisual=strict+startup-telemetry pausedHandoff=redraw+ack assOverride=scale cacheHeartbeat=stress'
+Write-Host 'R35_QUALIFIED_BUILD_WRAPPER_OK base=R34 hostedVisual=strict+startup-telemetry pausedHandoff=subtitle+no-subtitle-redraw+ack assOverride=scale cacheHeartbeat=stress'
 & $temp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
