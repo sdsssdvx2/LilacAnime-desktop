@@ -16,7 +16,8 @@ if (typeof electronExe !== 'string' || !fs.existsSync(electronExe)) throw new Er
 if (!fs.existsSync(childScript)) throw new Error('Smoke script not found: ' + childScript);
 
 const expectedMarkers = new Map([
-  ['r35-paused-handoff-redraw-smoke.cjs', 'R35_PAUSED_HANDOFF_REDRAW_OK']
+  ['r35-paused-handoff-redraw-smoke.cjs', 'R35_PAUSED_HANDOFF_REDRAW_OK'],
+  ['r35-paused-no-subtitle-handoff-smoke.cjs', 'R35_PAUSED_NO_SUBTITLE_HANDOFF_OK']
 ]);
 const expectedMarker = expectedMarkers.get(path.basename(childScript));
 if (!expectedMarker) throw new Error('No R35 success marker configured for ' + path.basename(childScript));
