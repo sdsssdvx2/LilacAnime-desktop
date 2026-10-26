@@ -7,6 +7,10 @@ const { spawnSync } = require('node:child_process');
 const { app, BrowserWindow } = require('electron');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const hardDeadline = setTimeout(() => {
+  console.error('R34 native handoff smoke exceeded 90s hard deadline');
+  process.exit(124);
+}, 90000);
 function hwndText(win){const raw=win.getNativeWindowHandle();return(raw.length>=8?raw.readBigUInt64LE(0):BigInt(raw.readUInt32LE(0))).toString(10)}
 function fixture(dir){
   const ffmpeg=require('ffmpeg-static'),out=path.join(dir,'r34-handoff.mp4');
@@ -46,7 +50,8 @@ async function waitUntil(fn,ms,label){const end=Date.now()+ms;while(Date.now()<e
     if(afterQueued>1)throw new Error(`mirror disable left Chromium queue active afterQueued=${afterQueued}`);
     console.log(`R34_NATIVE_HANDOFF_SMOKE_OK baselineQueued=0 mirrored=${mirrored} nativePresentDelta=${presentDelta} mirrorDisableQueued=${afterQueued} deviceMode=${created.deviceMode}`);
   }finally{
+    clearTimeout(hardDeadline);
     if(id){try{addon.setNativePresenterMirrorChromium(id,false)}catch{};try{addon.setNativePresenterVisible(id,false)}catch{};try{addon.stopFrameProducer(id)}catch{};try{addon.destroyPlayer(id)}catch{}}
     try{win?.destroy()}catch{};try{fs.rmSync(dir,{recursive:true,force:true})}catch{};delete process.env.LILAC_LIBMPV_TEST_AO_NULL;app.quit();
   }
-})().catch(error=>{console.error(error?.stack||error);process.exitCode=1;try{app.quit()}catch{}});
+})().catch(error=>{clearTimeout(hardDeadline);console.error(error?.stack||error);process.exitCode=1;try{app.quit()}catch{}});
