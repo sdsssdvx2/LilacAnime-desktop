@@ -1,0 +1,67 @@
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn, spawnSync } = require('node:child_process');
+
+const script = process.argv[2];
+const label = process.argv[3] || path.basename(String(script || 'smoke'));
+const timeoutMs = Math.max(10000, Number(process.argv[4]) || 120000);
+if (!script) throw new Error('usage: node r35-run-smoke-with-timeout.cjs <script> [label] [timeoutMs]');
+
+const root = path.resolve(__dirname, '..');
+const childScript = path.resolve(root, script);
+const electronExe = require('electron');
+if (typeof electronExe !== 'string' || !fs.existsSync(electronExe)) throw new Error('Electron executable not found: ' + String(electronExe));
+if (!fs.existsSync(childScript)) throw new Error('Smoke script not found: ' + childScript);
+
+const expectedMarkers = new Map([
+  ['r35-paused-handoff-redraw-smoke.cjs', 'R35_PAUSED_HANDOFF_REDRAW_OK']
+]);
+const expectedMarker = expectedMarkers.get(path.basename(childScript));
+if (!expectedMarker) throw new Error('No R35 success marker configured for ' + path.basename(childScript));
+
+const childEnv = { ...process.env };
+delete childEnv.ELECTRON_RUN_AS_NODE;
+console.log('R35_SMOKE_PARENT_START label=' + label + ' timeoutMs=' + timeoutMs + ' script=' + script + ' expect=' + expectedMarker);
+const child = spawn(electronExe, [childScript], { cwd: root, env: childEnv, stdio: ['ignore','pipe','pipe'], windowsHide: true });
+let done = false;
+let markerSeen = false;
+let tail = '';
+const TAIL_LIMIT = 32768;
+function observe(chunk, target) {
+  const text = String(chunk || '');
+  target.write(text);
+  tail = (tail + text).slice(-TAIL_LIMIT);
+  if (text.includes(expectedMarker) || tail.includes(expectedMarker)) markerSeen = true;
+}
+child.stdout.on('data', chunk => observe(chunk, process.stdout));
+child.stderr.on('data', chunk => observe(chunk, process.stderr));
+const timer = setTimeout(() => {
+  if (done) return;
+  done = true;
+  console.error('R35_SMOKE_PARENT_TIMEOUT label=' + label + ' pid=' + String(child.pid || 0));
+  if (process.platform === 'win32' && child.pid) {
+    try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'inherit', windowsHide: true, timeout: 15000 }); } catch {}
+  } else { try { child.kill('SIGKILL'); } catch {} }
+  process.exit(124);
+}, timeoutMs);
+timer.unref?.();
+child.once('error', error => {
+  if (done) return;
+  done = true;
+  clearTimeout(timer);
+  console.error(error?.stack || error);
+  process.exit(1);
+});
+child.once('exit', (code, signal) => {
+  if (done) return;
+  done = true;
+  clearTimeout(timer);
+  if (signal || code !== 0 || !markerSeen) {
+    console.error('R35_SMOKE_PARENT_FAIL label=' + label + ' code=' + String(code) + ' signal=' + String(signal || '') + ' markerSeen=' + markerSeen);
+    process.exit(Number.isInteger(code) && code !== 0 ? code : 1);
+  }
+  console.log('R35_SMOKE_PARENT_OK label=' + label + ' marker=' + expectedMarker);
+  process.exit(0);
+});
