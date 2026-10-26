@@ -111,11 +111,10 @@ states.push(replaceExactOrAlready(
   'R34 R33 bridge require replacement'
 ));
 
-// Stop depending on the exact text following addon.command(). R31 appends state
-// cache invalidation there, and future qualified stages may append more. Replace
-// the whole transform section with a command()-bounded patch which searches only
-// for the one native call inside that function and inserts authority immediately
-// after it while preserving everything that follows.
+// Stop depending on the exact text or indentation around addon.command(). R2B,
+// R31 and later qualified transforms changed both. The generated R34 transform
+// now bounds command(), finds the one native call by trimmed text, and reuses that
+// line's actual indentation for the inserted subtitle-authority branch.
 const structuralCommandPatch = [
   '// After renderer sub-add, main immediately reapplies the authoritative focus state.',
   '// Renderer no longer races BrowserWindow focus with document.hasFocus().',
@@ -124,8 +123,14 @@ const structuralCommandPatch = [
   "const commandEnd = bridge.indexOf('\\n\\n  function ', commandStart + 1);",
   "if (commandStart < 0 || commandEnd <= commandStart) throw new Error('R34 command() structural boundary missing');",
   'let commandBlock = bridge.slice(commandStart, commandEnd);',
-  "const commandCall = '    addon.command(playerId, commandArray);';",
-  "commandBlock = replaceOnce(commandBlock, commandCall, commandCall + \"\\n    if (commandArray[0] === 'sub-add') {\\n      r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\\n    }\", 'R34 subtitle authority inside command()');",
+  "const commandLines = commandBlock.split('\\n');",
+  "const commandCallIndexes = commandLines.map((line, index) => line.trim() === 'addon.command(playerId, commandArray);' ? index : -1).filter(index => index >= 0);",
+  "if (commandCallIndexes.length !== 1) throw new Error('R34 command() native-call uniqueness failed: ' + commandCallIndexes.length);",
+  'const commandCallIndex = commandCallIndexes[0];',
+  'const commandCallLine = commandLines[commandCallIndex];',
+  "const commandIndent = commandCallLine.slice(0, commandCallLine.indexOf('addon.command'));",
+  "commandLines.splice(commandCallIndex + 1, 0, commandIndent + \"if (commandArray[0] === 'sub-add') {\", commandIndent + \"  r34SetNativeSubtitleVisible(r33NativePresenterActive, 'sub-add-authority');\", commandIndent + '}');",
+  "commandBlock = commandLines.join('\\n');",
   'bridge = bridge.slice(0, commandStart) + commandBlock + bridge.slice(commandEnd);',
   '',
   ''
@@ -171,7 +176,7 @@ for (const forbidden of [
 }
 const cacheDefinitionLines = text.split('\n').filter(line => line.startsWith('function saveCatalogFile(provider,name,value){const key=`'));
 if (cacheDefinitionLines.length) throw new Error(`R34 syntax sanitizer left ${cacheDefinitionLines.length} nested-template cache definition(s)`);
-if (!text.includes('LILAC_R34_STRUCTURAL_SUBTITLE_COMMAND_PATCH')) throw new Error('R34 structural subtitle command patch marker missing');
+if (!text.includes('LILAC_R34_STRUCTURAL_SUBTITLE_COMMAND_PATCH') || !text.includes('commandCallIndexes')) throw new Error('R34 structural subtitle command patch marker missing');
 
 fs.writeFileSync(target, text, 'utf8');
-console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandPatch=structural-function-boundary heartbeatAnchor=R33-shipped subtitleLoadAck=1`);
+console.log(`R34_TRANSFORM_SOURCE_SANITIZE_OK idempotent=1 states=${states.join(',')} nestedTemplates=3 lineMatched=1 bundleGate=runtime-semantic bridgeAnchor=R33-bounds-aware commandPatch=structural-trimmed-native-call heartbeatAnchor=R33-shipped subtitleLoadAck=1`);
