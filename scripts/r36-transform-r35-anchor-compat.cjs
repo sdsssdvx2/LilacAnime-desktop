@@ -38,21 +38,75 @@ const legacyPair = `  "'configureNativePresenter', 'setNativePresenterVisible', 
 const priorCompatPair = `  "'setNativePresenterMirrorChromium', 'nativePresenterStats'",\n  "'setNativePresenterMirrorChromium', 'setNativePresenterUiHoles', 'nativePresenterStats'",`;
 const boundsAwarePair = `  "${r35Needle}",\n  "${r35Replacement}",`;
 
-if (source.includes(boundsAwarePair)) {
-  console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=already-normalized anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1');
-  process.exit(0);
+let exportMode = 'already-bounds-aware';
+if (!source.includes(boundsAwarePair)) {
+  const candidates = [legacyPair, priorCompatPair];
+  const matches = candidates.filter(pair => source.includes(pair));
+  if (matches.length !== 1) {
+    throw new Error('R36 transform export anchor compatibility expected exactly one known pre-normalized pair, found ' + matches.length);
+  }
+  source = source.replace(matches[0], boundsAwarePair);
+  exportMode = 'normalized-bounds-aware';
 }
 
-const candidates = [legacyPair, priorCompatPair];
-const matches = candidates.filter(pair => source.includes(pair));
-if (matches.length !== 1) {
-  throw new Error('R36 transform export anchor compatibility expected exactly one known pre-normalized pair, found ' + matches.length);
+// The first UI-hole draft used whole transparent layout groups. player-top spans
+// the full viewport width, and player-center includes large flex gaps; revealing
+// those rectangles would expose a stale Chromium video band between controls while
+// the native presenter keeps playing. Hole only the actual visible leaf controls.
+// The exact 0.5.54 product DOM was cross-checked: these IDs/classes all exist, and
+// the maximum simultaneous list is 23 rectangles, below the native cap of 24.
+function replaceExactOrAlready(original, precise, label) {
+  const before = source.split(original).length - 1;
+  const after = source.split(precise).length - 1;
+  if (before === 1 && after === 0) {
+    source = source.replace(original, precise);
+    return 'normalized';
+  }
+  if (before === 0 && after === 1) return 'already';
+  throw new Error(label + ': expected one broad or one precise selector block, found broad=' + before + ' precise=' + after);
 }
-source = source.replace(matches[0], boundsAwarePair);
+const selectorStates = [];
+selectorStates.push(replaceExactOrAlready(
+  `  '#immersivePlayer.controls-visible .player-top',`,
+  `  '#immersivePlayer.controls-visible #playerBack',\n  '#immersivePlayer.controls-visible #playerTitle',\n  '#immersivePlayer.controls-visible #playerMeta',\n  '#immersivePlayer.controls-visible #downloadStatus',\n  '#immersivePlayer.controls-visible #playerSettingsButton',`,
+  'R36 precise top UI holes'
+));
+selectorStates.push(replaceExactOrAlready(
+  `  '#immersivePlayer.controls-visible .player-center',`,
+  `  '#immersivePlayer.controls-visible #previousEpisode',\n  '#immersivePlayer.controls-visible #rewindPlayer',\n  '#immersivePlayer.controls-visible #togglePlayer',\n  '#immersivePlayer.controls-visible #forwardPlayer',\n  '#immersivePlayer.controls-visible #nextEpisode',`,
+  'R36 precise center UI holes'
+));
+selectorStates.push(replaceExactOrAlready(
+  `  '#immersivePlayer.controls-visible .player-actions',\n  '#immersivePlayer.controls-visible .player-lock',`,
+  `  '#immersivePlayer.controls-visible .player-actions > *',`,
+  'R36 precise action UI holes'
+));
+
 fs.writeFileSync(target, source, 'utf8');
 
 const final = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
-if (!final.includes(boundsAwarePair) || candidates.some(pair => final.includes(pair))) {
+if (!final.includes(boundsAwarePair) || [legacyPair, priorCompatPair].some(pair => final.includes(pair))) {
   throw new Error('R36 transform bounds-aware export anchor normalization did not persist cleanly');
 }
-console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK mode=normalized anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds');
+for (const broad of [
+  "'#immersivePlayer.controls-visible .player-top'",
+  "'#immersivePlayer.controls-visible .player-center'",
+  "'#immersivePlayer.controls-visible .player-actions'",
+  "'#immersivePlayer.controls-visible .player-lock'"
+]) {
+  if (final.includes(broad)) throw new Error('R36 broad transparent UI hole survived: ' + broad);
+}
+for (const precise of [
+  "'#immersivePlayer.controls-visible #playerBack'",
+  "'#immersivePlayer.controls-visible #playerTitle'",
+  "'#immersivePlayer.controls-visible #playerMeta'",
+  "'#immersivePlayer.controls-visible #downloadStatus'",
+  "'#immersivePlayer.controls-visible #playerSettingsButton'",
+  "'#immersivePlayer.controls-visible #previousEpisode'",
+  "'#immersivePlayer.controls-visible #togglePlayer'",
+  "'#immersivePlayer.controls-visible #nextEpisode'",
+  "'#immersivePlayer.controls-visible .player-actions > *'"
+]) {
+  if (!final.includes(precise)) throw new Error('R36 precise UI hole missing: ' + precise);
+}
+console.log('R36_TRANSFORM_R35_ANCHOR_COMPAT_OK export=' + exportMode + ' anchor=mirror-bounds-stats verifiedAgainstGeneratedR35=1 preserves=setNativePresenterBounds uiHoles=leaf-controls maxRects=23 selectorStates=' + selectorStates.join(','));
