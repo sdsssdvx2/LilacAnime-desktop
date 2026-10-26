@@ -409,6 +409,13 @@ native = replaceOnce(
 
 bridge = replaceOnce(
   bridge,
+  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'nativePresenterStats', 'destroyPlayer']",
+  "'configureNativePresenter', 'setNativePresenterVisible', 'setNativePresenterMirrorChromium', 'setNativePresenterUiHoles', 'nativePresenterStats', 'destroyPlayer']",
+  'R36 bridge require UI-hole export'
+);
+
+bridge = replaceOnce(
+  bridge,
   '  let r32TargetVisible = true;',
   '  let r32TargetVisible = true;\n  let r36TargetUiHoles = []; // LILAC_R36_UNFOCUSED_HTML_UI_HOLES',
   'R36 bridge UI-hole state'
@@ -460,14 +467,36 @@ bridge = replaceInside(
   'R36 bridge reapply holes after bounds'
 );
 
-// Renderer-side UI rectangles are coalesced through the existing resize IPC.
-// No per-frame IPC is added. The 12 CSS-pixel pad covers the existing 6-8 px
-// control entry transforms so the popup cannot clip UI during its fade/slide.
+// Reuse the existing resize IPC channel, but make UI-hole updates an explicit
+// fast-path that never calls addon.resize()/producer texture sizing. This avoids
+// turning control visibility changes into video resize work.
+const r36ResizeStart = bridge.indexOf('  function resize(value = {}) {');
+const r36ResizeEnd = bridge.indexOf('\n  }', r36ResizeStart);
+if (r36ResizeStart < 0 || r36ResizeEnd <= r36ResizeStart) throw new Error('R36 resize boundary missing');
+let r36ResizeBlock = bridge.slice(r36ResizeStart, r36ResizeEnd + 4);
+r36ResizeBlock = replaceOnce(
+  r36ResizeBlock,
+  '    const size = setTargetSize(value);',
+  `    if (value?.r36UiHolesOnly === true) { // LILAC_R36_UI_HOLES_ONLY_FASTPATH
+      setTargetSize({ uiHoles: value.uiHoles });
+      r36SyncNativePresenterUiHoles();
+      return { width: targetWidth, height: targetHeight, r36UiHolesOnly: true };
+    }
+    const size = setTargetSize(value);`,
+  'R36 resize UI-hole-only fast path'
+);
+bridge = bridge.slice(0, r36ResizeStart) + r36ResizeBlock + bridge.slice(r36ResizeEnd + 4);
+
+// Renderer-side UI rectangles are coalesced through the existing IPC channel, but
+// the main-side fast path above prevents any video resize work. Use precise bottom
+// holes so the center-bottom native subtitle area stays intact while controls show.
 const oldShowControls = "function showPlayerControls(){const player=$('#immersivePlayer'),settingsOpen=()=>typeof playerSettingsOpen==='function'&&playerSettingsOpen();if(typeof playerLocked!=='undefined'&&playerLocked)return;player.classList.add('controls-visible');clearTimeout(controlsTimer);if(!$('#video').paused&&!settingsOpen())controlsTimer=setTimeout(()=>{if(!settingsOpen())player.classList.remove('controls-visible')},2000)}";
 const r36UiHoleRenderer = String.raw`const R36_NATIVE_UI_HOLE_SELECTORS=[
   '#immersivePlayer.controls-visible .player-top',
   '#immersivePlayer.controls-visible .player-center',
-  '#immersivePlayer.controls-visible .player-bottom',
+  '#immersivePlayer.controls-visible #playerSeek',
+  '#immersivePlayer.controls-visible #playerTime',
+  '#immersivePlayer.controls-visible .player-actions',
   '#immersivePlayer.controls-visible .player-lock',
   '#playerSettings.open',
   '#subtitleOffer:not(.hidden)',
@@ -499,21 +528,17 @@ function r36NativeUiHolePayload(){
     }
     if(flat.length>=96)break;
   }
-  return {
-    x:Math.round(surface.left*dpr),y:Math.round(surface.top*dpr),
-    width:Math.max(2,Math.round(surface.width*dpr)),height:Math.max(2,Math.round(surface.height*dpr)),
-    visible:video.isConnected&&surface.width>1&&surface.height>1,uiHoles:flat
-  };
+  return flat;
 }
 function r36SyncNativeUiHoles(delay=0){
   clearTimeout(r36NativeUiHoleSyncTimer);
   r36NativeUiHoleSyncTimer=setTimeout(()=>{
     r36NativeUiHoleSyncTimer=null;
-    const payload=r36NativeUiHolePayload();if(!payload)return;
-    const signature=[payload.x,payload.y,payload.width,payload.height,payload.visible?1:0,...payload.uiHoles].join(',');
+    const uiHoles=r36NativeUiHolePayload();if(!uiHoles)return;
+    const signature=uiHoles.join(',');
     if(signature===r36NativeUiHoleLastSignature)return;
     r36NativeUiHoleLastSignature=signature;
-    Promise.resolve(window.lilac.libmpvSharedResize(payload)).catch(()=>{r36NativeUiHoleLastSignature=''});
+    Promise.resolve(window.lilac.libmpvSharedResize({r36UiHolesOnly:true,uiHoles})).catch(()=>{r36NativeUiHoleLastSignature=''});
   },Math.max(0,Number(delay)||0));
 }
 function r36InstallNativeUiHoleObservers(){
@@ -637,7 +662,7 @@ for (const marker of [
   'LILAC_R36_HANDOFF_ACK_ORDER','r36FocusHandoffReleasedFrames','r36ReleaseBeforeSend','r36SendAfterRelease',
   'R36_HANDOFF_FAIL_OPEN_MS = 1500','r36SupplyGaps','r36-focus-fail-open',
   'r33NativePresenterActive && active && r32TargetVisible && r34BeginFocusHandoff()',
-  'r36TargetUiHoles','r36SyncNativePresenterUiHoles'
+  'r36TargetUiHoles','r36SyncNativePresenterUiHoles','LILAC_R36_UI_HOLES_ONLY_FASTPATH'
 ]) if (!finalBridge.includes(marker)) throw new Error('R36 bridge marker missing: ' + marker);
 for (const marker of [
   'LILAC_R36_UNFOCUSED_HTML_UI_HOLES','R36ApplyPresenterRegionLocked','SetNativePresenterUiHoles',
@@ -650,7 +675,7 @@ if (!finalBundle.includes('sub-ass-override') || !finalBundle.includes('strip'))
 if (finalEntry.includes("'sub-ass-override', 'force'") || finalEntry.includes("'sub-ass-override', 'scale'")) {
   throw new Error('R36 retained non-deterministic/destructive native subtitle override');
 }
-for (const marker of ['LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE','R36_NATIVE_UI_HOLE_SELECTORS','r36NativeUiHolePayload','libmpvSharedResize(payload)']) {
+for (const marker of ['LILAC_R36_NATIVE_SUBTITLE_PLAIN_SOURCE','R36_NATIVE_UI_HOLE_SELECTORS','r36NativeUiHolePayload','r36UiHolesOnly:true']) {
   if (!finalApp.includes(marker)) throw new Error('R36 renderer marker missing: ' + marker);
 }
 if (!finalApp.includes("const nativeSubtitlePath=(options.path||options.assPath)||'';")) throw new Error('R36 plain native subtitle path gate failed');
@@ -662,4 +687,4 @@ const presentBody = finalNative.slice(presentStart, presentEnd);
 for (const forbidden of ['SetWindowRgn(', 'CreateRectRgn(', 'CombineRgn(', 'SetWindowPos(', 'ShowWindow(']) {
   if (presentBody.includes(forbidden)) throw new Error('R36 producer hot path retained HWND/UI work: ' + forbidden);
 }
-console.log('R36_HANDOFF_ACK_SUBTITLE_STABILITY_OK ack=bidirectional-order+1500ms-fail-open mirror=bounded subtitle=plain-source+ass-strip ui=owned-popup-region-holes-main-only supplyGap=cached-state-ring r33NativeOnly=preserved');
+console.log('R36_HANDOFF_ACK_SUBTITLE_STABILITY_OK ack=bidirectional-order+1500ms-fail-open mirror=bounded subtitle=plain-source+ass-strip ui=owned-popup-region-holes-main-only+resize-fastpath supplyGap=cached-state-ring r33NativeOnly=preserved');
