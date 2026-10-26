@@ -14,7 +14,7 @@ function Replace-Once([string]$Source,[string]$Needle,[string]$Replacement,[stri
 
 $source = Replace-Once $source `
   "  'r34-focus-handoff-native-smoke.cjs'" `
-  ("  'r34-focus-handoff-native-smoke.cjs'," + "`n" + "  'r34-hosted-visual-proof.cjs'," + "`n" + "  'r34-run-smoke-with-timeout.cjs'") `
+  ("  'r34-focus-handoff-native-smoke.cjs'," + "`n" + "  'r34-hosted-visual-proof.cjs'," + "`n" + "  'r34-hosted-refocus-hardening.cjs'," + "`n" + "  'r34-run-smoke-with-timeout.cjs'") `
   'R34 external smoke runner/hosted visual support'
 
 # Apply the hosted-runner proof only after generic correctness hardening. Anchor on
@@ -22,14 +22,14 @@ $source = Replace-Once $source `
 # endings cannot prevent injection.
 $source = Replace-Once $source `
   "Assert-Exit 'R34 smoke correctness hardening'" `
-  ("Assert-Exit 'R34 smoke correctness hardening'" + "`n" + "node --check scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof syntax'" + "`n" + "node scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof transform'") `
-  'R34 hosted visual proof execution'
+  ("Assert-Exit 'R34 smoke correctness hardening'" + "`n" + "node --check scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof syntax'" + "`n" + "node scripts/r34-hosted-visual-proof.cjs" + "`n" + "Assert-Exit 'R34 hosted visual proof transform'" + "`n" + "node --check scripts/r34-hosted-refocus-hardening.cjs" + "`n" + "Assert-Exit 'R34 hosted refocus hardening syntax'" + "`n" + "node scripts/r34-hosted-refocus-hardening.cjs" + "`n" + "Assert-Exit 'R34 hosted refocus hardening transform'") `
+  'R34 hosted visual/refocus proof execution'
 
 # Keep the historical R33 visual field for baseline provenance, but add an exact
 # R34 qualification field describing what this run actually proves on hosted CI.
 $source = Replace-Once $source `
   "  r34RuntimeSmokes='producer-watchdog+r33-visible-dwm+r34-dual-handoff-explicit-markers'" `
-  ("  r34HostedVisualProof='focused-capturePage-blue+native-visible-HWND+exact-S_OK+900ms-autonomous+mirror-sampleFrame-red+desktopCapturer-optional'" + "`n" + "  r34RuntimeSmokes='producer-watchdog+r33-hosted-visual-proof+r34-dual-handoff-red-source+explicit-markers'") `
+  ("  r34HostedVisualProof='focused-capturePage-blue+native-visible-HWND+exact-S_OK+900ms-autonomous+mirror-sampleFrame-red+desktopCapturer-optional+deterministic-refocus'" + "`n" + "  r34RuntimeSmokes='producer-watchdog+r33-hosted-visual-proof+r34-dual-handoff-red-source+explicit-markers'") `
   'R34 hosted visual manifest proof'
 
 $source = Replace-Once $source `
@@ -80,6 +80,6 @@ $source = Replace-Once $source `
 
 $temp = Join-Path $env:RUNNER_TEMP 'r34-focus-handoff-stall-build-bounded-generated.ps1'
 [System.IO.File]::WriteAllText($temp,$source,(New-Object System.Text.UTF8Encoding($false)))
-Write-Host 'R34_BOUNDED_BUILD_WRAPPER_OK smokeTimeoutMs=120000 phaseMarkers=baseline+transform+native+smokes+package hostedVisual=capturePage+exact-S_OK+source-sample desktopCapturer=optional trackedTreeMutation=0'
+Write-Host 'R34_BOUNDED_BUILD_WRAPPER_OK smokeTimeoutMs=120000 phaseMarkers=baseline+transform+native+smokes+package hostedVisual=capturePage+exact-S_OK+source-sample+deterministic-refocus desktopCapturer=optional trackedTreeMutation=0'
 & $temp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
