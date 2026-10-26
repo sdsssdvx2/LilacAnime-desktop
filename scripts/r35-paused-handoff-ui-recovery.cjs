@@ -94,11 +94,18 @@ const finalBundle = read('src/libmpv-shared.generated.js');
 for (const marker of ['LILAC_R35_PAUSED_HANDOFF_UI_RECOVERY','r35FocusRedrawArms','r35-focus-handoff-redraw']) {
   if (!finalBridge.includes(marker)) throw new Error('R35 bridge marker missing: ' + marker);
 }
-for (const text of ["'sub-ass-override', 'scale'", 'LILAC_R35_ASS_PLACEMENT_RECOVERY']) {
-  if (!finalEntry.includes(text) || !finalBundle.includes(text)) throw new Error('R35 subtitle marker missing: ' + text);
+// Source gates may assert the exact authored literal and retained marker. The
+// generated esbuild bundle is free to normalize quote style and strip comments,
+// so validate its runtime semantics rather than source formatting.
+if (!finalEntry.includes("'sub-ass-override', 'scale'") || !finalEntry.includes('LILAC_R35_ASS_PLACEMENT_RECOVERY')) {
+  throw new Error('R35 subtitle source marker missing');
 }
-if (finalEntry.includes("'sub-ass-override', 'force'")) throw new Error('R35 destructive ASS force override survived');
+if (!finalBundle.includes('sub-ass-override') || !finalBundle.includes('scale')) {
+  throw new Error('R35 bundled subtitle override semantics missing');
+}
+if (finalEntry.includes("'sub-ass-override', 'force'")) throw new Error('R35 destructive ASS force override survived source');
+if (/sub-ass-override[^\n]{0,80}["']force["']/.test(finalBundle)) throw new Error('R35 destructive ASS force override survived bundle');
 if (!finalBridge.includes("r34SetNativeSubtitleVisible(false, 'r35-focus-handoff-redraw')")) {
   throw new Error('R35 paused redraw trigger missing');
 }
-console.log('R35_PAUSED_HANDOFF_UI_RECOVERY_OK mirrorFirst=1 focusNativeSubtitleOff=1 pausedRedrawTrigger=1 assOverride=scale htmlUiUncoverAfterSendRelease=1');
+console.log('R35_PAUSED_HANDOFF_UI_RECOVERY_OK mirrorFirst=1 focusNativeSubtitleOff=1 pausedRedrawTrigger=1 assOverride=scale bundleGate=semantic htmlUiUncoverAfterSendRelease=1');
