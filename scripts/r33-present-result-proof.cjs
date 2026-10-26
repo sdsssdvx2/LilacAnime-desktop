@@ -21,8 +21,12 @@ function replaceSection(source, startMarker, endMarker, replacement, label) {
 }
 
 let native = read('native/libmpv-d3d11-bridge/player_addon.cc');
+let bridge = read('electron/libmpv-shared-main.cjs');
 if (!native.includes('LILAC_R33_OWNED_POPUP_FOCUS_SURFACE') || !native.includes('LILAC_R33_NATIVE_ONLY_UNFOCUSED')) {
   throw new Error('R33 present-result proof requires owned-popup focus transform');
+}
+if (!bridge.includes('r33NativePresenterActive') || !bridge.includes('r32ApplyNativePresenterFocus')) {
+  throw new Error('R33 present-result proof requires owned-popup bridge transform');
 }
 if (native.includes('LILAC_R33_PRESENT_RESULT_PROOF')) throw new Error('R33 present-result proof already applied');
 
@@ -146,12 +150,26 @@ native = replaceOnce(
   'R33 present-result diagnostics'
 );
 
+// Treat the native N-API return value as an activation acknowledgement. If HWND
+// visibility/geometry setup failed, keep the Chromium video and HTML subtitles as
+// the authoritative fail-open path instead of claiming native mode from blur alone.
+const focusStart = bridge.indexOf('  function r32ApplyNativePresenterFocus(focused) {');
+const focusEnd = bridge.indexOf('\n\n  function ensurePlayer() {', focusStart);
+if (focusStart < 0 || focusEnd <= focusStart) throw new Error('R33 bridge focus helper boundary missing for activation acknowledgement');
+const focusHelper = `  function r32ApplyNativePresenterFocus(focused) {\n    if (!addon || playerId == null) return;\n    const useNative = !Boolean(focused) && active && r32TargetVisible;\n    let nativeReady = false; // LILAC_R33_PRESENT_ACTIVATION_ACK\n    r33FocusTransitions += 1;\n    try {\n      const accepted = addon.setNativePresenterVisible(playerId, useNative);\n      nativeReady = useNative && accepted === true;\n    } catch (error) {\n      lastError = \`R33 owned popup focus failed: \${String(error?.message || error).slice(0, 180)}\`;\n    }\n    r33NativePresenterActive = nativeReady;\n    // Native subtitles are enabled only after the popup actually acknowledged\n    // visibility. Otherwise Chromium remains the complete fail-open presentation.\n    try { addon.command(playerId, ['set_property', 'sub-visibility', nativeReady ? 'yes' : 'no']); } catch {}\n  }`;
+bridge = bridge.slice(0, focusStart) + focusHelper + bridge.slice(focusEnd);
+
 write('native/libmpv-d3d11-bridge/player_addon.cc', native);
+write('electron/libmpv-shared-main.cjs', bridge);
 const finalNative = read('native/libmpv-d3d11-bridge/player_addon.cc');
+const finalBridge = read('electron/libmpv-shared-main.cjs');
 for (const marker of ['LILAC_R33_PRESENT_RESULT_PROOF','presentSOkFrames','presentOccludedFrames','Present native presenter occluded','r33NativeOwnsFrame = R32PresentNativeFrame']) {
   if (!finalNative.includes(marker)) throw new Error(`R33 present-result marker missing: ${marker}`);
+}
+for (const marker of ['LILAC_R33_PRESENT_ACTIVATION_ACK','accepted === true','sub-visibility',"nativeReady ? 'yes' : 'no'"]) {
+  if (!finalBridge.includes(marker)) throw new Error(`R33 activation acknowledgement marker missing: ${marker}`);
 }
 const producerCallAt = finalNative.indexOf('r33NativeOwnsFrame = R32PresentNativeFrame');
 const queueAt = finalNative.indexOf('if (r33NativeOwnsFrame)', producerCallAt);
 if (producerCallAt < 0 || queueAt <= producerCallAt) throw new Error('R33 S_OK gating ordering missing');
-console.log('R33_PRESENT_RESULT_PROOF_OK nativeOnly=S_OK-only occluded=fail-open showOrder=HWND-visible-before-producer-arm diagnostics=S_OK+occluded+other');
+console.log('R33_PRESENT_RESULT_PROOF_OK nativeOnly=S_OK-only occluded=fail-open showOrder=HWND-visible-before-producer-arm activation=acknowledged diagnostics=S_OK+occluded+other');
