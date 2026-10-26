@@ -7,7 +7,7 @@ function Sha256([string]$path){return (Get-FileHash $path -Algorithm SHA256).Has
 $r34Stash=Join-Path $env:RUNNER_TEMP 'lilac-r34-support'
 Remove-Item $r34Stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $r34Stash|Out-Null
-$r34Support=@('r34-focus-handoff-stall-fix.cjs','r34-focus-handoff-native-smoke.cjs')
+$r34Support=@('r34-transform-source-sanitize.cjs','r34-focus-handoff-stall-fix.cjs','r34-focus-handoff-native-smoke.cjs')
 foreach($name in $r34Support){$src=Join-Path 'scripts' $name;if(-not(Test-Path $src)){throw "R34 support missing: $name"};Copy-Item $src (Join-Path $r34Stash $name) -Force}
 
 & ./scripts/r33-owned-popup-focus-build.ps1
@@ -15,6 +15,8 @@ Assert-Exit 'qualified R33 baseline build'
 New-Item -ItemType Directory -Force -Path scripts|Out-Null
 foreach($name in $r34Support){Copy-Item (Join-Path $r34Stash $name) (Join-Path 'scripts' $name) -Force}
 
+node scripts/r34-transform-source-sanitize.cjs
+Assert-Exit 'R34 transform source sanitize'
 node --check scripts/r34-focus-handoff-stall-fix.cjs
 Assert-Exit 'R34 transform syntax'
 node scripts/r34-focus-handoff-stall-fix.cjs
