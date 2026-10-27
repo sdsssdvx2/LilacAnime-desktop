@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Structural repair is intentionally source-only and this file is also a watched CI trigger.
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'electron', 'libmpv-shared-main.cjs');
 let bridge = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
