@@ -59,9 +59,15 @@ if (!source.includes("r37RecordNodeApiCallbackThrow('updateTsfn'")) {
 }
 
 fs.writeFileSync(diagnosticBridge, source, 'utf8');
-process.once('exit', () => {
+const cleanupDiagnosticBridge = () => {
   try { fs.unlinkSync(diagnosticBridge); } catch {}
-});
+};
+process.once('exit', cleanupDiagnosticBridge);
+
+if (process.env.R37_NODE_API_DIAGNOSTIC_PREPARE_ONLY === '1') {
+  console.log('R37_NODE_API_CALLBACK_DIAGNOSTIC_PREPARE_OK sources=allReferencesReleased,updateTsfn semanticAnchors=1,1 productBytes=unchanged');
+  process.exit(0);
+}
 
 const originalResolved = require.resolve(originalBridge);
 require(diagnosticBridge);
