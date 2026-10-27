@@ -134,8 +134,29 @@ try {
   & node_modules/.bin/electron.cmd scripts/r37-native-handoff-freeze-smoke.cjs
   Assert-Exit 'R37 native handoff freeze smoke'
 
-  & node_modules/.bin/electron.cmd --ignore-gpu-blocklist --enable-unsafe-webgpu --use-angle=d3d11 scripts/r37-explicit-handoff-e2e-smoke.cjs
-  Assert-Exit 'R37 explicit handoff end-to-end smoke'
+  # Diagnostic-only policy: DEP0168 means a real exception escaped a Node-API
+  # asynchronous callback but Node's compatibility policy suppressed it. Force
+  # the correct uncaughtException behavior only for this R37 E2E process so CI
+  # prints the original JS exception/stack instead of hiding it behind DEP0168.
+  $r37PreviousNodeOptions = $env:NODE_OPTIONS
+  $r37NodeApiPolicy = '--force-node-api-uncaught-exceptions-policy'
+  try {
+    if ([string]::IsNullOrWhiteSpace($r37PreviousNodeOptions)) {
+      $env:NODE_OPTIONS = $r37NodeApiPolicy
+    } elseif ($r37PreviousNodeOptions -notlike "*$r37NodeApiPolicy*") {
+      $env:NODE_OPTIONS = "$r37PreviousNodeOptions $r37NodeApiPolicy"
+    }
+    Write-Host "R37_NODE_API_EXCEPTION_DIAGNOSTIC policy=forced nodeOptions=$env:NODE_OPTIONS"
+    & node_modules/.bin/electron.cmd --ignore-gpu-blocklist --enable-unsafe-webgpu --use-angle=d3d11 scripts/r37-explicit-handoff-e2e-smoke.cjs
+    Assert-Exit 'R37 explicit handoff end-to-end smoke'
+  }
+  finally {
+    if ($null -eq $r37PreviousNodeOptions) {
+      Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue
+    } else {
+      $env:NODE_OPTIONS = $r37PreviousNodeOptions
+    }
+  }
 }
 finally {
   Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
