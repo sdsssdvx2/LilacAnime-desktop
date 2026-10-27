@@ -139,9 +139,9 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r37-e2e-'));
   let main, other, bridge;
   try {
-    // Register the bridge IPC listeners before the renderer preload can emit
-    // receiver-ready. Otherwise a fast preload could make the test miss the
-    // readiness edge even though the shared-texture receiver itself is valid.
+    // Register IPC first, then bind the exact BrowserWindow before navigation.
+    // The preload emits receiver-ready during page startup and senderIsAttached()
+    // intentionally rejects it unless attachedWindow already points at main.
     bridge = createLibmpvSharedBridge();
     await bridge.ensure();
 
@@ -150,11 +150,11 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
       show:true, width:800, height:600, backgroundColor:'#202020',
       webPreferences:{ preload, backgroundThrottling:false, contextIsolation:true, nodeIntegration:false }
     });
+    await bridge.attachWindow(main);
     other = new BrowserWindow({ show:false, width:320, height:240, backgroundColor:'#303030', webPreferences:{ backgroundThrottling:false } });
     await main.loadURL('data:text/html,<body style="margin:0;background:%23202020"></body>');
     await other.loadURL('data:text/html,<body style="background:%23303030"></body>');
 
-    await bridge.attachWindow(main);
     bridge.resize({ x:0, y:0, width:640, height:360, visible:true });
     const opened = await bridge.open(pathToFileURL(fixture(dir)).href, {}, false, { x:0, y:0, width:640, height:360, visible:true });
     if (!opened?.ok) throw new Error(`bridge open failed ${JSON.stringify(opened)}`);
