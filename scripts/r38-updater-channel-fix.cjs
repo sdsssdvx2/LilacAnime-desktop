@@ -76,12 +76,12 @@ async function discoverCustomReleaseFromHtml(userAgent) {
   const assetsHtml = await assetsResponse.text();
   const hrefs = [...assetsHtml.matchAll(/href="([^"]*\\/releases\\/download\\/[^"]+?\\.exe(?:\\?[^"]*)?)"/gi)].map(match => htmlDecode(match[1]));
   const href = hrefs.find(value => /setup/i.test(value)) || hrefs[0];
-  if (!href) return { tag_name: tag, html_url: \`${CUSTOM_RELEASES_HTML}/tag/\${tag}\`, body: '', assets: [], r38Discovery: 'html' };
+  if (!href) return { tag_name: tag, html_url: \`https://github.com/sdsssdvx2/LilacAnime-desktop/releases/tag/\${tag}\`, body: '', assets: [], r38Discovery: 'html' };
   const url = new URL(href, 'https://github.com');
   const name = decodeURIComponent(url.pathname.split('/').pop() || 'LilacAnime-Libmpv-Setup.exe');
   return {
     tag_name: tag,
-    html_url: \`${CUSTOM_RELEASES_HTML}/tag/\${tag}\`,
+    html_url: \`https://github.com/sdsssdvx2/LilacAnime-desktop/releases/tag/\${tag}\`,
     body: '',
     assets: [{ name, browser_download_url: url.href, size: 0 }],
     r38Discovery: 'html'
