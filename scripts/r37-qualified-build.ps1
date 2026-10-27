@@ -15,7 +15,8 @@ $r37Support = @(
   'r37-explicit-handoff-clean-focus.cjs',
   'r37-native-handoff-freeze-smoke.cjs',
   'r37-explicit-handoff-e2e-smoke.cjs',
-  'r37-run-e2e-with-timeout.cjs'
+  'r37-run-e2e-with-timeout.cjs',
+  'r37-node-api-callback-diagnostic.cjs'
 )
 foreach ($name in $r37Support) {
   $src = Join-Path 'scripts' $name
@@ -65,6 +66,8 @@ node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
 Assert-Exit 'R37 e2e smoke syntax'
 node --check scripts/r37-run-e2e-with-timeout.cjs
 Assert-Exit 'R37 bounded e2e launcher syntax'
+node --check scripts/r37-node-api-callback-diagnostic.cjs
+Assert-Exit 'R37 Node-API callback diagnostic syntax'
 
 $nativeSource = Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
 $bridge = Get-Content 'electron/libmpv-shared-main.cjs' -Raw
@@ -137,31 +140,13 @@ try {
   & node_modules/.bin/electron.cmd scripts/r37-native-handoff-freeze-smoke.cjs
   Assert-Exit 'R37 native handoff freeze smoke'
 
-  # Diagnostic-only policy: DEP0168 means a real exception escaped a Node-API
-  # asynchronous callback but Node's compatibility policy suppressed it. Force
-  # the correct uncaughtException behavior only for this R37 E2E child so CI
-  # prints the original JS exception/stack instead of hiding it behind DEP0168.
-  # The parent launcher owns a hard timeout and kills the full Electron process
-  # tree, so a startup/policy regression cannot strand the qualification job.
-  $r37PreviousNodeOptions = $env:NODE_OPTIONS
-  $r37NodeApiPolicy = '--force-node-api-uncaught-exceptions-policy'
-  try {
-    if ([string]::IsNullOrWhiteSpace($r37PreviousNodeOptions)) {
-      $env:NODE_OPTIONS = $r37NodeApiPolicy
-    } elseif ($r37PreviousNodeOptions -notlike "*$r37NodeApiPolicy*") {
-      $env:NODE_OPTIONS = "$r37PreviousNodeOptions $r37NodeApiPolicy"
-    }
-    Write-Host "R37_NODE_API_EXCEPTION_DIAGNOSTIC policy=forced nodeOptions=$env:NODE_OPTIONS parentTimeoutMs=180000"
-    node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
-    Assert-Exit 'R37 explicit handoff end-to-end smoke'
-  }
-  finally {
-    if ($null -eq $r37PreviousNodeOptions) {
-      Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue
-    } else {
-      $env:NODE_OPTIONS = $r37PreviousNodeOptions
-    }
-  }
+  # Diagnostic-only wrapper: keep Node's compatibility policy unchanged and
+  # intercept the two main-process JS callbacks that can be entered from Node-API.
+  # Any synchronous throw is logged with its source/stack and forces exit code 86;
+  # the product bridge/package bytes themselves stay untouched.
+  Write-Host 'R37_NODE_API_CALLBACK_DIAGNOSTIC policy=default sources=allReferencesReleased,updateTsfn parentTimeoutMs=180000'
+  node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-node-api-callback-diagnostic.cjs 180000
+  Assert-Exit 'R37 explicit handoff end-to-end callback diagnostic'
 }
 finally {
   Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
