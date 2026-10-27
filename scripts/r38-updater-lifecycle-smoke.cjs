@@ -36,8 +36,9 @@ if (main.includes('setTimeout(()=>updater.check(),5000)')) throw new Error('R38 
 for (const marker of ['CUSTOM_RELEASES_API', 'CUSTOM_CURRENT_TAG', 'CUSTOM_TAG_RE', 'compareCustom', 'async checkCustom()', 'this.download()']) {
   if (!updaterSource.includes(marker)) throw new Error(`R38 packaged custom updater marker missing: ${marker}`);
 }
-if (!updaterSource.includes("installOnQuit() { if (!MAC && this.state.status === 'ready'")) {
-  throw new Error('R38 custom updater no longer installs a ready Windows update on clean quit');
+const installOnQuitMatch = updaterSource.match(/installOnQuit\(\)\s*\{([\s\S]*?)\n\s*\}/);
+if (!installOnQuitMatch || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitMatch[1]) || !/this\.install\(false\)/.test(installOnQuitMatch[1])) {
+  throw new Error('R38 custom updater no longer installs a ready update on clean quit');
 }
 
 function loadActualUpdater(fetchImpl) {
