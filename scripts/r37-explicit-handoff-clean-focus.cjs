@@ -333,8 +333,8 @@ if (!finalNative.includes('LILAC_R37_NO_REGION_REAPPLY_ON_BOUNDS')) {
   throw new Error('R37 native no-region bounds marker missing');
 }
 const boundsStart = finalNative.indexOf('napi_value SetNativePresenterBounds(');
-const boundsEnd = finalNative.indexOf('napi_value NativePresenterStats(', boundsStart);
-if (boundsStart < 0 || boundsEnd <= boundsStart) throw new Error('R37 native bounds function missing');
+const boundsEnd = finalNative.indexOf('napi_value SetNativePresenterUiHoles(', boundsStart);
+if (boundsStart < 0 || boundsEnd <= boundsStart) throw new Error('R37 native bounds function boundary missing');
 if (finalNative.slice(boundsStart, boundsEnd).includes('R36ApplyPresenterRegionLocked(')) {
   throw new Error('R37 bounds path still mutates HWND region');
 }
