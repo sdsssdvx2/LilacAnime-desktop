@@ -13,6 +13,7 @@ New-Item -ItemType Directory -Force -Path $r37Stash | Out-Null
 $r37Support = @(
   'r37-transform-anchor-compat.cjs',
   'r37-explicit-handoff-clean-focus.cjs',
+  'r37-node-api-wake-owner-fix.cjs',
   'r37-native-handoff-freeze-smoke.cjs',
   'r37-explicit-handoff-e2e-smoke.cjs',
   'r37-run-e2e-with-timeout.cjs',
@@ -60,6 +61,10 @@ node --check scripts/r37-explicit-handoff-clean-focus.cjs
 Assert-Exit 'R37 transform syntax'
 node scripts/r37-explicit-handoff-clean-focus.cjs
 Assert-Exit 'R37 product transform'
+node --check scripts/r37-node-api-wake-owner-fix.cjs
+Assert-Exit 'R37 Node-API wake owner fix syntax'
+node scripts/r37-node-api-wake-owner-fix.cjs
+Assert-Exit 'R37 Node-API wake owner fix'
 node --check scripts/r37-native-handoff-freeze-smoke.cjs
 Assert-Exit 'R37 native freeze smoke syntax'
 node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
@@ -80,9 +85,13 @@ foreach ($marker in @(
   'LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK',
   'r37CompleteFocusHandoffFromRendererAck',
   'libmpv-shared:r37-handoff-presented',
-  'LILAC_R37_NO_STALE_UI_HOLES'
+  'LILAC_R37_NO_STALE_UI_HOLES',
+  'LILAC_R37_TS_FN_OWNER_SCOPE'
 )) {
   if (-not $bridge.Contains($marker)) { throw "R37 bridge source marker missing: $marker" }
+}
+if (-not $bridge.Contains('const ownerPlayerId = playerId; // LILAC_R37_TS_FN_OWNER_SCOPE')) {
+  throw 'R37 TSFN wake owner binding source gate failed'
 }
 if (-not $nativeSource.Contains('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF') -or
     -not $nativeSource.Contains('!player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)')) {
@@ -119,7 +128,7 @@ if ($pkg.version -ne $env:APP_VERSION -or $pkg.build.appId -ne $env:STABLE_APP_I
     $pkg.build.win.artifactName -ne $env:INSTALLER_NAME) {
   throw 'R37 stable package identity/version gate failed'
 }
-Write-Host 'R37_SOURCE_GATES_OK handoff=explicit-renderer-epoch-ack ui=full-native-popup-no-holes subtitle=freeze-native-pixels-until-ack focused=direct-webgpu r33NativeOnly=preserved'
+Write-Host 'R37_SOURCE_GATES_OK handoff=explicit-renderer-epoch-ack ui=full-native-popup-no-holes subtitle=freeze-native-pixels-until-ack focused=direct-webgpu tsfnWakeOwner=captured-playerId r33NativeOnly=preserved'
 
 if (-not (Test-Path 'native/libmpv-d3d11-bridge/vendor/include/mpv/client.h')) { throw 'R37 inherited pinned libmpv headers missing' }
 & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
@@ -140,19 +149,18 @@ try {
   & node_modules/.bin/electron.cmd scripts/r37-native-handoff-freeze-smoke.cjs
   Assert-Exit 'R37 native handoff freeze smoke'
 
-  # Diagnostic-only wrapper: keep Node's compatibility policy unchanged and
-  # intercept the two main-process JS callbacks that can be entered from Node-API.
-  # Any synchronous throw is logged with its source/stack and forces exit code 86;
-  # the product bridge/package bytes themselves stay untouched.
-  Write-Host 'R37_NODE_API_CALLBACK_DIAGNOSTIC policy=default sources=allReferencesReleased,updateTsfn parentTimeoutMs=180000'
-  node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-node-api-callback-diagnostic.cjs 180000
-  Assert-Exit 'R37 explicit handoff end-to-end callback diagnostic'
+  # Final qualification intentionally runs the raw product bridge with no
+  # callback wrapper. The E2E itself rejects any DEP0168 warning, so this proves
+  # the scope repair rather than merely suppressing the Node-API exception.
+  Write-Host 'R37_RAW_E2E policy=default callbackWrapper=off dep0168Required=0 parentTimeoutMs=180000'
+  node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
+  Assert-Exit 'R37 explicit handoff raw end-to-end smoke'
 }
 finally {
   Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
   Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
 }
-Write-Host 'R37_RUNTIME_SMOKES_OK r33VisibleAutonomy=1 nativeFreeze=1 realSharedTextureE2E=3cycles failOpenExpected=0 uiHolesExpected=0'
+Write-Host 'R37_RUNTIME_SMOKES_OK r33VisibleAutonomy=1 nativeFreeze=1 rawSharedTextureE2E=3cycles dep0168=0 failOpenExpected=0 uiHolesExpected=0'
 
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64
@@ -172,9 +180,10 @@ $shipBridge = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-main.cjs
 $shipPreload = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-preload.cjs') -Raw
 $shipPreloadBundle = Get-Content (Join-Path $asarCheck 'electron/preload-libmpv-shared.generated.cjs') -Raw
 $shipEntry = Get-Content (Join-Path $asarCheck 'src/libmpv-shared-entry.js') -Raw
-foreach ($marker in @('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','libmpv-shared:r37-handoff-presented','LILAC_R37_NO_STALE_UI_HOLES')) {
+foreach ($marker in @('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','libmpv-shared:r37-handoff-presented','LILAC_R37_NO_STALE_UI_HOLES','LILAC_R37_TS_FN_OWNER_SCOPE')) {
   if (-not $shipBridge.Contains($marker)) { throw "packaged R37 bridge missing: $marker" }
 }
+if (-not $shipBridge.Contains('const ownerPlayerId = playerId; // LILAC_R37_TS_FN_OWNER_SCOPE')) { throw 'packaged R37 TSFN owner binding missing' }
 if (-not $shipPreload.Contains('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK') -or
     -not $shipPreload.Contains("presentationMode = 'direct-receive-webgpu-copy'")) {
   throw 'packaged R37 preload/direct WebGPU source missing'
@@ -186,7 +195,7 @@ $packedAddon = 'dist/win-unpacked/resources/app.asar.unpacked/electron/lilac-lib
 $packedDll = 'dist/win-unpacked/resources/app.asar.unpacked/electron/libmpv-2.dll'
 if (-not (Test-Path $packedAddon) -or (Sha256 $packedAddon) -ne $r37AddonSha) { throw 'packaged R37 addon hash mismatch' }
 if (-not (Test-Path $packedDll) -or (Sha256 $packedDll) -ne $env:QUALIFIED_DLL_SHA256) { throw 'packaged R37 DLL hash mismatch' }
-Write-Host "R37_PACKAGED_SOURCE_OK addon=$r37AddonSha dll=$dllSha handoff=renderer-epoch-ack ui=no-holes nativeHandoff=frozen-last-frame focused=direct-webgpu"
+Write-Host "R37_PACKAGED_SOURCE_OK addon=$r37AddonSha dll=$dllSha handoff=renderer-epoch-ack ui=no-holes nativeHandoff=frozen-last-frame focused=direct-webgpu tsfnWakeOwner=captured-playerId"
 
 $hash = Sha256 $installer
 $size = (Get-Item $installer).Length
@@ -216,9 +225,10 @@ $manifest = [ordered]@{
   r37NativeHandoff = 'freeze-visible-native-swapchain+mirror-redraw-to-chromium-until-renderer-ack'
   r37UnfocusedUi = 'full-r33-owned-popup+chromium-ui-holes-disabled'
   r37SubtitleHandoff = 'freeze-last-native-subtitle-pixels-until-renderer-ack+html-after-popup-hide'
-  r37RuntimeSmokes = 'r33-native-autonomy+native-freeze+real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle'
+  r37NodeApiWakeScope = 'wakePumpFromNative-captures-current-playerId+raw-e2e-dep0168-zero'
+  r37RuntimeSmokes = 'r33-native-autonomy+native-freeze+raw-real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle+dep0168-zero'
   stutterStatus = 'not-claimed-fixed;direct-webgpu-retained;diagnostics-retained-for-display-phase-attribution'
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content $manifestPath -Encoding UTF8
 
-Write-Host "R37_BUILD_OK sha256=$hash size=$size addon=$r37AddonSha dll=$dllSha handoff=explicit-renderer-ack ui=no-holes subtitle=freeze-until-ack stutterClaim=none"
+Write-Host "R37_BUILD_OK sha256=$hash size=$size addon=$r37AddonSha dll=$dllSha handoff=explicit-renderer-ack ui=no-holes subtitle=freeze-until-ack tsfnWakeOwner=captured-playerId dep0168=0 stutterClaim=none"
