@@ -46,10 +46,14 @@ source = replaceOnce(
   'R37 flow last-frame stage'
 );
 
+// The pendingFrames.set payload gained fields across R29-R37 reconstruction.
+// Anchor on the unique call itself instead of its historical one-line object shape.
+// Counting immediately before the call preserves the diagnostic meaning while
+// remaining insensitive to payload formatting/field additions.
 source = replaceOnce(
   source,
-  '      pendingFrames.set(key, { playerId: ownerPlayerId, slotId, frameId, at: Date.now() });\n',
-  `      pendingFrames.set(key, { playerId: ownerPlayerId, slotId, frameId, at: Date.now() });\n      r37FlowDiagnostic.pendingRegistered += 1;\n      r37FlowDiagnostic.lastPendingFrameId = r37FlowFrameId(frameId);\n`,
+  'pendingFrames.set(',
+  `r37FlowDiagnostic.pendingRegistered += 1;\n      r37FlowDiagnostic.lastPendingFrameId = r37FlowFrameId(frameId);\n      pendingFrames.set(`,
   'R37 flow pending registration stage'
 );
 
