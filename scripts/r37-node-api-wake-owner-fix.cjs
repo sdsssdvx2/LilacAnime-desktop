@@ -109,9 +109,13 @@ bridge = bridge.replace(
   `${r37DiagNeedle},\n            mailboxEscapeTransfers: r37HandoffEscapeTransfers,\n            mailboxEscapeActive: r37HandoffEscapeActive,\n            mailboxEscapeMaxInFlight: r37HandoffEscapeMaxInFlight`
 );
 
-bridge = bridge.slice(0, finalWakeStart) +
+const markerWakeStart = bridge.indexOf(wakeMarker);
+if (markerWakeStart < 0 || bridge.indexOf(wakeMarker, markerWakeStart + wakeMarker.length) >= 0) {
+  throw new Error('R37 wake marker boundary drifted after mailbox transform');
+}
+bridge = bridge.slice(0, markerWakeStart) +
   '  // LILAC_R37_TS_FN_RELEASE_SCOPE_REPAIRED: frame-owner bookkeeping belongs to releaseNativeFrame.\n' +
-  bridge.slice(finalWakeStart);
+  bridge.slice(markerWakeStart);
 fs.writeFileSync(target, bridge, 'utf8');
 
 const out = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
