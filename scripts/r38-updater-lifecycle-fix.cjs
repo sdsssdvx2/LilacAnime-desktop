@@ -19,8 +19,9 @@ if (main.includes('LILAC_R38_UPDATE_ACTIVITY_CHECK')) throw new Error('R38 updat
 for (const marker of ['CUSTOM_RELEASES_API', 'CUSTOM_CURRENT_TAG', 'checkCustom()', 'compareCustom']) {
   if (!updater.includes(marker)) throw new Error(`R38 requires the R2K custom updater marker: ${marker}`);
 }
-if (!updater.includes('installOnQuit()') || !updater.includes('if (!MAC && this.state.status === \'ready\'')) {
-  throw new Error('R38 requires the qualified custom install-on-quit path');
+const installOnQuitMatch = updater.match(/installOnQuit\(\)\s*\{([\s\S]*?)\n\s*\}/);
+if (!installOnQuitMatch || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitMatch[1]) || !/this\.install\(false\)/.test(installOnQuitMatch[1])) {
+  throw new Error('R38 requires the qualified ready-state install-on-quit path');
 }
 
 main = replaceOnce(
