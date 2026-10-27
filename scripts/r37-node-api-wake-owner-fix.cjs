@@ -91,7 +91,10 @@ bridge = bridge.replace(
 
 const enqueueMarker = '  function enqueueImportedFrame(delivery) {';
 const enqueueStart = bridge.indexOf(enqueueMarker);
-const enqueueEnd = bridge.indexOf('\n\n  async function pump() {', enqueueStart + enqueueMarker.length);
+const enqueueNextFunction = bridge.indexOf('\n\n  function ', enqueueStart + enqueueMarker.length);
+const enqueueNextAsyncFunction = bridge.indexOf('\n\n  async function ', enqueueStart + enqueueMarker.length);
+const enqueueEndCandidates = [enqueueNextFunction, enqueueNextAsyncFunction].filter(index => index > enqueueStart);
+const enqueueEnd = enqueueEndCandidates.length ? Math.min(...enqueueEndCandidates) : -1;
 if (enqueueStart < 0 || enqueueEnd <= enqueueStart || bridge.indexOf(enqueueMarker, enqueueStart + enqueueMarker.length) >= 0) {
   throw new Error('R37 mailbox escape enqueueImportedFrame boundary must be unique');
 }
@@ -101,6 +104,9 @@ if (!oldEnqueue.includes('deliveryMailboxActive = true;') || !oldEnqueue.include
 }
 const newEnqueue = `  function enqueueImportedFrame(delivery) {\n    if (!delivery?.imported) return;\n    // LILAC_R37_HANDOFF_MAILBOX_ESCAPE: if the pre-focus serial transfer is still\n    // awaiting Chromium lifetime completion, one epoch-tagged handoff frame must\n    // be allowed to reach the renderer or the explicit ACK protocol deadlocks.\n    // Never exceed one escape transfer; later frames still coalesce in R24's\n    // normal latest-frame mailbox.\n    if (r34FocusHandoffPending && deliveryMailboxActive && !r37HandoffEscapeActive) {\n      r37HandoffEscapeActive = true;\n      r37HandoffEscapeTransfers += 1;\n      r37HandoffEscapeMaxInFlight = Math.max(r37HandoffEscapeMaxInFlight, deliveryInFlight + 1);\n      void sendImportedFrame(delivery).finally(() => {\n        r37HandoffEscapeActive = false;\n      });\n      return;\n    }\n    if (!deliveryMailboxActive) {\n      deliveryMailboxActive = true;\n      metrics.deliveryMailboxStarts += 1;\n      void drainDeliveryMailbox(delivery);\n      return;\n    }\n    if (deliveryQueuedLatest?.imported) {\n      metrics.deliveryCoalescedFrames += 1;\n      releaseUnsentDelivery(deliveryQueuedLatest);\n    }\n    deliveryQueuedLatest = delivery;\n    metrics.deliveryMailboxMaxQueued = Math.max(metrics.deliveryMailboxMaxQueued, 1);\n  }`;
 bridge = bridge.slice(0, enqueueStart) + newEnqueue + bridge.slice(enqueueEnd);
+if (!bridge.includes('function r30PopLatestProducedFrame(ownerPlayerId)')) {
+  throw new Error('R37 mailbox escape accidentally removed R30 newest-only producer drain helper');
+}
 
 const r37DiagNeedle = '            regionNativeClears: r37PresenterRegionNativeClears';
 if (!bridge.includes(r37DiagNeedle)) throw new Error('R37 mailbox escape diagnostics anchor missing');
@@ -132,8 +138,11 @@ if (!out.includes('LILAC_R37_HANDOFF_MAILBOX_ESCAPE') ||
     !out.includes('r34FocusHandoffPending && deliveryMailboxActive && !r37HandoffEscapeActive')) {
   throw new Error('R37 bounded handoff mailbox escape verification failed');
 }
+if (!out.includes('function r30PopLatestProducedFrame(ownerPlayerId)')) {
+  throw new Error('R37 packaged-source R30 producer drain helper missing');
+}
 if (out.includes('focus-staged-gpu-copy') || out.includes('copyTextureToTexture')) {
   throw new Error('R37 mailbox repair resurrected forbidden staged renderer path');
 }
 
-console.log('R37_NODE_API_WAKE_SCOPE_OK mode=' + mode + ' callback=wakePumpFromNative ownerRefs=0 frameRefs=0 releaseBookkeeping=releaseNativeFrame dep0168RootCause=mis-scoped-R34-boundary-repaired mailboxEscape=handoff-only-max1 directWebgpu=preserved');
+console.log('R37_NODE_API_WAKE_SCOPE_OK mode=' + mode + ' callback=wakePumpFromNative ownerRefs=0 frameRefs=0 releaseBookkeeping=releaseNativeFrame dep0168RootCause=mis-scoped-R34-boundary-repaired mailboxEscape=handoff-only-max1 r30Drain=preserved directWebgpu=preserved');
