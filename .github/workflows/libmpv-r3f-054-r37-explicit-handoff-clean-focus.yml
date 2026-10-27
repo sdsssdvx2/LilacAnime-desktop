@@ -9,6 +9,8 @@ on:
       - scripts/r37-explicit-handoff-clean-focus.cjs
       - scripts/r37-native-handoff-freeze-smoke.cjs
       - scripts/r37-explicit-handoff-e2e-smoke.cjs
+      - scripts/r37-run-e2e-with-timeout.cjs
+      - scripts/r37-node-api-callback-diagnostic.cjs
       - scripts/r37-qualified-build.ps1
       - scripts/r36-transform-r35-anchor-compat.cjs
       - scripts/r36-handoff-ack-subtitle-stability.cjs
