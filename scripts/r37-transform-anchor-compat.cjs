@@ -46,6 +46,16 @@ replaceOnce(
   'R37 qualified-R36 managed-release ACK anchor'
 );
 
+// R36 inserts SetNativePresenterUiHoles between SetNativePresenterBounds and
+// NativePresenterStats. Scope the R37 no-region-churn source gate to the bounds
+// function itself; otherwise the gate sees the compatibility API's intentional
+// one-time R36ApplyPresenterRegionLocked call and falsely reports a bounds leak.
+replaceOnce(
+  "const boundsEnd = finalNative.indexOf('napi_value NativePresenterStats(', boundsStart);",
+  "const boundsEnd = finalNative.indexOf('napi_value SetNativePresenterUiHoles(', boundsStart);",
+  'R37 no-region-churn bounds gate boundary'
+);
+
 // R36's builder intentionally stores the exact Windows artifact filename in
 // package.json. Keep the same convention so the stable identity/package gate is
 // exact rather than relying on electron-builder template expansion.
@@ -56,4 +66,4 @@ replaceOnce(
 );
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line+runtime-marker artifact=exact-exe');
+console.log('R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line+runtime-marker regionGate=bounds-only artifact=exact-exe');
