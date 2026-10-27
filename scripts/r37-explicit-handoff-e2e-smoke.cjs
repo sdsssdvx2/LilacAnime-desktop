@@ -10,9 +10,9 @@ const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hardDeadline = setTimeout(() => {
-  console.error('R37 explicit renderer handoff e2e smoke exceeded 120s hard deadline');
+  console.error('R37 explicit renderer handoff e2e smoke exceeded 150s hard deadline');
   process.exit(124);
-}, 120000);
+}, 150000);
 
 function fixture(dir) {
   const ffmpeg = require('ffmpeg-static');
@@ -32,56 +32,46 @@ function subtitleFixture(dir) {
   fs.writeFileSync(out, 'WEBVTT\n\n00:00:00.000 --> 00:00:39.000\nR37 subtitle ownership smoke\n', 'utf8');
   return out;
 }
-function receiverPreload(dir) {
-  const out = path.join(dir, 'r37-receiver-preload.cjs');
-  fs.writeFileSync(out, String.raw`'use strict';
-const { ipcRenderer, sharedTexture } = require('electron');
-let received = 0;
-let acked = 0;
-try {
-  sharedTexture.setSharedTextureReceiver(({ importedSharedTexture }, metadata = {}) => {
-    received += 1;
-    let copied = false;
-    let frame = null;
-    try {
-      if (metadata?.kind !== 'lilac-libmpv-frame') return;
-      frame = importedSharedTexture.getVideoFrame();
-      copied = Boolean(frame && Number(frame.codedWidth || frame.displayWidth || 0) > 0 && Number(frame.codedHeight || frame.displayHeight || 0) > 0);
-    } finally {
-      try { frame?.close?.(); } catch {}
-      try { importedSharedTexture?.release?.(); } catch {}
-      if (copied && Number(metadata?.r37HandoffEpoch) > 0) {
-        acked += 1;
-        ipcRenderer.send('libmpv-shared:r37-handoff-presented', {
-          epoch: Number(metadata.r37HandoffEpoch),
-          playerId: Number(metadata.playerId) || 0,
-          generation: Number(metadata.generation) || 0,
-          frameId: Number(metadata.frameId) || 0
-        });
-      }
-      if ((received % 8) === 0 || Number(metadata?.r37HandoffEpoch) > 0) {
-        ipcRenderer.send('libmpv-shared:receiver-stats', {
-          receivedFrames: received,
-          presentedFrames: received,
-          droppedNoSurface: 0,
-          drawFailures: 0,
-          lastFrameAt: Date.now(),
-          lastFrameId: Number(metadata?.frameId) || 0,
-          playerId: Number(metadata?.playerId) || 0,
-          width: Number(metadata?.width) || 0,
-          height: Number(metadata?.height) || 0,
-          reason: copied ? 'presented' : 'no-frame',
-          r37Acked: acked
-        });
-      }
-    }
-  });
-  ipcRenderer.send('libmpv-shared:receiver-ready', { ok: true });
-} catch (error) {
-  ipcRenderer.send('libmpv-shared:receiver-ready', { ok: false, error: String(error?.message || error).slice(0, 180) });
-}
-`, 'utf8');
-  return out;
+function productHtml(dir) {
+  const sourceBundle = path.resolve(__dirname, '..', 'src', 'libmpv-shared.generated.js');
+  if (!fs.existsSync(sourceBundle)) throw new Error(`generated product renderer bundle missing: ${sourceBundle}`);
+  fs.copyFileSync(sourceBundle, path.join(dir, 'libmpv-shared.generated.js'));
+  const html = path.join(dir, 'r37-e2e.html');
+  fs.writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body,#playerView,#immersivePlayer,#videoStage{margin:0;width:100%;height:100%;overflow:hidden;background:#202020}
+#immersivePlayer,#videoStage{position:relative}
+lilac-mpv-video{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#warmGpu{position:absolute;left:0;top:0;width:16px;height:16px;opacity:.01;pointer-events:none}
+</style></head><body class="player-mode"><section id="playerView" class="active"><div id="immersivePlayer"><div id="videoStage"><lilac-mpv-video id="video"></lilac-mpv-video><canvas id="warmGpu" width="16" height="16"></canvas></div></div></section>
+<script src="./libmpv-shared.generated.js"></script><script>
+window.__r37GpuWarmup=async()=>{
+  if(!navigator.gpu)return{ok:false,error:'navigator.gpu unavailable'};
+  const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});
+  if(!adapter)return{ok:false,error:'WebGPU adapter unavailable'};
+  const device=await adapter.requestDevice();
+  const canvas=document.querySelector('#warmGpu');
+  const context=canvas.getContext('webgpu');
+  if(!context)return{ok:false,error:'WebGPU context unavailable'};
+  const format=navigator.gpu.getPreferredCanvasFormat();
+  context.configure({device,format,alphaMode:'opaque'});
+  const encoder=device.createCommandEncoder();
+  const pass=encoder.beginRenderPass({colorAttachments:[{view:context.getCurrentTexture().createView(),clearValue:{r:0.04,g:0.08,b:0.12,a:1},loadOp:'clear',storeOp:'store'}]});
+  pass.end();
+  device.queue.submit([encoder.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  window.__r37WarmDevice=device;
+  return{ok:true,format};
+};
+window.__startR37E2E=async src=>{
+  await customElements.whenDefined('lilac-mpv-video');
+  const video=document.querySelector('#video');
+  await video.openLilacSource(src,{hls:false,headers:{}});
+  await video.play();
+  return true;
+};
+window.__r37SurfaceSnapshot=()=>{const host=document.querySelector('#video');const canvas=host?.shadowRoot?.querySelector('canvas[data-lilac-libmpv-surface]');const rect=host?.getBoundingClientRect?.();return{host:rect?{width:rect.width,height:rect.height}:null,canvas:canvas?{width:canvas.width,height:canvas.height}:null};};
+</script></body></html>`, 'utf8');
+  return html;
 }
 async function waitUntil(fn, ms, label) {
   const end = Date.now() + ms;
@@ -134,6 +124,7 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
 (async () => {
   await app.whenReady();
   if (!process.env.LILAC_LIBMPV_PLAYER_ADDON || !process.env.LILAC_LIBMPV_DLL) throw new Error('R37 addon/dll env missing');
+  if (app.isHardwareAccelerationEnabled?.() === false) throw new Error('Electron hardware acceleration is disabled');
   process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r37-e2e-'));
@@ -142,27 +133,47 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     bridge = createLibmpvSharedBridge({ app, ipcMain });
     await bridge.ensure();
 
-    const preload = receiverPreload(dir);
+    const preload = path.resolve(__dirname, '..', 'electron', 'preload-libmpv-shared.generated.cjs');
+    if (!fs.existsSync(preload)) throw new Error(`generated product preload missing: ${preload}`);
+    const html = productHtml(dir);
     main = new BrowserWindow({
       show:true, width:800, height:600, backgroundColor:'#202020',
-      webPreferences:{ preload, backgroundThrottling:false, contextIsolation:true, nodeIntegration:false }
+      webPreferences:{ preload, backgroundThrottling:false, contextIsolation:true, nodeIntegration:false, sandbox:true }
     });
     await bridge.attachWindow(main);
     other = new BrowserWindow({ show:false, width:320, height:240, backgroundColor:'#303030', webPreferences:{ backgroundThrottling:false } });
-    await main.loadURL('data:text/html,<body style="margin:0;background:%23202020"></body>');
+    await main.loadFile(html);
     await other.loadURL('data:text/html,<body style="background:%23303030"></body>');
+    main.focus();
+    await waitUntil(() => main.isFocused(), 3000, 'initial focus');
 
-    bridge.resize({ x:0, y:0, width:640, height:360, visible:true });
-    const opened = await bridge.open(pathToFileURL(fixture(dir)).href, {}, false, { x:0, y:0, width:640, height:360, visible:true });
-    if (!opened?.ok) throw new Error(`bridge open failed ${JSON.stringify(opened)}`);
+    // Force the hosted Electron GPU process and renderer WebGPU queue to complete
+    // one real command before the native D3D11 texture is imported. The production
+    // receiver/preload remains completely unmodified and performs the tested copy.
+    let gpuInfo = null;
+    try { gpuInfo = await app.getGPUInfo('complete'); } catch (error) { throw new Error(`GPU info unavailable: ${String(error?.message || error)}`); }
+    const warm = await main.webContents.executeJavaScript('window.__r37GpuWarmup()');
+    if (!warm?.ok) throw new Error(`renderer WebGPU warmup failed ${JSON.stringify(warm)}`);
+
+    const media = pathToFileURL(fixture(dir)).href;
+    const started = await main.webContents.executeJavaScript(`window.__startR37E2E(${JSON.stringify(media)})`);
+    if (started !== true) throw new Error('product lilac-mpv-video start returned false');
 
     try {
       await waitUntil(() => {
         const state = bridge.state();
-        return state?.fileLoaded === true && Number(state?.metrics?.sentFrames || 0) >= 5;
+        return state?.fileLoaded === true && Number(state?.metrics?.sentFrames || 0) >= 5 && Number(state?.receiver?.presentedFrames || 0) >= 5;
       }, 15000, 'focused playback baseline');
     } catch (error) {
-      throw new Error(`focused playback baseline failed state=${JSON.stringify(bridge.state())} cause=${String(error?.message || error)}`);
+      const surface = await main.webContents.executeJavaScript('window.__r37SurfaceSnapshot()').catch(() => null);
+      throw new Error(`focused playback baseline failed gpuFeature=${JSON.stringify(app.getGPUFeatureStatus?.() || null)} gpuDeviceCount=${Array.isArray(gpuInfo?.gpuDevice) ? gpuInfo.gpuDevice.length : 0} surface=${JSON.stringify(surface)} state=${JSON.stringify(bridge.state())} cause=${String(error?.message || error)}`);
+    }
+
+    const baseline = bridge.state();
+    if (Number(baseline?.metrics?.importFailures || 0) !== 0) throw new Error(`baseline shared texture import failures=${baseline.metrics.importFailures} last=${baseline.metrics.lastImportError}`);
+    if (Number(baseline?.metrics?.sendFailures || 0) !== 0) throw new Error(`baseline shared texture send failures=${baseline.metrics.sendFailures} last=${baseline.metrics.lastSendError}`);
+    if (baseline?.receiver?.rendererMode && baseline.receiver.rendererMode !== 'direct-receive-webgpu-copy' && baseline.receiver.rendererMode !== 'webgpu-copy') {
+      throw new Error(`unexpected product receiver mode ${baseline.receiver.rendererMode}`);
     }
 
     const active = await focusCycle(bridge, main, other, 1, 'active');
@@ -182,8 +193,9 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     if (Number(final.r36.failOpenCount || 0) !== 0) throw new Error(`R37 fail-open count nonzero ${final.r36.failOpenCount}`);
     if (final.handoff.pending === true || Number(final.r37.pendingEpoch || 0) !== 0) throw new Error('R37 handoff left pending state');
     if (Number(final.state?.r32NativePresenter?.r36UiHoleCount || 0) !== 0) throw new Error('R37 UI holes active at end');
+    if (Number(final.state?.metrics?.importFailures || 0) !== 0 || Number(final.state?.metrics?.sendFailures || 0) !== 0) throw new Error('R37 E2E transport recorded import/send failure');
 
-    console.log(`R37_EXPLICIT_HANDOFF_E2E_OK cycles=3 activeMs=${active.elapsed} pausedSubtitleMs=${pausedSubtitle.elapsed} pausedNoSubtitleMs=${pausedNoSubtitle.elapsed} rendererAckCompletions=${final.r37.rendererAckCompletions} failOpenCount=0 rejectedAcks=0 uiHoles=0 realSharedTexture=1`);
+    console.log(`R37_EXPLICIT_HANDOFF_E2E_OK cycles=3 activeMs=${active.elapsed} pausedSubtitleMs=${pausedSubtitle.elapsed} pausedNoSubtitleMs=${pausedNoSubtitle.elapsed} rendererAckCompletions=${final.r37.rendererAckCompletions} failOpenCount=0 rejectedAcks=0 uiHoles=0 realProductPreload=1 realProductRenderer=1 realSharedTexture=1`);
   } finally {
     clearTimeout(hardDeadline);
     try { await bridge?.close?.(); } catch {}
