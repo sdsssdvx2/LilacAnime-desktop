@@ -134,7 +134,7 @@ try {
   & node_modules/.bin/electron.cmd scripts/r37-native-handoff-freeze-smoke.cjs
   Assert-Exit 'R37 native handoff freeze smoke'
 
-  & node_modules/.bin/electron.cmd scripts/r37-explicit-handoff-e2e-smoke.cjs
+  & node_modules/.bin/electron.cmd --ignore-gpu-blocklist --enable-unsafe-webgpu --use-angle=d3d11 scripts/r37-explicit-handoff-e2e-smoke.cjs
   Assert-Exit 'R37 explicit handoff end-to-end smoke'
 }
 finally {
