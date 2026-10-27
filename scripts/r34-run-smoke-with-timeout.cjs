@@ -25,7 +25,9 @@ else delete childEnv.ELECTRON_RUN_AS_NODE;
 const expectedMarkers = new Map([
   ['r32-native-producer-watchdog-smoke.cjs', 'R32_NATIVE_PRODUCER_WATCHDOG_OK'],
   ['r33-owned-popup-visible-focus-smoke.cjs', 'R33_VISIBLE_FOCUS_SMOKE_OK'],
-  ['r34-focus-handoff-native-smoke.cjs', 'R34_NATIVE_HANDOFF_SMOKE_OK']
+  ['r34-focus-handoff-native-smoke.cjs', 'R34_NATIVE_HANDOFF_SMOKE_OK'],
+  ['r37-native-handoff-freeze-smoke.cjs', 'R37_NATIVE_HANDOFF_FREEZE_OK'],
+  ['r37-explicit-handoff-e2e-smoke.cjs', 'R37_EXPLICIT_HANDOFF_E2E_OK']
 ]);
 const expectedMarker = expectedMarkers.get(path.basename(childScript));
 if (!expectedMarker) throw new Error(`No authoritative success marker configured for smoke: ${path.basename(childScript)}`);
