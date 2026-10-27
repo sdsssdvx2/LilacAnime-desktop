@@ -62,9 +62,9 @@ Assert-Exit 'R37 transform syntax'
 node scripts/r37-explicit-handoff-clean-focus.cjs
 Assert-Exit 'R37 product transform'
 node --check scripts/r37-node-api-wake-owner-fix.cjs
-Assert-Exit 'R37 Node-API wake owner fix syntax'
+Assert-Exit 'R37 Node-API wake scope fix syntax'
 node scripts/r37-node-api-wake-owner-fix.cjs
-Assert-Exit 'R37 Node-API wake owner fix'
+Assert-Exit 'R37 Node-API wake scope fix'
 node --check scripts/r37-native-handoff-freeze-smoke.cjs
 Assert-Exit 'R37 native freeze smoke syntax'
 node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
@@ -86,12 +86,24 @@ foreach ($marker in @(
   'r37CompleteFocusHandoffFromRendererAck',
   'libmpv-shared:r37-handoff-presented',
   'LILAC_R37_NO_STALE_UI_HOLES',
-  'LILAC_R37_TS_FN_OWNER_SCOPE'
+  'LILAC_R37_TS_FN_RELEASE_SCOPE_REPAIRED'
 )) {
   if (-not $bridge.Contains($marker)) { throw "R37 bridge source marker missing: $marker" }
 }
-if (-not $bridge.Contains('const ownerPlayerId = playerId; // LILAC_R37_TS_FN_OWNER_SCOPE')) {
-  throw 'R37 TSFN wake owner binding source gate failed'
+$wakeStart = $bridge.IndexOf('  function wakePumpFromNative() {')
+$wakeEnd = if ($wakeStart -ge 0) { $bridge.IndexOf("`n`n  function ", $wakeStart + 1) } else { -1 }
+if ($wakeStart -lt 0 -or $wakeEnd -le $wakeStart) { throw 'R37 TSFN wake function boundary source gate failed' }
+$wakeBlock = $bridge.Substring($wakeStart, $wakeEnd - $wakeStart)
+if ($wakeBlock.Contains('ownerPlayerId') -or $wakeBlock.Contains('frameId')) {
+  throw 'R37 TSFN wake callback still contains frame-owner variables'
+}
+$releaseStart = $bridge.IndexOf('  function releaseNativeFrame(ownerPlayerId, slotId, frameId) {')
+$releaseEnd = if ($releaseStart -ge 0) { $bridge.IndexOf('  function wakePumpFromNative() {', $releaseStart + 1) } else { -1 }
+if ($releaseStart -lt 0 -or $releaseEnd -le $releaseStart) { throw 'R37 releaseNativeFrame boundary source gate failed' }
+$releaseBlock = $bridge.Substring($releaseStart, $releaseEnd - $releaseStart)
+if (-not $releaseBlock.Contains('r36FocusHandoffReleasedFrames') -or
+    -not $releaseBlock.Contains('r34CompleteFocusHandoff(ownerPlayerId, frameId);')) {
+  throw 'R37 releaseNativeFrame lost inherited R36 handoff release bookkeeping'
 }
 if (-not $nativeSource.Contains('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF') -or
     -not $nativeSource.Contains('!player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)')) {
@@ -128,7 +140,7 @@ if ($pkg.version -ne $env:APP_VERSION -or $pkg.build.appId -ne $env:STABLE_APP_I
     $pkg.build.win.artifactName -ne $env:INSTALLER_NAME) {
   throw 'R37 stable package identity/version gate failed'
 }
-Write-Host 'R37_SOURCE_GATES_OK handoff=explicit-renderer-epoch-ack ui=full-native-popup-no-holes subtitle=freeze-native-pixels-until-ack focused=direct-webgpu tsfnWakeOwner=captured-playerId r33NativeOnly=preserved'
+Write-Host 'R37_SOURCE_GATES_OK handoff=explicit-renderer-epoch-ack ui=full-native-popup-no-holes subtitle=freeze-native-pixels-until-ack focused=direct-webgpu tsfnWakeOwner=none releaseAckScope=releaseNativeFrame r33NativeOnly=preserved'
 
 if (-not (Test-Path 'native/libmpv-d3d11-bridge/vendor/include/mpv/client.h')) { throw 'R37 inherited pinned libmpv headers missing' }
 & node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
@@ -180,10 +192,20 @@ $shipBridge = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-main.cjs
 $shipPreload = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-preload.cjs') -Raw
 $shipPreloadBundle = Get-Content (Join-Path $asarCheck 'electron/preload-libmpv-shared.generated.cjs') -Raw
 $shipEntry = Get-Content (Join-Path $asarCheck 'src/libmpv-shared-entry.js') -Raw
-foreach ($marker in @('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','libmpv-shared:r37-handoff-presented','LILAC_R37_NO_STALE_UI_HOLES','LILAC_R37_TS_FN_OWNER_SCOPE')) {
+foreach ($marker in @('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','libmpv-shared:r37-handoff-presented','LILAC_R37_NO_STALE_UI_HOLES','LILAC_R37_TS_FN_RELEASE_SCOPE_REPAIRED')) {
   if (-not $shipBridge.Contains($marker)) { throw "packaged R37 bridge missing: $marker" }
 }
-if (-not $shipBridge.Contains('const ownerPlayerId = playerId; // LILAC_R37_TS_FN_OWNER_SCOPE')) { throw 'packaged R37 TSFN owner binding missing' }
+$shipWakeStart = $shipBridge.IndexOf('  function wakePumpFromNative() {')
+$shipWakeEnd = if ($shipWakeStart -ge 0) { $shipBridge.IndexOf("`n`n  function ", $shipWakeStart + 1) } else { -1 }
+if ($shipWakeStart -lt 0 -or $shipWakeEnd -le $shipWakeStart) { throw 'packaged R37 TSFN wake boundary missing' }
+$shipWakeBlock = $shipBridge.Substring($shipWakeStart, $shipWakeEnd - $shipWakeStart)
+if ($shipWakeBlock.Contains('ownerPlayerId') -or $shipWakeBlock.Contains('frameId')) { throw 'packaged R37 TSFN wake frame-owner leak' }
+$shipReleaseStart = $shipBridge.IndexOf('  function releaseNativeFrame(ownerPlayerId, slotId, frameId) {')
+$shipReleaseEnd = if ($shipReleaseStart -ge 0) { $shipBridge.IndexOf('  function wakePumpFromNative() {', $shipReleaseStart + 1) } else { -1 }
+if ($shipReleaseStart -lt 0 -or $shipReleaseEnd -le $shipReleaseStart) { throw 'packaged R37 releaseNativeFrame boundary missing' }
+$shipReleaseBlock = $shipBridge.Substring($shipReleaseStart, $shipReleaseEnd - $shipReleaseStart)
+if (-not $shipReleaseBlock.Contains('r36FocusHandoffReleasedFrames') -or
+    -not $shipReleaseBlock.Contains('r34CompleteFocusHandoff(ownerPlayerId, frameId);')) { throw 'packaged R37 release bookkeeping missing' }
 if (-not $shipPreload.Contains('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK') -or
     -not $shipPreload.Contains("presentationMode = 'direct-receive-webgpu-copy'")) {
   throw 'packaged R37 preload/direct WebGPU source missing'
@@ -195,7 +217,7 @@ $packedAddon = 'dist/win-unpacked/resources/app.asar.unpacked/electron/lilac-lib
 $packedDll = 'dist/win-unpacked/resources/app.asar.unpacked/electron/libmpv-2.dll'
 if (-not (Test-Path $packedAddon) -or (Sha256 $packedAddon) -ne $r37AddonSha) { throw 'packaged R37 addon hash mismatch' }
 if (-not (Test-Path $packedDll) -or (Sha256 $packedDll) -ne $env:QUALIFIED_DLL_SHA256) { throw 'packaged R37 DLL hash mismatch' }
-Write-Host "R37_PACKAGED_SOURCE_OK addon=$r37AddonSha dll=$dllSha handoff=renderer-epoch-ack ui=no-holes nativeHandoff=frozen-last-frame focused=direct-webgpu tsfnWakeOwner=captured-playerId"
+Write-Host "R37_PACKAGED_SOURCE_OK addon=$r37AddonSha dll=$dllSha handoff=renderer-epoch-ack ui=no-holes nativeHandoff=frozen-last-frame focused=direct-webgpu tsfnWakeOwner=none releaseAckScope=releaseNativeFrame"
 
 $hash = Sha256 $installer
 $size = (Get-Item $installer).Length
@@ -225,10 +247,10 @@ $manifest = [ordered]@{
   r37NativeHandoff = 'freeze-visible-native-swapchain+mirror-redraw-to-chromium-until-renderer-ack'
   r37UnfocusedUi = 'full-r33-owned-popup+chromium-ui-holes-disabled'
   r37SubtitleHandoff = 'freeze-last-native-subtitle-pixels-until-renderer-ack+html-after-popup-hide'
-  r37NodeApiWakeScope = 'wakePumpFromNative-captures-current-playerId+raw-e2e-dep0168-zero'
+  r37NodeApiWakeScope = 'release-bookkeeping-relocated-out-of-tsfn-wake+raw-e2e-dep0168-zero'
   r37RuntimeSmokes = 'r33-native-autonomy+native-freeze+raw-real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle+dep0168-zero'
   stutterStatus = 'not-claimed-fixed;direct-webgpu-retained;diagnostics-retained-for-display-phase-attribution'
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content $manifestPath -Encoding UTF8
 
-Write-Host "R37_BUILD_OK sha256=$hash size=$size addon=$r37AddonSha dll=$dllSha handoff=explicit-renderer-ack ui=no-holes subtitle=freeze-until-ack tsfnWakeOwner=captured-playerId dep0168=0 stutterClaim=none"
+Write-Host "R37_BUILD_OK sha256=$hash size=$size addon=$r37AddonSha dll=$dllSha handoff=explicit-renderer-ack ui=no-holes subtitle=freeze-until-ack tsfnWakeOwner=none releaseAckScope=releaseNativeFrame dep0168=0 stutterClaim=none"
