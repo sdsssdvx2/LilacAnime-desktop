@@ -48,46 +48,59 @@ source = source.replaceAll('duration=12', 'duration=30');
 
 // The focused baseline has no Chromium receiver in this native DWM smoke. Starting
 // the 24-slot producer while the popup is intentionally hidden can therefore fill
-// every slot before the hosted desktop capture finishes. Once all 24 frames are
-// in-flight, blur cannot produce the first native-only frame and the test reports
-// a false startup timeout (renderedFrames=24, nativeOnlyFrames=0, presentSOk=0).
-// Start the producer only after the real BrowserWindow blur has activated the R33
-// native-owned popup. Product code is untouched; the test still proves the same
-// native-only DWM output, 900ms main-thread autonomy and focus recovery.
-// R34's prebaseline watchdog may already have wrapped the producer line with stage
-// markers. Move those markers together with the producer so diagnostics remain true.
-const plainEarlyProducer = `    addon.open(id, media);
-    await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
-    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
-    addon.setNativePresenterVisible(id, false);`;
-const stagedEarlyProducer = `    addon.open(id, media);
-    await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
-    console.log('R34_PRE_R33_STAGE=before-producer-start');
-    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
-    console.log('R34_PRE_R33_STAGE=producer-started');
-    addon.setNativePresenterVisible(id, false);`;
-const plainCount = source.split(plainEarlyProducer).length - 1;
-const stagedCount = source.split(stagedEarlyProducer).length - 1;
-if (plainCount + stagedCount !== 1) {
-  throw new Error('R35 hosted producer-start anchor expected one plain/staged form, found plain=' + plainCount + ' staged=' + stagedCount);
+// every slot before the hosted capture baseline finishes. Once all 24 frames are
+// in-flight, blur cannot produce the first native-only frame. Relocate the one real
+// producer start to immediately after the real BrowserWindow blur. Work from the
+// semantic producer line itself instead of guessing which R34 watchdog wrapper is
+// present; carry any adjacent before/after producer stage markers with it.
+const producerNeedle = "if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');";
+let lines = source.split('\n');
+const producerIndices = [];
+for (let i = 0; i < lines.length; i += 1) if (lines[i].includes(producerNeedle)) producerIndices.push(i);
+if (producerIndices.length !== 1) throw new Error('R35 hosted producer semantic anchor expected once, found ' + producerIndices.length);
+const producerIndex = producerIndices[0];
+
+let fixtureLoadIndex = -1;
+for (let i = producerIndex - 1; i >= 0; i -= 1) {
+  if (lines[i].includes("'fixture load'")) { fixtureLoadIndex = i; break; }
 }
-const deferredProducer = `    addon.open(id, media);
-    await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
-    // LILAC_R35_HOSTED_NATIVE_STARTUP_NO_QUEUE_SATURATION
-    addon.setNativePresenterVisible(id, false);`;
-const hadR34ProducerStages = stagedCount === 1;
-source = source.replace(hadR34ProducerStages ? stagedEarlyProducer : plainEarlyProducer, deferredProducer);
+let initialVisibleOffIndex = -1;
+for (let i = producerIndex + 1; i < lines.length; i += 1) {
+  if (lines[i].includes('addon.setNativePresenterVisible(id, false)')) { initialVisibleOffIndex = i; break; }
+  if (lines[i].includes("'real BrowserWindow blur'")) break;
+}
+if (!(fixtureLoadIndex >= 0 && fixtureLoadIndex < producerIndex && initialVisibleOffIndex > producerIndex)) {
+  throw new Error('R35 hosted producer was not inside expected focused fixture-load/visible-off section');
+}
 
-const blurAnchor = `    await waitUntil(() => !main.isFocused() && rival.isFocused(), 3000, 'real BrowserWindow blur');`;
-const movedProducer = hadR34ProducerStages
-  ? `    console.log('R34_PRE_R33_STAGE=before-producer-start');\n    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');\n    console.log('R34_PRE_R33_STAGE=producer-started');`
-  : `    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');`;
-const blurWithProducer = `${blurAnchor}\n${movedProducer}`;
-const blurAnchorCount = source.split(blurAnchor).length - 1;
-if (blurAnchorCount !== 1) throw new Error('R35 hosted blur anchor expected once, found ' + blurAnchorCount);
-source = source.replace(blurAnchor, blurWithProducer);
+const isBeforeProducerStage = line => /(?:R34_R33_SMOKE_STAGE|R34_PRE_R33_STAGE)=before-producer-start/.test(line);
+const isAfterProducerStage = line => /(?:R34_R33_SMOKE_STAGE|R34_PRE_R33_STAGE)=producer-started/.test(line);
+let producerBlockStart = producerIndex;
+let producerBlockEnd = producerIndex + 1;
+if (producerIndex > 0 && isBeforeProducerStage(lines[producerIndex - 1])) producerBlockStart -= 1;
+if (producerIndex + 1 < lines.length && isAfterProducerStage(lines[producerIndex + 1])) producerBlockEnd += 1;
+const producerBlock = lines.slice(producerBlockStart, producerBlockEnd);
+const producerStageMode = producerBlock.some(line => line.includes('R34_R33_SMOKE_STAGE='))
+  ? 'r34-watchdog'
+  : producerBlock.some(line => line.includes('R34_PRE_R33_STAGE='))
+    ? 'r34-prebaseline'
+    : 'none';
 
-// Do not weaken any of the downstream qualification gates.
+lines.splice(producerBlockStart, producerBlockEnd - producerBlockStart);
+const markerInsertIndex = lines.findIndex(line => line.includes('addon.setNativePresenterVisible(id, false)') && line.length >= 4);
+if (markerInsertIndex < 0) throw new Error('R35 hosted initial native-visible-off line disappeared');
+lines.splice(markerInsertIndex, 0, '    // LILAC_R35_HOSTED_NATIVE_STARTUP_NO_QUEUE_SATURATION');
+
+const blurIndices = [];
+for (let i = 0; i < lines.length; i += 1) {
+  if (lines[i].includes("await waitUntil(() => !main.isFocused() && rival.isFocused(), 3000, 'real BrowserWindow blur');")) blurIndices.push(i);
+}
+if (blurIndices.length !== 1) throw new Error('R35 hosted blur semantic anchor expected once, found ' + blurIndices.length);
+const blurIndex = blurIndices[0];
+lines.splice(blurIndex + 1, 0, ...producerBlock);
+source = lines.join('\n');
+
+// Do not weaken any downstream qualification gates.
 for (const required of [
   'presentSOkFrames',
   'presentOccludedFrames',
@@ -103,19 +116,21 @@ for (const required of [
 if (!source.includes("15000, 'owned popup visible/presenting'")) throw new Error('R35 hosted startup timeout was not widened');
 if (source.includes("6000, 'owned popup visible/presenting'")) throw new Error('R35 old hosted startup timeout survived');
 if (source.includes('duration=12') || source.split('duration=30').length - 1 !== 2) throw new Error('R35 hosted fixture lifetime hardening failed');
-const startFrameCount = source.split("addon.startFrameProducer(id, 640, 360)").length - 1;
-if (startFrameCount !== 1 || source.indexOf("addon.startFrameProducer(id, 640, 360)") < source.indexOf("'real BrowserWindow blur'")) {
-  throw new Error('R35 hosted producer must start exactly once after real blur');
+const startFrameCount = source.split('addon.startFrameProducer(id, 640, 360)').length - 1;
+const finalStartAt = source.indexOf('addon.startFrameProducer(id, 640, 360)');
+const finalBlurAt = source.indexOf("'real BrowserWindow blur'");
+const finalInitialVisibleOffAt = source.indexOf('// LILAC_R35_HOSTED_NATIVE_STARTUP_NO_QUEUE_SATURATION');
+if (startFrameCount !== 1 || !(finalInitialVisibleOffAt >= 0 && finalInitialVisibleOffAt < finalBlurAt && finalBlurAt < finalStartAt)) {
+  throw new Error('R35 hosted producer relocation ordering invalid');
 }
-if (hadR34ProducerStages) {
-  const beforeStage = source.indexOf('R34_PRE_R33_STAGE=before-producer-start');
-  const afterStage = source.indexOf('R34_PRE_R33_STAGE=producer-started');
-  const blurAt = source.indexOf("'real BrowserWindow blur'");
-  const startAt = source.indexOf('addon.startFrameProducer(id, 640, 360)');
-  if (!(blurAt < beforeStage && beforeStage < startAt && startAt < afterStage)) {
-    throw new Error('R35 hosted R34 producer stage markers no longer bracket deferred producer start');
+if (producerStageMode !== 'none') {
+  const expectedPrefix = producerStageMode === 'r34-watchdog' ? 'R34_R33_SMOKE_STAGE=' : 'R34_PRE_R33_STAGE=';
+  const beforeStage = source.indexOf(expectedPrefix + 'before-producer-start');
+  const afterStage = source.indexOf(expectedPrefix + 'producer-started');
+  if (!(finalBlurAt < beforeStage && beforeStage < finalStartAt && finalStartAt < afterStage)) {
+    throw new Error('R35 hosted producer stage markers no longer bracket deferred producer start mode=' + producerStageMode);
   }
 }
 
 fs.writeFileSync(smokePath, source, 'utf8');
-console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 fixtureSeconds=30 producerStart=after-blur noFocusedQueueSaturation=1 r34StageMarkers=' + (hadR34ProducerStages ? 'moved' : 'absent') + ' proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
+console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 fixtureSeconds=30 producerStart=after-blur noFocusedQueueSaturation=1 stageMode=' + producerStageMode + ' proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
