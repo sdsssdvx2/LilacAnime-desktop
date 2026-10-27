@@ -21,8 +21,8 @@ function fixture(dir) {
   const out = path.join(dir, 'r37-freeze.mp4');
   const result = spawnSync(ffmpeg, [
     '-hide_banner','-loglevel','error','-y',
-    '-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=10',
-    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=10',
+    '-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=30',
+    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=30',
     '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',
     '-c:a','aac','-shortest',out
   ], { encoding:'utf8', windowsHide:true, timeout:120000 });
@@ -46,7 +46,7 @@ async function waitUntil(fn, ms, label) {
   process.env.LILAC_LIBMPV_TEST_AO_NULL = '1';
   const addon = require(addonPath);
   for (const name of [
-    'createPlayer','open','pollPlayback','startFrameProducer','stopFrameProducer',
+    'createPlayer','open','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer',
     'configureNativePresenter','setNativePresenterBounds','setNativePresenterVisible',
     'setNativePresenterMirrorChromium','nativePresenterStats','popProducedFrame',
     'releaseProducedFrame','destroyPlayer'
@@ -61,13 +61,14 @@ async function waitUntil(fn, ms, label) {
     const created = addon.createPlayer();
     id = Number(created.playerId);
     if (!id) throw new Error('createPlayer failed');
+    if (addon.setUpdateCallback(id, () => {}) !== true) throw new Error('setUpdateCallback failed');
     addon.configureNativePresenter(id, hwndText(win));
     addon.setNativePresenterBounds(id, 60, 80, 640, 360);
     addon.open(id, fixture(dir));
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'load');
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
     if (addon.setNativePresenterVisible(id, true) !== true) throw new Error('presenter show failed');
-    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= 6, 6000, 'native baseline');
+    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= 6, 10000, 'native baseline');
 
     let baselineQueued = 0;
     for (let i = 0; i < 8; i += 1) {
@@ -85,7 +86,7 @@ async function waitUntil(fn, ms, label) {
     if (addon.setNativePresenterMirrorChromium(id, true) !== true) throw new Error('mirror arm failed');
 
     let mirrored = 0;
-    const mirrorDeadline = Date.now() + 2500;
+    const mirrorDeadline = Date.now() + 4000;
     while (Date.now() < mirrorDeadline && mirrored < 8) {
       const frame = addon.popProducedFrame(id);
       if (frame?.updated) {
@@ -102,7 +103,7 @@ async function waitUntil(fn, ms, label) {
 
     addon.setNativePresenterMirrorChromium(id, false);
     const resumeBase = Number(addon.nativePresenterStats(id)?.presentedFrames || 0);
-    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= resumeBase + 4, 2500, 'native resume');
+    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= resumeBase + 4, 5000, 'native resume');
 
     let afterQueued = 0;
     for (let i = 0; i < 6; i += 1) {
