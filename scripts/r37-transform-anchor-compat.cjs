@@ -37,10 +37,12 @@ replaceOnce(
 // managed SharedTextureImported.release() lifetime path, but the exact spelling
 // around that call has drifted. Keep the actual release line byte-for-byte and
 // insert R37's one-shot handoff ACK immediately after the unique managed-release
-// line instead of assuming the older one-line try/catch spelling.
+// line instead of assuming the older one-line try/catch spelling. The marker is
+// a real ACK payload field (not just a source comment) so esbuild must retain it
+// in the generated preload bundle used by packaged-source gates.
 replaceOnce(
   `preload = replaceOnce(\n  preload,\n  '      try { importedSharedTexture?.release?.(); } catch {}',\n  \`      try { importedSharedTexture?.release?.(); } catch {}\n      if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {\n        try {\n          ipcRenderer.send('libmpv-shared:r37-handoff-presented', {\n            epoch: Number(metadata.r37HandoffEpoch),\n            playerId: Number(metadata.playerId) || 0,\n            generation: Number(metadata.generation) || 0,\n            frameId: Number(metadata.frameId) || 0\n          });\n        } catch {}\n      }\`,\n  'R37 renderer ACK after release'\n);`,
-  `const r37ManagedReleaseLines = preload.match(/^[^\\n]*importedSharedTexture\\?\\.release[^\\n]*$/gm) || [];\nif (r37ManagedReleaseLines.length !== 1) {\n  throw new Error('R37 renderer managed release anchor count=' + r37ManagedReleaseLines.length);\n}\nconst r37ManagedReleaseLine = r37ManagedReleaseLines[0];\nconst r37RendererAckAfterRelease = [\n  r37ManagedReleaseLine,\n  '      if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {',\n  '        try {',\n  \"          ipcRenderer.send('libmpv-shared:r37-handoff-presented', {\",\n  '            epoch: Number(metadata.r37HandoffEpoch),',\n  '            playerId: Number(metadata.playerId) || 0,',\n  '            generation: Number(metadata.generation) || 0,',\n  '            frameId: Number(metadata.frameId) || 0',\n  '          });',\n  '        } catch {}',\n  '      }'\n].join('\\n');\npreload = preload.replace(r37ManagedReleaseLine, r37RendererAckAfterRelease);`,
+  `const r37ManagedReleaseLines = preload.match(/^[^\\n]*importedSharedTexture\\?\\.release[^\\n]*$/gm) || [];\nif (r37ManagedReleaseLines.length !== 1) {\n  throw new Error('R37 renderer managed release anchor count=' + r37ManagedReleaseLines.length);\n}\nconst r37ManagedReleaseLine = r37ManagedReleaseLines[0];\nconst r37RendererAckAfterRelease = [\n  r37ManagedReleaseLine,\n  '      if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {',\n  '        try {',\n  \"          ipcRenderer.send('libmpv-shared:r37-handoff-presented', {\",\n  \"            marker: 'LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK',\",\n  '            epoch: Number(metadata.r37HandoffEpoch),',\n  '            playerId: Number(metadata.playerId) || 0,',\n  '            generation: Number(metadata.generation) || 0,',\n  '            frameId: Number(metadata.frameId) || 0',\n  '          });',\n  '        } catch {}',\n  '      }'\n].join('\\n');\npreload = preload.replace(r37ManagedReleaseLine, r37RendererAckAfterRelease);`,
   'R37 qualified-R36 managed-release ACK anchor'
 );
 
@@ -54,4 +56,4 @@ replaceOnce(
 );
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line artifact=exact-exe');
+console.log('R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line+runtime-marker artifact=exact-exe');
