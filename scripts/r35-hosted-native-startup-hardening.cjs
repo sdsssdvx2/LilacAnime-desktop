@@ -38,6 +38,14 @@ const count = source.split(oldBlock).length - 1;
 if (count !== 1) throw new Error('R35 hosted startup wait anchor expected once, found ' + count);
 source = source.replace(oldBlock, newBlock);
 
+// The widened 15s observation window must not outlive the synthetic media.
+// The old 12s fixture can naturally hit EOF/auto-pause before a slow hosted GPU
+// creates its first owned-popup swapchain, producing a false presenter failure.
+// Extend only the smoke fixture; product playback/runtime code is untouched.
+const fixtureDurationCount = source.split('duration=12').length - 1;
+if (fixtureDurationCount !== 2) throw new Error('R35 hosted fixture duration anchors expected twice, found ' + fixtureDurationCount);
+source = source.replaceAll('duration=12', 'duration=30');
+
 // Do not weaken any of the downstream qualification gates.
 for (const required of [
   'presentSOkFrames',
@@ -52,6 +60,7 @@ for (const required of [
 }
 if (!source.includes("15000, 'owned popup visible/presenting'")) throw new Error('R35 hosted startup timeout was not widened');
 if (source.includes("6000, 'owned popup visible/presenting'")) throw new Error('R35 old hosted startup timeout survived');
+if (source.includes('duration=12') || source.split('duration=30').length - 1 !== 2) throw new Error('R35 hosted fixture lifetime hardening failed');
 
 fs.writeFileSync(smokePath, source, 'utf8');
-console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
+console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 fixtureSeconds=30 proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
