@@ -27,27 +27,27 @@ if (!source.includes('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')) {
   throw new Error('R37 callback diagnostic requires the post-transform R37 bridge');
 }
 
-// The bridge factory signature has evolved across R31-R37. Diagnostic state is
-// module-local, so anchor only on the stable CommonJS prologue rather than the
-// factory parameter list.
+// Diagnostic-only wrapper. It records the source and stack but deliberately
+// rethrows the exact exception so Node/Electron's real Node-API callback policy
+// remains authoritative. A diagnostic run must never turn broken callbacks green.
 source = replaceOnce(
   source,
   `'use strict';\n`,
-  `'use strict';\n\nconst r37NodeApiCallbackDiagnostic = {\n  total: 0,\n  allReferencesReleased: 0,\n  updateTsfn: 0\n};\nfunction r37RecordNodeApiCallbackThrow(source, error) {\n  r37NodeApiCallbackDiagnostic.total += 1;\n  if (source === 'allReferencesReleased') r37NodeApiCallbackDiagnostic.allReferencesReleased += 1;\n  if (source === 'updateTsfn') r37NodeApiCallbackDiagnostic.updateTsfn += 1;\n  const detail = String(error?.stack || error).replace(/\\r?\\n/g, ' | ').slice(0, 4000);\n  console.error(\`R37_NODE_API_CALLBACK_THROW source=\${source} total=\${r37NodeApiCallbackDiagnostic.total} detail=\${detail}\`);\n  if (!process.exitCode) process.exitCode = 86;\n}\nprocess.once('exit', () => {\n  console.error(\`R37_NODE_API_CALLBACK_DIAGNOSTIC_SUMMARY total=\${r37NodeApiCallbackDiagnostic.total} allReferencesReleased=\${r37NodeApiCallbackDiagnostic.allReferencesReleased} updateTsfn=\${r37NodeApiCallbackDiagnostic.updateTsfn}\`);\n});\n`,
+  `'use strict';\n\nconst r37NodeApiCallbackDiagnostic = {\n  total: 0,\n  allReferencesReleased: 0,\n  updateTsfn: 0\n};\nfunction r37RecordNodeApiCallbackThrow(source, error) {\n  r37NodeApiCallbackDiagnostic.total += 1;\n  if (source === 'allReferencesReleased') r37NodeApiCallbackDiagnostic.allReferencesReleased += 1;\n  if (source === 'updateTsfn') r37NodeApiCallbackDiagnostic.updateTsfn += 1;\n  const detail = String(error?.stack || error).replace(/\\r?\\n/g, ' | ').slice(0, 4000);\n  console.error(\`R37_NODE_API_CALLBACK_THROW source=\${source} total=\${r37NodeApiCallbackDiagnostic.total} detail=\${detail}\`);\n}\nprocess.once('exit', () => {\n  console.error(\`R37_NODE_API_CALLBACK_DIAGNOSTIC_SUMMARY total=\${r37NodeApiCallbackDiagnostic.total} allReferencesReleased=\${r37NodeApiCallbackDiagnostic.allReferencesReleased} updateTsfn=\${r37NodeApiCallbackDiagnostic.updateTsfn}\`);\n});\n`,
   'R37 diagnostic module prologue'
 );
 
 source = replaceRegexOnce(
   source,
   /allReferencesReleased\(\)\s*\{\s*releaseNativeFrame\(ownerPlayerId,\s*slotId,\s*frameId\);\s*\}/,
-  `allReferencesReleased() {\n            try {\n              return releaseNativeFrame(ownerPlayerId, slotId, frameId);\n            } catch (error) {\n              r37RecordNodeApiCallbackThrow('allReferencesReleased', error);\n            }\n          }`,
+  `allReferencesReleased() {\n            try {\n              return releaseNativeFrame(ownerPlayerId, slotId, frameId);\n            } catch (error) {\n              r37RecordNodeApiCallbackThrow('allReferencesReleased', error);\n              throw error;\n            }\n          }`,
   'R37 allReferencesReleased callback wrapper'
 );
 
 source = replaceRegexOnce(
   source,
   /addon\.setUpdateCallback\(playerId,\s*wakePumpFromNative\);/,
-  `addon.setUpdateCallback(playerId, (...args) => {\n        try {\n          return wakePumpFromNative(...args);\n        } catch (error) {\n          r37RecordNodeApiCallbackThrow('updateTsfn', error);\n        }\n      });`,
+  `addon.setUpdateCallback(playerId, (...args) => {\n        try {\n          return wakePumpFromNative(...args);\n        } catch (error) {\n          r37RecordNodeApiCallbackThrow('updateTsfn', error);\n          throw error;\n        }\n      });`,
   'R37 TSFN wake callback wrapper'
 );
 
@@ -57,6 +57,9 @@ if (!source.includes("r37RecordNodeApiCallbackThrow('allReferencesReleased'")) {
 if (!source.includes("r37RecordNodeApiCallbackThrow('updateTsfn'")) {
   throw new Error('R37 update TSFN diagnostic marker missing');
 }
+if ((source.match(/throw error;/g) || []).length !== 2) {
+  throw new Error('R37 callback diagnostic must rethrow both callback exceptions');
+}
 
 fs.writeFileSync(diagnosticBridge, source, 'utf8');
 const cleanupDiagnosticBridge = () => {
@@ -65,7 +68,7 @@ const cleanupDiagnosticBridge = () => {
 process.once('exit', cleanupDiagnosticBridge);
 
 if (process.env.R37_NODE_API_DIAGNOSTIC_PREPARE_ONLY === '1') {
-  console.log('R37_NODE_API_CALLBACK_DIAGNOSTIC_PREPARE_OK sources=allReferencesReleased,updateTsfn semanticAnchors=1,1 productBytes=unchanged');
+  console.log('R37_NODE_API_CALLBACK_DIAGNOSTIC_PREPARE_OK sources=allReferencesReleased,updateTsfn semanticAnchors=1,1 passthroughRethrow=2 productBytes=unchanged');
   process.exit(0);
 }
 
@@ -76,5 +79,5 @@ const diagnosticModule = require.cache[diagnosticResolved];
 if (!diagnosticModule) throw new Error('R37 diagnostic bridge module did not enter require cache');
 require.cache[originalResolved] = diagnosticModule;
 
-console.log('R37_NODE_API_CALLBACK_DIAGNOSTIC_INSTALLED sources=allReferencesReleased,updateTsfn productBytes=unchanged forcedPolicy=off');
+console.log('R37_NODE_API_CALLBACK_DIAGNOSTIC_INSTALLED sources=allReferencesReleased,updateTsfn productBytes=unchanged forcedPolicy=off passthroughRethrow=1');
 require(e2eScript);
