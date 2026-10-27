@@ -11,6 +11,16 @@ function replaceOnce(needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   source = source.replace(needle, replacement);
 }
+function replaceIfNeeded(needle, replacement, label) {
+  const oldCount = source.split(needle).length - 1;
+  const newCount = source.split(replacement).length - 1;
+  if (oldCount === 1 && newCount === 0) {
+    source = source.replace(needle, replacement);
+    return 'replaced';
+  }
+  if (oldCount === 0 && newCount === 1) return 'already';
+  throw new Error(`${label}: old=${oldCount} new=${newCount}`);
+}
 
 // Qualified R36 still carries the R26/R27 frame metadata after displayFrequency.
 // Insert R37's epoch after the final R27 field rather than assuming the old R24
@@ -50,7 +60,9 @@ replaceOnce(
 // NativePresenterStats. Scope the R37 no-region-churn source gate to the bounds
 // function itself; otherwise the gate sees the compatibility API's intentional
 // one-time R36ApplyPresenterRegionLocked call and falsely reports a bounds leak.
-replaceOnce(
+// This compatibility transform is deliberately idempotent because the source
+// branch may already contain the corrected boundary before exact-R36 reconstruction.
+const regionGateCompat = replaceIfNeeded(
   "const boundsEnd = finalNative.indexOf('napi_value NativePresenterStats(', boundsStart);",
   "const boundsEnd = finalNative.indexOf('napi_value SetNativePresenterUiHoles(', boundsStart);",
   'R37 no-region-churn bounds gate boundary'
@@ -66,4 +78,4 @@ replaceOnce(
 );
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line+runtime-marker regionGate=bounds-only artifact=exact-exe');
+console.log(`R37_TRANSFORM_ANCHOR_COMPAT_OK metadata=r27-tail+epoch diagnostics=preserved nativeFreeze=producer-scoped rendererAck=managed-release-line+runtime-marker regionGate=bounds-only:${regionGateCompat} artifact=exact-exe`);
