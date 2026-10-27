@@ -13,6 +13,11 @@ const updaterSource = read('electron/updater.cjs');
 const expectedTag = String(process.env.RELEASE_TAG || pkg.lilacCustomTag || '');
 const expectedVersion = String(process.env.APP_VERSION || pkg.version || '');
 
+function functionProbe(source, signature, span = 800) {
+  const at = source.indexOf(signature);
+  return at < 0 ? '' : source.slice(at, at + span);
+}
+
 if (!/^libmpv-r2k-v\d+\.\d+\.\d+-r\d+$/i.test(expectedTag)) throw new Error(`R38 expected release tag invalid: ${expectedTag}`);
 if (pkg.lilacCustomTag !== expectedTag) throw new Error(`R38 package custom tag mismatch: package=${pkg.lilacCustomTag} expected=${expectedTag}`);
 if (pkg.version !== expectedVersion) throw new Error(`R38 package version mismatch: package=${pkg.version} expected=${expectedVersion}`);
@@ -36,8 +41,8 @@ if (main.includes('setTimeout(()=>updater.check(),5000)')) throw new Error('R38 
 for (const marker of ['CUSTOM_RELEASES_API', 'CUSTOM_CURRENT_TAG', 'CUSTOM_TAG_RE', 'compareCustom', 'async checkCustom()', 'this.download()']) {
   if (!updaterSource.includes(marker)) throw new Error(`R38 packaged custom updater marker missing: ${marker}`);
 }
-const installOnQuitMatch = updaterSource.match(/installOnQuit\(\)\s*\{([\s\S]*?)\n\s*\}/);
-if (!installOnQuitMatch || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitMatch[1]) || !/this\.install\(false\)/.test(installOnQuitMatch[1])) {
+const installOnQuitProbe = functionProbe(updaterSource, 'installOnQuit()');
+if (!installOnQuitProbe || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitProbe) || !/this\.install\(false\)/.test(installOnQuitProbe)) {
   throw new Error('R38 custom updater no longer installs a ready update on clean quit');
 }
 
@@ -100,7 +105,7 @@ async function runAvailableCase() {
   const app = {
     getVersion: () => pkg.version,
     getName: () => pkg.build?.productName || 'LilacAnime Libmpv',
-    getPath: name => name === 'userData' ? tmp : tmp,
+    getPath: () => tmp,
     relaunch() {},
     quit() {}
   };
