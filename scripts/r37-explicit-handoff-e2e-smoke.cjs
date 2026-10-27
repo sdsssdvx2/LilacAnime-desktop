@@ -14,6 +14,14 @@ const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs
 // only remove the GPU-process sandbox for this qualification process.
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 
+let r37NodeApiCallbackWarnings = 0;
+process.on('warning', warning => {
+  if (warning?.code === 'DEP0168' || String(warning?.message || '').includes('Uncaught Node-API callback exception')) {
+    r37NodeApiCallbackWarnings += 1;
+    console.error(`R37_NODE_API_CALLBACK_WARNING count=${r37NodeApiCallbackWarnings} ${String(warning?.stack || warning?.message || warning)}`);
+  }
+});
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hardDeadline = setTimeout(() => {
   console.error('R37 explicit renderer handoff e2e smoke exceeded 150s hard deadline');
@@ -182,6 +190,22 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
       throw new Error(`unexpected product receiver mode ${baseline.receiver.rendererMode}`);
     }
 
+    // Reproduce the R36 UI-hole-only compatibility messages directly through the
+    // real preload/main bridge. R37 may clear the legacy region once, but repeated
+    // control/layout payloads must not mutate the native HWND region again.
+    const regionBefore = r37State(bridge);
+    const nativeRegionBefore = Number(regionBefore.state?.r32NativePresenter?.r36UiRegionUpdates || 0);
+    const clearBefore = Number(regionBefore.r37.regionNativeClears || 0);
+    for (let i = 0; i < 12; i += 1) {
+      await main.webContents.executeJavaScript(`window.lilac.libmpvSharedResize({r36UiHolesOnly:true,uiHoles:[${20+i},${30+i},120,60]})`);
+    }
+    await sleep(120);
+    const regionAfter = r37State(bridge);
+    const nativeRegionAfter = Number(regionAfter.state?.r32NativePresenter?.r36UiRegionUpdates || 0);
+    if (nativeRegionAfter !== nativeRegionBefore) throw new Error(`R37 repeated UI-hole payload mutated HWND region delta=${nativeRegionAfter-nativeRegionBefore}`);
+    if (Number(regionAfter.r37.regionNativeClears || 0) > Math.max(1, clearBefore)) throw new Error(`R37 repeated UI-hole payload performed extra native clears count=${regionAfter.r37.regionNativeClears}`);
+    if (Number(regionAfter.r37.regionSyncCalls || 0) < Number(regionBefore.r37.regionSyncCalls || 0) + 12) throw new Error('R37 UI-hole compatibility payloads did not exercise region sync gate');
+
     const active = await focusCycle(bridge, main, other, 1, 'active');
     const subtitle = subtitleFixture(dir);
     const add = bridge.command(['sub-add', subtitle, 'select']);
@@ -200,8 +224,10 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     if (final.handoff.pending === true || Number(final.r37.pendingEpoch || 0) !== 0) throw new Error('R37 handoff left pending state');
     if (Number(final.state?.r32NativePresenter?.r36UiHoleCount || 0) !== 0) throw new Error('R37 UI holes active at end');
     if (Number(final.state?.metrics?.importFailures || 0) !== 0 || Number(final.state?.metrics?.sendFailures || 0) !== 0) throw new Error('R37 E2E transport recorded import/send failure');
+    if (Number(final.r37.regionNativeClears || 0) > 1) throw new Error(`R37 native region clear count exceeded one: ${final.r37.regionNativeClears}`);
+    if (r37NodeApiCallbackWarnings !== 0) throw new Error(`R37 Node-API callback warnings observed count=${r37NodeApiCallbackWarnings}`);
 
-    console.log(`R37_EXPLICIT_HANDOFF_E2E_OK cycles=3 activeMs=${active.elapsed} pausedSubtitleMs=${pausedSubtitle.elapsed} pausedNoSubtitleMs=${pausedNoSubtitle.elapsed} rendererAckCompletions=${final.r37.rendererAckCompletions} failOpenCount=0 rejectedAcks=0 uiHoles=0 realProductPreload=1 realProductRenderer=1 realSharedTexture=1`);
+    console.log(`R37_EXPLICIT_HANDOFF_E2E_OK cycles=3 activeMs=${active.elapsed} pausedSubtitleMs=${pausedSubtitle.elapsed} pausedNoSubtitleMs=${pausedNoSubtitle.elapsed} rendererAckCompletions=${final.r37.rendererAckCompletions} failOpenCount=0 rejectedAcks=0 uiHoles=0 regionNativeClears=${final.r37.regionNativeClears} nodeApiCallbackWarnings=0 realProductPreload=1 realProductRenderer=1 realSharedTexture=1`);
   } finally {
     clearTimeout(hardDeadline);
     try { await bridge?.close?.(); } catch {}
