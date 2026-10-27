@@ -48,7 +48,7 @@ async function waitUntil(fn, ms, label) {
   for (const name of [
     'createPlayer','open','pollPlayback','setUpdateCallback','startFrameProducer','stopFrameProducer',
     'configureNativePresenter','setNativePresenterBounds','setNativePresenterVisible',
-    'setNativePresenterMirrorChromium','nativePresenterStats','popProducedFrame',
+    'setNativePresenterMirrorChromium','setNativePresenterUiHoles','nativePresenterStats','popProducedFrame',
     'releaseProducedFrame','destroyPlayer'
   ]) if (typeof addon[name] !== 'function') throw new Error(`missing ${name}`);
 
@@ -64,6 +64,26 @@ async function waitUntil(fn, ms, label) {
     if (addon.setUpdateCallback(id, () => {}) !== true) throw new Error('setUpdateCallback failed');
     addon.configureNativePresenter(id, hwndText(win));
     addon.setNativePresenterBounds(id, 60, 80, 640, 360);
+
+    // R37 keeps the compatibility UI-region API only to clear a possible legacy
+    // region once. Geometry resync must never call SetWindowRgn again. R36 did so
+    // even with zero holes, which real-user R37 diagnostics exposed as 168 region
+    // updates and which coincided with single-frame black flashes.
+    const regionBeforeClear = Number(addon.nativePresenterStats(id)?.r36UiRegionUpdates || 0);
+    if (addon.setNativePresenterUiHoles(id, []) !== true) throw new Error('one-time empty presenter region clear failed');
+    const regionAfterClear = Number(addon.nativePresenterStats(id)?.r36UiRegionUpdates || 0);
+    if (regionAfterClear < regionBeforeClear || regionAfterClear > regionBeforeClear + 1) {
+      throw new Error(`unexpected one-time region clear delta before=${regionBeforeClear} after=${regionAfterClear}`);
+    }
+    for (let i = 0; i < 12; i += 1) {
+      addon.setNativePresenterBounds(id, 60 + (i % 3), 80 + (i % 2), 640, 360);
+    }
+    const regionAfterBounds = Number(addon.nativePresenterStats(id)?.r36UiRegionUpdates || 0);
+    if (regionAfterBounds !== regionAfterClear) {
+      throw new Error(`R37 bounds resync mutated HWND region delta=${regionAfterBounds-regionAfterClear}`);
+    }
+    if (Number(addon.nativePresenterStats(id)?.r36UiHoleCount || 0) !== 0) throw new Error('R37 native UI holes unexpectedly active');
+
     addon.open(id, fixture(dir));
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'load');
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
@@ -116,7 +136,7 @@ async function waitUntil(fn, ms, label) {
     }
     if (afterQueued > 1) throw new Error(`R33 native-only did not resume after mirror queued=${afterQueued}`);
 
-    console.log(`R37_NATIVE_HANDOFF_FREEZE_OK baselineQueued=0 mirrored=${mirrored} frozenPresentDelta=${frozenPresentDelta} resumePresentDelta=${Number(addon.nativePresenterStats(id)?.presentedFrames || 0)-resumeBase} afterQueued=${afterQueued} deviceMode=${created.deviceMode}`);
+    console.log(`R37_NATIVE_HANDOFF_FREEZE_OK baselineQueued=0 mirrored=${mirrored} frozenPresentDelta=${frozenPresentDelta} resumePresentDelta=${Number(addon.nativePresenterStats(id)?.presentedFrames || 0)-resumeBase} afterQueued=${afterQueued} regionClearDelta=${regionAfterClear-regionBeforeClear} boundsRegionDelta=0 deviceMode=${created.deviceMode}`);
   } finally {
     clearTimeout(hardDeadline);
     if (id) {
