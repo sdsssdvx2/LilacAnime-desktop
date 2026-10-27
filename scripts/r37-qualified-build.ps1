@@ -131,10 +131,10 @@ try {
   node scripts/r34-run-smoke-with-timeout.cjs scripts/r33-owned-popup-visible-focus-smoke.cjs r37-r33-visible-autonomy 120000
   Assert-Exit 'R37 inherited R33 owned-popup autonomy smoke'
 
-  node scripts/r37-native-handoff-freeze-smoke.cjs
+  & node_modules/.bin/electron.cmd scripts/r37-native-handoff-freeze-smoke.cjs
   Assert-Exit 'R37 native handoff freeze smoke'
 
-  node scripts/r37-explicit-handoff-e2e-smoke.cjs
+  & node_modules/.bin/electron.cmd scripts/r37-explicit-handoff-e2e-smoke.cjs
   Assert-Exit 'R37 explicit handoff end-to-end smoke'
 }
 finally {
