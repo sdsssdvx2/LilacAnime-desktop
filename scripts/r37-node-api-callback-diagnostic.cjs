@@ -94,7 +94,10 @@ source = replaceOnce(
   'R37 flow send precondition stage'
 );
 
-const diagAnchor = '            mailboxEscapeMaxInFlight: r37HandoffEscapeMaxInFlight';
+// Keep this probe independent of any speculative mailbox variant. R37's stable
+// diagnostics always contain regionNativeClears, while the mailbox escape has now
+// been deliberately removed after run #46 identified the real release-scope fault.
+const diagAnchor = '            regionNativeClears: r37PresenterRegionNativeClears';
 source = replaceOnce(
   source,
   diagAnchor,
