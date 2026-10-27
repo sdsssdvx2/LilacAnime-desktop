@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { spawnSync } = require('node:child_process');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -142,7 +142,7 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     // Register IPC first, then bind the exact BrowserWindow before navigation.
     // The preload emits receiver-ready during page startup and senderIsAttached()
     // intentionally rejects it unless attachedWindow already points at main.
-    bridge = createLibmpvSharedBridge();
+    bridge = createLibmpvSharedBridge({ app, ipcMain });
     await bridge.ensure();
 
     const preload = receiverPreload(dir);
