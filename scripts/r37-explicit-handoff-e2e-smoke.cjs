@@ -15,6 +15,7 @@ const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 let r37NodeApiCallbackWarnings = 0;
+const r37RawAckEvents = [];
 process.on('warning', warning => {
   if (warning?.code === 'DEP0168' || String(warning?.message || '').includes('Uncaught Node-API callback exception')) {
     r37NodeApiCallbackWarnings += 1;
@@ -83,7 +84,7 @@ window.__startR37E2E=async src=>{
   await video.play();
   return true;
 };
-window.__r37SurfaceSnapshot=()=>{const host=document.querySelector('#video');const canvas=host?.shadowRoot?.querySelector('canvas[data-lilac-libmpv-surface]');const rect=host?.getBoundingClientRect?.();return{host:rect?{width:rect.width,height:rect.height}:null,canvas:canvas?{width:canvas.width,height:canvas.height}:null};};
+window.__r37SurfaceSnapshot=()=>{const host=document.querySelector('#video');const canvas=host?.shadowRoot?.querySelector('canvas[data-lilac-libmpv-surface]');const rect=host?.getBoundingClientRect?.();return{host:rect?{width:rect.width,height:rect.height}:null,canvas:canvas?{width:canvas.width,height:canvas.height}:null,focused:document.hasFocus(),visibility:String(document.visibilityState||'unknown')};};
 </script></body></html>`, 'utf8');
   return html;
 }
@@ -107,6 +108,30 @@ function r37State(bridge) {
   const r37 = handoff?.r37Handoff || {};
   return { state, focus, handoff, r36, r37 };
 }
+function compactAckDiagnostic(view) {
+  return {
+    focusActive: view?.focus?.active,
+    handoffPending: view?.handoff?.pending,
+    handoffMinFrameId: view?.handoff?.minFrameId,
+    subtitleVisible: view?.handoff?.subtitleVisible,
+    r36: {
+      sentFrames: view?.r36?.sentFrames,
+      releasedFrames: view?.r36?.releasedFrames,
+      ackCompletions: view?.r36?.ackCompletions,
+      failOpenCount: view?.r36?.failOpenCount
+    },
+    r37: view?.r37,
+    metrics: {
+      nativeFrames: view?.state?.metrics?.nativeFrames,
+      sentFrames: view?.state?.metrics?.sentFrames,
+      sendFailures: view?.state?.metrics?.sendFailures,
+      importFailures: view?.state?.metrics?.importFailures,
+      lastFrameId: view?.state?.metrics?.lastFrameId
+    },
+    receiver: view?.state?.receiver,
+    producer: view?.state?.frameProducer
+  };
+}
 async function focusCycle(bridge, main, other, expectedAck, label) {
   other.show();
   other.focus();
@@ -121,13 +146,23 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
   if (Number(nativeStats.r36UiHoleCount || 0) !== 0) throw new Error(`${label} native region holes survived count=${nativeStats.r36UiHoleCount}`);
 
   const started = Date.now();
+  const ackStartIndex = r37RawAckEvents.length;
   main.show();
   main.focus();
   await waitUntil(() => main.isFocused(), 3000, `${label} refocus`);
-  const completed = await waitUntil(() => {
+  let completed;
+  try {
+    completed = await waitUntil(() => {
+      const view = r37State(bridge);
+      return Number(view.r37.rendererAckCompletions || 0) >= expectedAck && view.handoff.pending === false && view.focus.active === false ? view : null;
+    }, 1200, `${label} explicit renderer ACK`);
+  } catch (error) {
     const view = r37State(bridge);
-    return Number(view.r37.rendererAckCompletions || 0) >= expectedAck && view.handoff.pending === false && view.focus.active === false ? view : null;
-  }, 1200, `${label} explicit renderer ACK`);
+    const surface = await main.webContents.executeJavaScript('window.__r37SurfaceSnapshot()').catch(() => null);
+    const rawAcks = r37RawAckEvents.slice(ackStartIndex).slice(-8);
+    console.error(`R37_ACK_TIMEOUT_DIAGNOSTIC label=${label} rawAckCount=${rawAcks.length} rawAcks=${JSON.stringify(rawAcks)} surface=${JSON.stringify(surface)} state=${JSON.stringify(compactAckDiagnostic(view))}`);
+    throw error;
+  }
   const elapsed = Date.now() - started;
   if (Number(completed.r36.failOpenCount || 0) !== 0) throw new Error(`${label} used R36 fail-open count=${completed.r36.failOpenCount}`);
   if (Number(completed.r37.rejectedRendererAcks || 0) !== 0) throw new Error(`${label} rejected ACK count=${completed.r37.rejectedRendererAcks}`);
@@ -143,6 +178,19 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r37-e2e-'));
   let main, other, bridge;
+  const rawAckListener = (event, payload = {}) => {
+    r37RawAckEvents.push({
+      wallMs: Date.now(),
+      senderId: Number(event?.sender?.id) || 0,
+      epoch: Number(payload?.epoch) || 0,
+      playerId: Number(payload?.playerId) || 0,
+      generation: Number(payload?.generation) || 0,
+      frameId: Number(payload?.frameId) || 0,
+      marker: String(payload?.marker || '')
+    });
+    while (r37RawAckEvents.length > 32) r37RawAckEvents.shift();
+  };
+  ipcMain.on('libmpv-shared:r37-handoff-presented', rawAckListener);
   try {
     bridge = createLibmpvSharedBridge({ app, ipcMain });
     await bridge.ensure();
@@ -161,9 +209,6 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     main.focus();
     await waitUntil(() => main.isFocused(), 3000, 'initial focus');
 
-    // Force the hosted Electron GPU process and renderer WebGPU queue to complete
-    // one real command before the native D3D11 texture is imported. The production
-    // receiver/preload remains completely unmodified and performs the tested copy.
     let gpuInfo = null;
     try { gpuInfo = await app.getGPUInfo('complete'); } catch (error) { throw new Error(`GPU info unavailable: ${String(error?.message || error)}`); }
     const warm = await main.webContents.executeJavaScript('window.__r37GpuWarmup()');
@@ -190,9 +235,6 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
       throw new Error(`unexpected product receiver mode ${baseline.receiver.rendererMode}`);
     }
 
-    // Reproduce the R36 UI-hole-only compatibility messages directly through the
-    // real preload/main bridge. R37 may clear the legacy region once, but repeated
-    // control/layout payloads must not mutate the native HWND region again.
     const regionBefore = r37State(bridge);
     const nativeRegionBefore = Number(regionBefore.state?.r32NativePresenter?.r36UiRegionUpdates || 0);
     const clearBefore = Number(regionBefore.r37.regionNativeClears || 0);
@@ -230,6 +272,7 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     console.log(`R37_EXPLICIT_HANDOFF_E2E_OK cycles=3 activeMs=${active.elapsed} pausedSubtitleMs=${pausedSubtitle.elapsed} pausedNoSubtitleMs=${pausedNoSubtitle.elapsed} rendererAckCompletions=${final.r37.rendererAckCompletions} failOpenCount=0 rejectedAcks=0 uiHoles=0 regionNativeClears=${final.r37.regionNativeClears} nodeApiCallbackWarnings=0 realProductPreload=1 realProductRenderer=1 realSharedTexture=1`);
   } finally {
     clearTimeout(hardDeadline);
+    try { ipcMain.removeListener('libmpv-shared:r37-handoff-presented', rawAckListener); } catch {}
     try { await bridge?.close?.(); } catch {}
     try { await bridge?.dispose?.(); } catch {}
     try { main?.destroy(); } catch {}
