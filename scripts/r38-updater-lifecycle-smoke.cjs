@@ -25,18 +25,21 @@ if (pkg.version !== expectedVersion) throw new Error(`R38 package version mismat
 for (const marker of [
   'LILAC_R38_UPDATE_ACTIVITY_CHECK',
   'R38_UPDATE_ACTIVITY_CHECK_COOLDOWN_MS = 2 * 60 * 1000',
+  "app.on('browser-window-focus'",
   "r38InstallReadyUpdateOnReveal('second-instance')",
   "r38CheckUpdaterOnActivity('second-instance')",
   "r38CheckUpdaterOnActivity('window-focus')",
   "r38InstallReadyUpdateOnReveal('tray-show')",
   "r38CheckUpdaterOnActivity('tray-show')",
-  "r38CheckUpdaterOnActivity('startup')",
-  "r38CheckUpdaterOnActivity('periodic')"
+  'setTimeout(()=>updater.check(),5000)',
+  'setInterval(()=>updater.check(),3*60*60*1000)'
 ]) {
   if (!main.includes(marker)) throw new Error(`R38 main lifecycle marker missing: ${marker}`);
 }
+if (!main.includes("if (!startupComplete || !mainWindow || win !== mainWindow) return;")) {
+  throw new Error('R38 focus activity hook is not restricted to the real main window');
+}
 if (!main.includes("updater?.installOnQuit()")) throw new Error('R38 lost normal quit-time updater installation');
-if (main.includes('setTimeout(()=>updater.check(),5000)')) throw new Error('R38 retained the old startup-only check call');
 
 for (const marker of ['CUSTOM_RELEASES_API', 'CUSTOM_CURRENT_TAG', 'CUSTOM_TAG_RE', 'compareCustom', 'async checkCustom()', 'this.download()']) {
   if (!updaterSource.includes(marker)) throw new Error(`R38 packaged custom updater marker missing: ${marker}`);
@@ -159,7 +162,7 @@ async function runLatestCase() {
 (async () => {
   const transitionCount = await runAvailableCase();
   await runLatestCase();
-  console.log(`R38_UPDATER_LIFECYCLE_SMOKE_OK tag=${expectedTag} version=${expectedVersion} actualUpdater=1 newestSelection=1 autoDownload=1 latestCase=1 startup=5s activity=second-instance+tray-show+focus readyInstall=before-reveal normalQuitInstall=preserved stateTransitions=${transitionCount}`);
+  console.log(`R38_UPDATER_LIFECYCLE_SMOKE_OK tag=${expectedTag} version=${expectedVersion} actualUpdater=1 newestSelection=1 autoDownload=1 latestCase=1 startup=existing-5s periodic=existing-3h activity=second-instance+tray-show+main-window-focus readyInstall=before-reveal normalQuitInstall=preserved stateTransitions=${transitionCount}`);
 })().catch(error => {
   console.error(error?.stack || error);
   process.exit(1);
