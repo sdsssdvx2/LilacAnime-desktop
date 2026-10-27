@@ -9,6 +9,30 @@ const timeoutMs = Math.max(30_000, Number(process.argv[3]) || 180_000);
 if (!requestedScript) throw new Error('usage: node r37-run-e2e-with-timeout.cjs <script> [timeoutMs]');
 
 const root = path.resolve(__dirname, '..');
+
+// TEMPORARY R37 diagnosis only. Run #44 proved that native producer frames keep
+// popping through frame 47, while frame 22 is the last one recorded/imported/sent.
+// Dump the exact generated product-bridge source between those two instrumentation
+// anchors so the next fix targets the real post-pop discard branch rather than
+// changing renderer/WebGPU/native-presenter behavior speculatively.
+const productBridge = path.join(root, 'electron', 'libmpv-shared-main.cjs');
+if (fs.existsSync(productBridge)) {
+  const bridgeSource = fs.readFileSync(productBridge, 'utf8').replace(/\r\n/g, '\n');
+  const popAnchor = '      metrics.nativeFrames += 1;';
+  const recordAnchor = '      metrics.lastFrameId = Number(nativeFrame.frameId) || metrics.lastFrameId;';
+  const popAt = bridgeSource.indexOf(popAnchor);
+  const recordAt = popAt >= 0 ? bridgeSource.indexOf(recordAnchor, popAt + popAnchor.length) : -1;
+  if (popAt >= 0 && recordAt > popAt) {
+    const contextStart = Math.max(0, popAt - 500);
+    const contextEnd = Math.min(bridgeSource.length, recordAt + recordAnchor.length + 300);
+    console.log('R37_POST_POP_DROP_SOURCE_BEGIN');
+    console.log(bridgeSource.slice(contextStart, contextEnd));
+    console.log('R37_POST_POP_DROP_SOURCE_END');
+  } else {
+    console.log(`R37_POST_POP_DROP_SOURCE_MISSING popAt=${popAt} recordAt=${recordAt}`);
+  }
+}
+
 // TEMPORARY R37 diagnosis only: qualification still requests the raw E2E path,
 // but route that exact request through the require-cache diagnostic bridge copy.
 // The wrapper executes the same E2E body and leaves product/package bytes intact.
