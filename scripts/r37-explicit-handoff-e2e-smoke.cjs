@@ -8,6 +8,12 @@ const { spawnSync } = require('node:child_process');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs');
 
+// Test-only hosted-runner compatibility. GitHub's Windows VM can create the
+// native D3D11 texture while Chromium's sandboxed GPU child still reports that
+// no GPU is available. Keep ANGLE/D3D11 and the real product renderer intact;
+// only remove the GPU-process sandbox for this qualification process.
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hardDeadline = setTimeout(() => {
   console.error('R37 explicit renderer handoff e2e smoke exceeded 150s hard deadline');
