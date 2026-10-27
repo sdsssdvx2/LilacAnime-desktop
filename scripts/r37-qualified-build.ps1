@@ -11,6 +11,7 @@ $r37Stash = Join-Path $env:RUNNER_TEMP 'lilac-r37-support'
 Remove-Item $r37Stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $r37Stash | Out-Null
 $r37Support = @(
+  'r37-transform-anchor-compat.cjs',
   'r37-explicit-handoff-clean-focus.cjs',
   'r37-native-handoff-freeze-smoke.cjs',
   'r37-explicit-handoff-e2e-smoke.cjs'
@@ -49,6 +50,10 @@ foreach ($name in $r37Support) {
   Copy-Item (Join-Path $r37Stash $name) (Join-Path 'scripts' $name) -Force
 }
 
+node --check scripts/r37-transform-anchor-compat.cjs
+Assert-Exit 'R37 transform-anchor compatibility syntax'
+node scripts/r37-transform-anchor-compat.cjs
+Assert-Exit 'R37 transform-anchor compatibility'
 node --check scripts/r37-explicit-handoff-clean-focus.cjs
 Assert-Exit 'R37 transform syntax'
 node scripts/r37-explicit-handoff-clean-focus.cjs
