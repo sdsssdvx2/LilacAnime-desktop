@@ -57,7 +57,10 @@ bridge = replaceOnce(
   let r37PendingHandoffEpoch = 0;
   let r37RendererAckCompletions = 0;
   let r37RejectedRendererAcks = 0;
-  let r37LastAckLatencyMs = 0;`,
+  let r37LastAckLatencyMs = 0;
+  let r37PresenterRegionClearDone = false; // LILAC_R37_NO_REGION_CHURN
+  let r37PresenterRegionSyncCalls = 0;
+  let r37PresenterRegionNativeClears = 0;`,
   'R37 handoff epoch state'
 );
 
@@ -169,17 +172,23 @@ bridge = replaceOnce(
   'R37 explicit renderer ACK IPC'
 );
 
-// R36's SetWindowRgn holes reveal a stale Chromium video underneath a moving
-// native popup. The user's recording shows those translucent control rectangles
-// as large flashing blocks. Keep the proven full-frame R33 owned popup instead.
-// The renderer may still send old hole payloads for compatibility, but main
-// always clears the region before showing the native popup.
+// R36's SetWindowRgn holes reveal stale Chromium contents beneath the owned popup.
+// R37 uses the full R33 popup. The old renderer compatibility messages may still
+// arrive, but only the first call may clear a legacy region. After that, UI/control
+// mutations must never touch the HWND region again.
 bridge = replaceOnce(
   bridge,
   '      return addon.setNativePresenterUiHoles(playerId, r36TargetUiHoles) === true;',
   `      r36TargetUiHoles = [];
-      return addon.setNativePresenterUiHoles(playerId, []) === true; // LILAC_R37_NO_STALE_UI_HOLES`,
-  'R37 disable stale Chromium UI holes'
+      r37PresenterRegionSyncCalls += 1;
+      if (r37PresenterRegionClearDone) return true;
+      const cleared = addon.setNativePresenterUiHoles(playerId, []) === true; // LILAC_R37_NO_STALE_UI_HOLES LILAC_R37_NO_REGION_CHURN
+      if (cleared) {
+        r37PresenterRegionClearDone = true;
+        r37PresenterRegionNativeClears += 1;
+      }
+      return cleared;`,
+  'R37 disable repeated stale Chromium UI-hole mutations'
 );
 bridge = replaceInside(
   bridge,
@@ -190,6 +199,20 @@ bridge = replaceInside(
     r36TargetUiHoles = [];
     r36SyncNativePresenterUiHoles();`,
   'R37 clear presenter region on blur'
+);
+
+// R36 also re-applied SetWindowRgn after every presenter bounds sync even when
+// the hole list was empty. Real R37 diagnostics showed 168 region updates with
+// zero holes, and the user's recording caught single-frame blackouts while UI
+// controls were changing. Remove that geometry-triggered region mutation entirely.
+native = replaceInside(
+  native,
+  'napi_value SetNativePresenterBounds(',
+  'napi_value NativePresenterStats(',
+  `    std::string r36RegionError;
+    R36ApplyPresenterRegionLocked(player, &r36RegionError);`,
+  `    // LILAC_R37_NO_REGION_REAPPLY_ON_BOUNDS: full R33 owned popup has no region.`,
+  'R37 disable region reapply after bounds'
 );
 
 // Freeze only the *visible native swapchain* during the short focus handoff.
@@ -206,7 +229,10 @@ bridge = replaceOnce(
             rendererAckCompletions: r37RendererAckCompletions,
             rejectedRendererAcks: r37RejectedRendererAcks,
             lastAckLatencyMs: r37LastAckLatencyMs,
-            uiHolesDisabled: true
+            uiHolesDisabled: true,
+            regionMutationMode: 'clear-once-no-bounds-reapply',
+            regionSyncCalls: r37PresenterRegionSyncCalls,
+            regionNativeClears: r37PresenterRegionNativeClears
           },
           r36SupplyGaps: r36SnapshotSupplyGaps()`,
   'R37 diagnostics'
@@ -227,8 +253,8 @@ native = replaceOnce(
 );
 
 // Renderer ACK is emitted only after the direct WebGPU copy succeeded and the
-// imported shared texture was released. No requestAnimationFrame or GPU wait is
-// introduced; the already-qualified direct-receive WebGPU path remains intact.
+// imported shared texture was released. The steady-state direct WebGPU path is
+// unchanged; R37 does not resurrect staging or disable Direct Composition.
 preload = replaceOnce(
   preload,
   '    let frame = null;',
@@ -296,11 +322,21 @@ for (const marker of [
   'r37CompleteFocusHandoffFromRendererAck',
   "libmpv-shared:r37-handoff-presented",
   'r37HandoffEpoch: r34FocusHandoffPending ? r37PendingHandoffEpoch : 0',
-  'LILAC_R37_NO_STALE_UI_HOLES'
+  'LILAC_R37_NO_STALE_UI_HOLES',
+  'LILAC_R37_NO_REGION_CHURN'
 ]) if (!finalBridge.includes(marker)) throw new Error(`R37 bridge marker missing: ${marker}`);
 if (!finalNative.includes('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF') ||
     !finalNative.includes('!player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)')) {
   throw new Error('R37 native freeze marker missing');
+}
+if (!finalNative.includes('LILAC_R37_NO_REGION_REAPPLY_ON_BOUNDS')) {
+  throw new Error('R37 native no-region bounds marker missing');
+}
+const boundsStart = finalNative.indexOf('napi_value SetNativePresenterBounds(');
+const boundsEnd = finalNative.indexOf('napi_value NativePresenterStats(', boundsStart);
+if (boundsStart < 0 || boundsEnd <= boundsStart) throw new Error('R37 native bounds function missing');
+if (finalNative.slice(boundsStart, boundsEnd).includes('R36ApplyPresenterRegionLocked(')) {
+  throw new Error('R37 bounds path still mutates HWND region');
 }
 for (const marker of [
   'LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK',
@@ -319,5 +355,9 @@ if (!finalBridge.includes('setNativePresenterUiHoles(playerId, [])') ||
     finalBridge.includes('setNativePresenterUiHoles(playerId, r36TargetUiHoles)')) {
   throw new Error('R37 stale UI-hole path survived');
 }
+if (!finalBridge.includes("regionMutationMode: 'clear-once-no-bounds-reapply'") ||
+    !finalBridge.includes('r37PresenterRegionClearDone')) {
+  throw new Error('R37 region-churn suppression diagnostics missing');
+}
 
-console.log('R37_EXPLICIT_HANDOFF_CLEAN_FOCUS_OK handoff=renderer-epoch-ack-after-release legacyAck=diagnostic-only nativeHandoff=freeze-last-frame uiHoles=disabled r33NativeOnly=preserved focused=direct-webgpu');
+console.log('R37_EXPLICIT_HANDOFF_CLEAN_FOCUS_OK handoff=renderer-epoch-ack-after-release legacyAck=diagnostic-only nativeHandoff=freeze-last-frame uiHoles=disabled regionMutation=clear-once-no-bounds-reapply r33NativeOnly=preserved focused=direct-webgpu');
