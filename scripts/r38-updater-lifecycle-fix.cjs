@@ -14,13 +14,17 @@ function replaceOnce(source, needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   return source.replace(needle, replacement);
 }
+function functionProbe(source, signature, span = 800) {
+  const at = source.indexOf(signature);
+  return at < 0 ? '' : source.slice(at, at + span);
+}
 
 if (main.includes('LILAC_R38_UPDATE_ACTIVITY_CHECK')) throw new Error('R38 updater lifecycle patch already applied');
 for (const marker of ['CUSTOM_RELEASES_API', 'CUSTOM_CURRENT_TAG', 'checkCustom()', 'compareCustom']) {
   if (!updater.includes(marker)) throw new Error(`R38 requires the R2K custom updater marker: ${marker}`);
 }
-const installOnQuitMatch = updater.match(/installOnQuit\(\)\s*\{([\s\S]*?)\n\s*\}/);
-if (!installOnQuitMatch || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitMatch[1]) || !/this\.install\(false\)/.test(installOnQuitMatch[1])) {
+const installOnQuitProbe = functionProbe(updater, 'installOnQuit()');
+if (!installOnQuitProbe || !/state\.status\s*===\s*['"]ready['"]/.test(installOnQuitProbe) || !/this\.install\(false\)/.test(installOnQuitProbe)) {
   throw new Error('R38 requires the qualified ready-state install-on-quit path');
 }
 
