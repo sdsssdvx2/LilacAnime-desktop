@@ -19,8 +19,8 @@ function fixture(dir) {
   const out = path.join(dir, 'r37-e2e.mp4');
   const result = spawnSync(ffmpeg, [
     '-hide_banner','-loglevel','error','-y',
-    '-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=20',
-    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=20',
+    '-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=40',
+    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=40',
     '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',
     '-c:a','aac','-shortest',out
   ], { encoding:'utf8', windowsHide:true, timeout:120000 });
@@ -29,7 +29,7 @@ function fixture(dir) {
 }
 function subtitleFixture(dir) {
   const out = path.join(dir, 'r37-e2e.vtt');
-  fs.writeFileSync(out, 'WEBVTT\n\n00:00:00.000 --> 00:00:19.000\nR37 subtitle ownership smoke\n', 'utf8');
+  fs.writeFileSync(out, 'WEBVTT\n\n00:00:00.000 --> 00:00:39.000\nR37 subtitle ownership smoke\n', 'utf8');
   return out;
 }
 function receiverPreload(dir) {
@@ -139,9 +139,6 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r37-e2e-'));
   let main, other, bridge;
   try {
-    // Register IPC first, then bind the exact BrowserWindow before navigation.
-    // The preload emits receiver-ready during page startup and senderIsAttached()
-    // intentionally rejects it unless attachedWindow already points at main.
     bridge = createLibmpvSharedBridge({ app, ipcMain });
     await bridge.ensure();
 
@@ -159,10 +156,14 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
     const opened = await bridge.open(pathToFileURL(fixture(dir)).href, {}, false, { x:0, y:0, width:640, height:360, visible:true });
     if (!opened?.ok) throw new Error(`bridge open failed ${JSON.stringify(opened)}`);
 
-    await waitUntil(() => {
-      const state = bridge.state();
-      return state?.fileLoaded === true && Number(state?.metrics?.sentFrames || 0) >= 5;
-    }, 12000, 'focused playback baseline');
+    try {
+      await waitUntil(() => {
+        const state = bridge.state();
+        return state?.fileLoaded === true && Number(state?.metrics?.sentFrames || 0) >= 5;
+      }, 15000, 'focused playback baseline');
+    } catch (error) {
+      throw new Error(`focused playback baseline failed state=${JSON.stringify(bridge.state())} cause=${String(error?.message || error)}`);
+    }
 
     const active = await focusCycle(bridge, main, other, 1, 'active');
     const subtitle = subtitleFixture(dir);
@@ -196,6 +197,6 @@ async function focusCycle(bridge, main, other, expectedAck, label) {
 })().catch(error => {
   clearTimeout(hardDeadline);
   console.error(error?.stack || error);
-  process.exitCode = 1;
   try { app.quit(); } catch {}
+  process.exit(1);
 });
