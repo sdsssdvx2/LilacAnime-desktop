@@ -76,11 +76,7 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          node scripts/r37-transform-anchor-compat.cjs
-          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          node --check scripts/r37-explicit-handoff-clean-focus.cjs
-          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          Write-Host 'R37_PREFLIGHT_SYNTAX_OK transformCompat=qualified-r36-r27-tail+exact-exe'
+          Write-Host 'R37_PREFLIGHT_SYNTAX_OK transformCompat=deferred-after-r36-reconstruction'
 
       - name: Build and qualify R37
         shell: powershell
