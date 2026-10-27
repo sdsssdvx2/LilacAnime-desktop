@@ -7,6 +7,7 @@ on:
       - .github/workflows/libmpv-r3f-054-r37-explicit-handoff-clean-focus.yml
       - scripts/r37-transform-anchor-compat.cjs
       - scripts/r37-explicit-handoff-clean-focus.cjs
+      - scripts/r37-node-api-wake-owner-fix.cjs
       - scripts/r37-native-handoff-freeze-smoke.cjs
       - scripts/r37-explicit-handoff-e2e-smoke.cjs
       - scripts/r37-run-e2e-with-timeout.cjs
@@ -74,11 +75,13 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-explicit-handoff-clean-focus.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r37-node-api-wake-owner-fix.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-native-handoff-freeze-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node --check scripts/r37-explicit-handoff-e2e-smoke.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          Write-Host 'R37_PREFLIGHT_SYNTAX_OK transformCompat=deferred-after-r36-reconstruction'
+          Write-Host 'R37_PREFLIGHT_SYNTAX_OK transformCompat=deferred-after-r36-reconstruction wakeOwnerFix=checked'
 
       - name: Build and qualify R37
         shell: powershell
@@ -110,7 +113,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
-          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r37 explicit focus handoff' --notes 'R37 is based directly on the user R36 recording and diagnostic trace. It preserves the R33 same-libmpv D3D11 owned-popup native-only unfocused path and the focused direct WebGPU path. R36 recorded zero successful handoff completions and seven 1500 ms fail-opens despite fresh Chromium frames resuming within milliseconds, so R37 no longer uses the successful-send/allReferencesReleased frame-set intersection as UI ownership authority. Mirrored frames carry a short-lived handoff epoch and the renderer sends one explicit ACK after a successful direct copy and imported-texture release; only that ACK hides the native popup. During the handoff the visible native swapchain is frozen, allowing the inherited paused redraw to feed Chromium without making the on-screen native subtitle disappear. R36 Win32 region holes are disabled because the recording proved they expose stale Chromium rectangles under the moving native popup. Qualification includes the inherited R33 autonomy smoke, an R37 native freeze smoke, and a real Electron BrowserWindow/sharedTexture end-to-end smoke covering active, paused-with-subtitle, and paused-without-subtitle focus cycles with zero fail-open allowed. R37 does not claim the remaining micro-stutter is solved; direct WebGPU and the existing low-overhead cadence/supply-gap diagnostics are intentionally retained for separate display-phase attribution.'
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r37 explicit focus handoff' --notes 'R37 is based directly on the user R36 recording and diagnostic trace. It preserves the R33 same-libmpv D3D11 owned-popup native-only unfocused path and the focused direct WebGPU path. R36 recorded zero successful handoff completions and seven 1500 ms fail-opens despite fresh Chromium frames resuming within milliseconds, so R37 no longer uses the successful-send/allReferencesReleased frame-set intersection as UI ownership authority. Mirrored frames carry a short-lived handoff epoch and the renderer sends one explicit ACK after a successful direct copy and imported-texture release; only that ACK hides the native popup. During the handoff the visible native swapchain is frozen, allowing the inherited paused redraw to feed Chromium without making the on-screen native subtitle disappear. R36 Win32 region holes are disabled because the recording proved they expose stale Chromium rectangles under the moving native popup. Qualification includes the inherited R33 autonomy smoke, an R37 native freeze smoke, and a raw real Electron BrowserWindow/sharedTexture end-to-end smoke covering active, paused-with-subtitle, and paused-without-subtitle focus cycles. The native TSFN wake callback now captures the current player ID at callback entry, repairing the ReferenceError that previously surfaced as DEP0168; raw qualification requires zero Node-API callback warnings. R37 does not claim the remaining micro-stutter is solved; direct WebGPU and the existing low-overhead cadence/supply-gap diagnostics are intentionally retained for separate display-phase attribution.'
           if($LASTEXITCODE-ne 0){throw 'R37 release create failed'}
           gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
           if($LASTEXITCODE-ne 0){throw 'R37 release upload failed'}
@@ -138,5 +141,6 @@ jobs:
           if($manifest.r37HandoffAck-ne 'explicit-renderer-epoch-after-direct-copy+imported-release'){throw 'R37 explicit ACK manifest mismatch'}
           if($manifest.r37UnfocusedUi-ne 'full-r33-owned-popup+chromium-ui-holes-disabled'){throw 'R37 no-hole UI manifest mismatch'}
           if($manifest.r37NativeHandoff-ne 'freeze-visible-native-swapchain+mirror-redraw-to-chromium-until-renderer-ack'){throw 'R37 native freeze manifest mismatch'}
-          if($manifest.r37RuntimeSmokes-ne 'r33-native-autonomy+native-freeze+real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle'){throw 'R37 runtime smoke manifest mismatch'}
-          Write-Host "R37_PUBLISHED_OK sha256=$hash size=$size electron=$($manifest.electron) handoff=explicit-renderer-ack failOpenRequired=0 uiHoles=disabled nativeHandoff=frozen-last-frame stutterClaim=none"
+          if($manifest.r37NodeApiWakeScope-ne 'wakePumpFromNative-captures-current-playerId+raw-e2e-dep0168-zero'){throw 'R37 Node-API wake scope manifest mismatch'}
+          if($manifest.r37RuntimeSmokes-ne 'r33-native-autonomy+native-freeze+raw-real-electron-sharedtexture-active+paused-subtitle+paused-no-subtitle+dep0168-zero'){throw 'R37 raw runtime smoke manifest mismatch'}
+          Write-Host "R37_PUBLISHED_OK sha256=$hash size=$size electron=$($manifest.electron) handoff=explicit-renderer-ack dep0168=0 failOpenRequired=0 uiHoles=disabled nativeHandoff=frozen-last-frame stutterClaim=none"
