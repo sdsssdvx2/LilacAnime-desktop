@@ -133,6 +133,6 @@ async function waitUntil(fn, ms, label) {
 })().catch(error => {
   clearTimeout(hardDeadline);
   console.error(error?.stack || error);
-  process.exitCode = 1;
   try { app.quit(); } catch {}
+  process.exit(1);
 });
