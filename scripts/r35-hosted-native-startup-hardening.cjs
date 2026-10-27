@@ -54,21 +54,35 @@ source = source.replaceAll('duration=12', 'duration=30');
 // Start the producer only after the real BrowserWindow blur has activated the R33
 // native-owned popup. Product code is untouched; the test still proves the same
 // native-only DWM output, 900ms main-thread autonomy and focus recovery.
-const earlyProducer = `    addon.open(id, media);
+// R34's prebaseline watchdog may already have wrapped the producer line with stage
+// markers. Move those markers together with the producer so diagnostics remain true.
+const plainEarlyProducer = `    addon.open(id, media);
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
     addon.setNativePresenterVisible(id, false);`;
+const stagedEarlyProducer = `    addon.open(id, media);
+    await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
+    console.log('R34_PRE_R33_STAGE=before-producer-start');
+    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
+    console.log('R34_PRE_R33_STAGE=producer-started');
+    addon.setNativePresenterVisible(id, false);`;
+const plainCount = source.split(plainEarlyProducer).length - 1;
+const stagedCount = source.split(stagedEarlyProducer).length - 1;
+if (plainCount + stagedCount !== 1) {
+  throw new Error('R35 hosted producer-start anchor expected one plain/staged form, found plain=' + plainCount + ' staged=' + stagedCount);
+}
 const deferredProducer = `    addon.open(id, media);
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'fixture load');
     // LILAC_R35_HOSTED_NATIVE_STARTUP_NO_QUEUE_SATURATION
     addon.setNativePresenterVisible(id, false);`;
-const earlyProducerCount = source.split(earlyProducer).length - 1;
-if (earlyProducerCount !== 1) throw new Error('R35 hosted producer-start anchor expected once, found ' + earlyProducerCount);
-source = source.replace(earlyProducer, deferredProducer);
+const hadR34ProducerStages = stagedCount === 1;
+source = source.replace(hadR34ProducerStages ? stagedEarlyProducer : plainEarlyProducer, deferredProducer);
 
 const blurAnchor = `    await waitUntil(() => !main.isFocused() && rival.isFocused(), 3000, 'real BrowserWindow blur');`;
-const blurWithProducer = `${blurAnchor}
-    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');`;
+const movedProducer = hadR34ProducerStages
+  ? `    console.log('R34_PRE_R33_STAGE=before-producer-start');\n    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');\n    console.log('R34_PRE_R33_STAGE=producer-started');`
+  : `    if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');`;
+const blurWithProducer = `${blurAnchor}\n${movedProducer}`;
 const blurAnchorCount = source.split(blurAnchor).length - 1;
 if (blurAnchorCount !== 1) throw new Error('R35 hosted blur anchor expected once, found ' + blurAnchorCount);
 source = source.replace(blurAnchor, blurWithProducer);
@@ -93,6 +107,15 @@ const startFrameCount = source.split("addon.startFrameProducer(id, 640, 360)").l
 if (startFrameCount !== 1 || source.indexOf("addon.startFrameProducer(id, 640, 360)") < source.indexOf("'real BrowserWindow blur'")) {
   throw new Error('R35 hosted producer must start exactly once after real blur');
 }
+if (hadR34ProducerStages) {
+  const beforeStage = source.indexOf('R34_PRE_R33_STAGE=before-producer-start');
+  const afterStage = source.indexOf('R34_PRE_R33_STAGE=producer-started');
+  const blurAt = source.indexOf("'real BrowserWindow blur'");
+  const startAt = source.indexOf('addon.startFrameProducer(id, 640, 360)');
+  if (!(blurAt < beforeStage && beforeStage < startAt && startAt < afterStage)) {
+    throw new Error('R35 hosted R34 producer stage markers no longer bracket deferred producer start');
+  }
+}
 
 fs.writeFileSync(smokePath, source, 'utf8');
-console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 fixtureSeconds=30 producerStart=after-blur noFocusedQueueSaturation=1 proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
+console.log('R35_HOSTED_NATIVE_STARTUP_HARDENING_OK timeoutMs=15000 fixtureSeconds=30 producerStart=after-blur noFocusedQueueSaturation=1 r34StageMarkers=' + (hadR34ProducerStages ? 'moved' : 'absent') + ' proof=unchanged exactSOk=required nonSOk=zero mainStallMs=900 timeoutTelemetry=presenter+playback');
