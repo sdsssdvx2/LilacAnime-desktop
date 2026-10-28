@@ -1,0 +1,65 @@
+name: LilacAnime Libmpv R39 fast source apply
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-runtime-recovery]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r39-fast-source-apply.yml
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r39-fast-source
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  apply-public-r38:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download exact public R38 and extract app.asar
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R38-Setup.exe'
+          gh release download libmpv-r2k-v0.5.54-r38 --repo '${{ github.repository }}' --pattern 'LilacAnime-Libmpv-R38-Setup.exe' --dir $env:RUNNER_TEMP
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $sha=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha-ne'd94e818ceb7c4658a16075894d0583cb7e221f969de066d33ce06d03a94ab647'){throw "R38 hash mismatch $sha"}
+          $outer=Join-Path $env:RUNNER_TEMP 'r38-nsis';$nested=Join-Path $env:RUNNER_TEMP 'r38-app';$root=Join-Path $env:RUNNER_TEMP 'r38-asar'
+          New-Item -ItemType Directory -Force -Path $outer,$nested,$root|Out-Null
+          & 7z x -y "-o$outer" $installer|Out-Host;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $appArchive=Get-ChildItem $outer -File -Recurse|Where-Object{$_.Name -eq 'app-64.7z'}|Select-Object -First 1
+          if(-not$appArchive){throw 'app-64.7z missing'}
+          & 7z x -y "-o$nested" $appArchive.FullName|Out-Host;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $asar=Get-ChildItem $nested -File -Filter app.asar -Recurse|Select-Object -First 1
+          if(-not$asar){throw 'app.asar missing'}
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          & node_modules/.bin/asar.cmd extract $asar.FullName $root;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          "R39_FAST_ROOT=$root"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R39_FAST_EXTRACT_OK root=$root"
+      - name: Apply R39 transform to exact public R38 source
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $r=$env:R39_FAST_ROOT
+          New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
+          Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
+          Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
+          Copy-Item native/libmpv-d3d11-bridge/player_addon.cc (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Force
+          Push-Location $r
+          try{
+            node scripts/r39-runtime-recovery-fix.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            node scripts/r39-runtime-recovery-smoke.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }finally{Pop-Location}
+          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 smoke=pass'
