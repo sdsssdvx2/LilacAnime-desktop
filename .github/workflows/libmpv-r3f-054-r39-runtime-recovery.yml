@@ -8,6 +8,8 @@ on:
       - scripts/r39-runtime-source-probe.cjs
       - scripts/r39-runtime-recovery-fix.cjs
       - scripts/r39-runtime-recovery-smoke.cjs
+      - scripts/r39-refocus-phase-e2e-smoke.cjs
+      - scripts/r39-miniplayer-electron-smoke.cjs
       - scripts/r39-qualified-build.ps1
   workflow_dispatch:
 
@@ -38,9 +40,9 @@ env:
   STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
 
 jobs:
-  reconstruct-and-probe:
+  qualify-package-publish:
     runs-on: windows-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,19 +58,23 @@ jobs:
         shell: powershell
         run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
 
-      - name: Preflight R39 probe
+      - name: Preflight R39 support
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          node --check scripts/r39-runtime-source-probe.cjs
-          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          Write-Host 'R39_PROBE_PREFLIGHT_OK'
+          foreach($script in @('scripts/r39-runtime-source-probe.cjs','scripts/r39-runtime-recovery-fix.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-miniplayer-electron-smoke.cjs')){
+            node --check $script
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }
+          $null=[scriptblock]::Create((Get-Content scripts/r39-qualified-build.ps1 -Raw))
+          Write-Host 'R39_SUPPORT_PREFLIGHT_OK'
 
-      - name: Reconstruct exact qualified R38
+      - name: Reconstruct exact fully qualified R38 baseline
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference='Stop'
           node scripts/r32-transform-source-sanitize.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           node scripts/r33-transform-source-sanitize.cjs
@@ -76,9 +82,102 @@ jobs:
           node scripts/r36-transform-r35-anchor-compat.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           ./scripts/r38-qualified-build.ps1
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R39_R38_BASELINE_OK fullInheritedQualification=1'
 
-      - name: Probe final transformed R38 runtime source
+      - name: Probe exact final R38 source before modification
         shell: powershell
         run: |
           node scripts/r39-runtime-source-probe.cjs
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+
+      - name: Switch release identity to R39 and qualify changes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          @(
+            'RELEASE_TAG=libmpv-r2k-v0.5.54-r39',
+            'INSTALLER_NAME=LilacAnime-Libmpv-R39-Setup.exe',
+            'MANIFEST_NAME=lilacanime-libmpv-r39-manifest.json',
+            'APP_VERSION=0.5.54-libmpv-r3f.rc19'
+          ) | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          $env:RELEASE_TAG='libmpv-r2k-v0.5.54-r39'
+          $env:INSTALLER_NAME='LilacAnime-Libmpv-R39-Setup.exe'
+          $env:MANIFEST_NAME='lilacanime-libmpv-r39-manifest.json'
+          $env:APP_VERSION='0.5.54-libmpv-r3f.rc19'
+          ./scripts/r39-qualified-build.ps1
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+
+      - name: Upload qualified R39 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-Libmpv-R39-qualified
+          path: |
+            dist/LilacAnime-Libmpv-R39-Setup.exe
+            dist/lilacanime-libmpv-r39-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish R39 release only after all gates pass
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer='dist/LilacAnime-Libmpv-R39-Setup.exe'
+          $manifest='dist/lilacanime-libmpv-r39-manifest.json'
+          if(-not(Test-Path $installer)-or -not(Test-Path $manifest)){throw 'R39 qualified assets missing'}
+          $notes=Join-Path $env:RUNNER_TEMP 'r39-release-notes.md'
+          @'
+# LilacAnime Libmpv 0.5.54 r39 runtime recovery
+
+R39 is a targeted runtime recovery on top of the fully qualified R38/R37 stack.
+
+- Preserves the R33 unfocused native-only owned-popup path and the R37 explicit renderer handoff/native freeze that removed black focus flashes.
+- Preserves focused direct WebGPU (`copyExternalImageToTexture`) and does not restore the failed R25 Direct Composition disable or R28 staged WebGPU path.
+- Re-anchors the JavaScript source-frame phase only when returning from native-only presentation to focused direct WebGPU, and records active-playback gaps separately from pause/seek/buffering gaps.
+- Aligns the native unfocused WebVTT fallback with the focused DOM subtitle size, position, outline, weight, and visual baseline settings instead of R38's mismatched defaults.
+- Hardens the libmpv mini-player with Windows `pop-up-menu` always-on-top level, verifies the topmost state, re-pins after focus/z-order events, and exposes mini-player state in diagnostics.
+- Qualification repeats the complete R38/R37 baseline first, reruns the R37 raw shared-texture handoff E2E after the R39 changes, exercises four real native-only -> focused refocus cycles, and verifies PiP/topmost with two real Electron BrowserWindows plus the Win32 `WS_EX_TOPMOST` bit.
+- The R37 native producer, libmpv DLL, focused WebGPU preload/generated preload, R38 updater implementation, and desktop-state persistence implementation remain byte-identical.
+
+No uninstall, profile reset, settings reset, or watch-history reset is required. Install over the existing LilacAnime Libmpv installation.
+'@ | Set-Content -LiteralPath $notes -Encoding UTF8
+
+          $tag='libmpv-r2k-v0.5.54-r39'
+          $existing=$false
+          gh release view $tag --repo '${{ github.repository }}' *> $null
+          if($LASTEXITCODE-eq 0){$existing=$true}
+          if($existing){
+            gh release upload $tag $installer $manifest --repo '${{ github.repository }}' --clobber
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            gh release edit $tag --repo '${{ github.repository }}' --title 'LilacAnime Libmpv 0.5.54 r39 runtime recovery' --notes-file $notes
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          } else {
+            gh release create $tag $installer $manifest --repo '${{ github.repository }}' --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r39 runtime recovery' --notes-file $notes
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }
+          Write-Host 'R39_RELEASE_UPLOAD_OK'
+
+      - name: Re-download and verify public R39 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path $env:RUNNER_TEMP 'r39-public-reverify'
+          Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          gh release download libmpv-r2k-v0.5.54-r39 --repo '${{ github.repository }}' --pattern 'LilacAnime-Libmpv-R39-Setup.exe' --pattern 'lilacanime-libmpv-r39-manifest.json' --dir $dir
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $installer=Join-Path $dir 'LilacAnime-Libmpv-R39-Setup.exe'
+          $manifestPath=Join-Path $dir 'lilacanime-libmpv-r39-manifest.json'
+          $manifest=Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $installer).Length
+          if($manifest.installerSha256 -ne $hash){throw "public R39 SHA mismatch manifest=$($manifest.installerSha256) actual=$hash"}
+          if([int64]$manifest.installerSize -ne $size){throw "public R39 size mismatch manifest=$($manifest.installerSize) actual=$size"}
+          if($manifest.version -ne '0.5.54-libmpv-r3f.rc19' -or $manifest.tag -ne 'libmpv-r2k-v0.5.54-r39'){throw 'public R39 manifest identity mismatch'}
+          Write-Host "R39_PUBLISHED_OK sha256=$hash size=$size electron=$($manifest.electron) refocus=4cycles pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
