@@ -1,0 +1,84 @@
+name: LilacAnime Libmpv R39 runtime recovery
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-runtime-recovery]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r39-runtime-recovery.yml
+      - scripts/r39-runtime-source-probe.cjs
+      - scripts/r39-runtime-recovery-fix.cjs
+      - scripts/r39-runtime-recovery-smoke.cjs
+      - scripts/r39-qualified-build.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r39-runtime-recovery
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r38
+  INSTALLER_NAME: LilacAnime-Libmpv-R38-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r38-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc18
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  reconstruct-and-probe:
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+
+      - name: Preflight R39 probe
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r39-runtime-source-probe.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R39_PROBE_PREFLIGHT_OK'
+
+      - name: Reconstruct exact qualified R38
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r36-transform-r35-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r38-qualified-build.ps1
+
+      - name: Probe final transformed R38 runtime source
+        shell: powershell
+        run: |
+          node scripts/r39-runtime-source-probe.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
