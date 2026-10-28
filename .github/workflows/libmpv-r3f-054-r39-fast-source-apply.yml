@@ -54,7 +54,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
           Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
           Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
-          Copy-Item native/libmpv-d3d11-bridge/player_addon.cc (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Force
+          # The public package correctly contains the compiled addon but not the generated
+          # C++ build source. The transform only reads this source as a safety marker; the
+          # full qualification regenerates and hash-checks the real file. Use a marker-only
+          # placeholder here so this fast probe tests the published JS transform anchors.
+          '/* LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF fast-public-package-probe-only */' | Set-Content -LiteralPath (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Encoding UTF8
           Push-Location $r
           try{
             node scripts/r39-runtime-recovery-fix.cjs
@@ -62,4 +66,4 @@ jobs:
             node scripts/r39-runtime-recovery-smoke.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
-          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 smoke=pass'
+          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 smoke=pass nativeSource=marker-only-probe fullQualification=real-generated-source'
