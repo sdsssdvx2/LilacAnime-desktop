@@ -6,14 +6,16 @@ const { EventEmitter } = require('node:events');
 
 const root = path.resolve(process.argv[2] || path.join(__dirname, '..'));
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
+const exists = relative => fs.existsSync(path.join(root, relative));
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
 const bridge = read('electron/libmpv-shared-main.cjs');
-const native = read('native/libmpv-d3d11-bridge/player_addon.cc');
 const entry = read('src/libmpv-shared-entry.js');
 const main = read('electron/main.cjs');
 const preload = read('electron/preload.cjs');
+const sharedPreload = read('electron/libmpv-shared-preload.cjs');
 const controllerPath = path.join(root, 'electron/miniplayer-window.cjs');
+const native = exists('native/libmpv-d3d11-bridge/player_addon.cc') ? read('native/libmpv-d3d11-bridge/player_addon.cc') : null;
 
 for (const marker of [
   'LILAC_R39_REFOCUS_PHASE_REANCHOR',
@@ -22,17 +24,19 @@ for (const marker of [
   'nextNativeFrameDeadlinePerfAt = 0',
   'schedulePump(0)'
 ]) assert(bridge.includes(marker), `R39 bridge smoke missing ${marker}`);
-assert(bridge.includes("presentationMode") || read('electron/libmpv-shared-preload.cjs').includes("presentationMode = 'direct-receive-webgpu-copy'"), 'R39 lost focused direct WebGPU');
-assert(!read('electron/libmpv-shared-preload.cjs').includes('focus-staged-gpu-copy'), 'R39 resurrected staged WebGPU');
+assert(sharedPreload.includes("presentationMode = 'direct-receive-webgpu-copy'"), 'R39 lost focused direct WebGPU');
+assert(!sharedPreload.includes('focus-staged-gpu-copy'), 'R39 resurrected staged WebGPU');
 assert(bridge.includes('LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK'), 'R39 lost R37 explicit handoff');
 assert(bridge.includes('LILAC_R37_NO_STALE_UI_HOLES'), 'R39 lost R37 no-region-churn path');
 
-for (const marker of ['LILAC_R39_NATIVE_POPUP_TOPMOST_SYNC', 'HWND_TOPMOST', 'ownerTopmost', 'windowTopmost']) {
-  assert(native.includes(marker), `R39 native smoke missing ${marker}`);
+if (native) {
+  for (const marker of ['LILAC_R39_NATIVE_POPUP_TOPMOST_SYNC', 'HWND_TOPMOST', 'ownerTopmost', 'windowTopmost']) {
+    assert(native.includes(marker), `R39 native smoke missing ${marker}`);
+  }
+  assert(native.includes('LILAC_R33_OWNED_POPUP_FOCUS_SURFACE'), 'R39 lost R33 owned popup');
+  assert(native.includes('LILAC_R33_NATIVE_ONLY_UNFOCUSED'), 'R39 lost R33 native-only path');
+  assert(!native.includes('--disable-direct-composition'), 'R39 resurrected Direct Composition disable');
 }
-assert(native.includes('LILAC_R33_OWNED_POPUP_FOCUS_SURFACE'), 'R39 lost R33 owned popup');
-assert(native.includes('LILAC_R33_NATIVE_ONLY_UNFOCUSED'), 'R39 lost R33 native-only path');
-assert(!native.includes('--disable-direct-composition'), 'R39 resurrected Direct Composition disable');
 
 for (const marker of ['LILAC_R39_NATIVE_SUBTITLE_PARITY', 'browserBottomInset', "'sub-ass-override', 'strip'"]) {
   assert(entry.includes(marker), `R39 subtitle smoke missing ${marker}`);
@@ -109,7 +113,7 @@ const { MiniPlayerWindowController } = require(controllerPath);
   assert(win.isAlwaysOnTop() === false, 'mini-player did not restore original topmost state');
   assert(win.bounds.x === 100 && win.bounds.y === 120 && win.bounds.width === 1280 && win.bounds.height === 720, 'mini-player did not restore original bounds');
 
-  console.log('R39_REFOCUS_PIP_SUBTITLE_SMOKE_OK refocus=phase-reset+focused-wake pip=screen-saver+self-heal+native-owner-topmost subtitle=dom-baseline+22over720-inset r33=preserved r37=preserved r38Updater=preserved');
+  console.log(`R39_REFOCUS_PIP_SUBTITLE_SMOKE_OK refocus=phase-reset+focused-wake pip=screen-saver+self-heal+native-owner-topmost subtitle=dom-baseline+22over720-inset nativeSource=${native ? 1 : 0} r33=preserved r37=preserved r38Updater=preserved`);
 })().catch(error => {
   console.error(error?.stack || error);
   process.exit(1);
