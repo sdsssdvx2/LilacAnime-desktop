@@ -63,12 +63,30 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          foreach($script in @('scripts/r39-runtime-source-probe.cjs','scripts/r39-runtime-recovery-fix.cjs','scripts/r39-rebuild-renderer-bundle.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-miniplayer-electron-smoke.cjs')){
-            node --check $script
-            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $support=Join-Path $env:RUNNER_TEMP 'r39-support'
+          Remove-Item $support -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $support | Out-Null
+          $supportFiles=@(
+            'r39-runtime-source-probe.cjs',
+            'r39-runtime-recovery-fix.cjs',
+            'r39-rebuild-renderer-bundle.cjs',
+            'r39-runtime-recovery-smoke.cjs',
+            'r39-refocus-phase-e2e-smoke.cjs',
+            'r39-miniplayer-electron-smoke.cjs',
+            'r39-qualified-build.ps1'
+          )
+          foreach($name in $supportFiles){
+            $source=Join-Path 'scripts' $name
+            if(-not(Test-Path -LiteralPath $source)){throw "R39 support file missing before baseline reconstruction: $source"}
+            if($name.EndsWith('.cjs')){
+              node --check $source
+              if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $support $name) -Force
           }
           $null=[scriptblock]::Create((Get-Content scripts/r39-qualified-build.ps1 -Raw))
-          Write-Host 'R39_SUPPORT_PREFLIGHT_OK rendererBundleGate=1'
+          "R39_SUPPORT_DIR=$support" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R39_SUPPORT_PREFLIGHT_OK rendererBundleGate=1 preservedFiles=$($supportFiles.Count) supportDir=$support"
 
       - name: Reconstruct exact fully qualified R38 baseline
         shell: powershell
@@ -84,7 +102,29 @@ jobs:
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           ./scripts/r38-qualified-build.ps1
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          Write-Host 'R39_R38_BASELINE_OK fullInheritedQualification=1'
+
+          if(-not(Test-Path -LiteralPath $env:R39_SUPPORT_DIR)){throw "R39 support snapshot missing after R38 reconstruction: $env:R39_SUPPORT_DIR"}
+          New-Item -ItemType Directory -Force -Path scripts | Out-Null
+          $supportFiles=@(
+            'r39-runtime-source-probe.cjs',
+            'r39-runtime-recovery-fix.cjs',
+            'r39-rebuild-renderer-bundle.cjs',
+            'r39-runtime-recovery-smoke.cjs',
+            'r39-refocus-phase-e2e-smoke.cjs',
+            'r39-miniplayer-electron-smoke.cjs',
+            'r39-qualified-build.ps1'
+          )
+          foreach($name in $supportFiles){
+            $saved=Join-Path $env:R39_SUPPORT_DIR $name
+            if(-not(Test-Path -LiteralPath $saved)){throw "R39 support snapshot file missing: $saved"}
+            Copy-Item -LiteralPath $saved -Destination (Join-Path 'scripts' $name) -Force
+          }
+          foreach($name in $supportFiles | Where-Object { $_.EndsWith('.cjs') }){
+            node --check (Join-Path 'scripts' $name)
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }
+          $null=[scriptblock]::Create((Get-Content scripts/r39-qualified-build.ps1 -Raw))
+          Write-Host "R39_R38_BASELINE_OK fullInheritedQualification=1 supportRestored=$($supportFiles.Count)"
 
       - name: Probe exact final R38 source before modification
         shell: powershell
