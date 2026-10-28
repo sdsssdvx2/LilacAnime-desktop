@@ -12,6 +12,7 @@ const pkg = JSON.parse(read('package.json'));
 const bridge = read('electron/libmpv-shared-main.cjs');
 const sharedPreload = read('electron/libmpv-shared-preload.cjs');
 const entry = read('src/libmpv-shared-entry.js');
+const generatedRenderer = read('src/libmpv-shared.generated.js');
 const player = read('src/player.js');
 const main = read('electron/main.cjs');
 const preload = read('electron/preload.cjs');
@@ -63,6 +64,8 @@ assert(nativeSub.includes("localStorage.getItem('vttBold') === 'false' ? 400 : 7
 assert(dom.includes('browserVisualBottom=clamp(position-1.25,0,48)'), 'DOM visual baseline marker missing');
 assert(nativeSub.includes('100 - (position - 1.25)'), 'native vertical baseline does not mirror DOM baseline');
 assert(nativeSub.includes('LILAC_R39_NATIVE_SUBTITLE_PARITY'), 'subtitle parity marker missing');
+for (const marker of ['LILAC_R39_NATIVE_SUBTITLE_PARITY', 'miniPlayerState', 'lilac-mpv-video']) assert(generatedRenderer.includes(marker), `generated renderer missing R39 runtime marker: ${marker}`);
+assert(generatedRenderer.includes('100 - (position - 1.25)'), 'generated renderer missing native subtitle visual-baseline parity');
 
 for (const [source, marker, label] of [
   [player, 'setLibmpvMiniPlayer', 'renderer mini-player'], [player, '맨 위 고정을 확인하지 못했습니다', 'renderer topmost verification'],
@@ -76,4 +79,4 @@ assert(preload.includes('setMiniPlayer:'), 'mini-player action preload bridge mi
 assert(main.includes('LILAC_R38_UPDATE_ACTIVITY_CHECK'), 'R38 updater activity lifecycle marker missing');
 assert(main.includes("r38CheckUpdaterOnActivity('window-focus')"), 'R38 focus updater hook missing');
 
-console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} mode=${packagedMode ? 'packaged-app' : 'source-tree'} buildMetadata=${pkg.build ? 'present' : 'electron-builder-stripped'} nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
+console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} mode=${packagedMode ? 'packaged-app' : 'source-tree'} buildMetadata=${pkg.build ? 'present' : 'electron-builder-stripped'} generatedRenderer=R39-verified nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
