@@ -1,0 +1,135 @@
+name: LilacAnime Libmpv R39 final preserved-support
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-refocus-pip-subtitle]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r39-refocus-pip-subtitle-final2.yml
+      - scripts/r39-final-wrapper.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r39-refocus-pip-subtitle
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r39
+  INSTALLER_NAME: LilacAnime-Libmpv-R39-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r39-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc19
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  build-and-qualify:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+
+      - name: Preflight final-wrapper R39 scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r39-refocus-pip-subtitle-fix.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r39-refocus-pip-subtitle-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node --check scripts/r39-topmost-bidirectional-fix.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          if(-not (Test-Path scripts/r39-final-wrapper.ps1)){throw 'R39 final wrapper missing'}
+          if(-not (Test-Path scripts/r39-postqualify-bidirectional.ps1)){throw 'R39 postqualify missing'}
+          Write-Host 'R39_FINAL2_PREFLIGHT_OK allSupport=present'
+
+      - name: Build, correct, and fully qualify final R39
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/r32-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r36-transform-r35-anchor-compat.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r39-final-wrapper.ps1
+
+      - name: Upload qualified final R39 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r39-refocus-pip-subtitle-final
+          path: |
+            dist/LilacAnime-Libmpv-R39-Setup.exe
+            dist/lilacanime-libmpv-r39-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish and reverify public final R39 bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          cmd.exe /d /c "gh release delete %RELEASE_TAG% --repo %GITHUB_REPOSITORY% --yes --cleanup-tag >nul 2>nul"
+          gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r39 refocus PiP subtitle' --notes 'R39 is based directly on the R38 real-user diagnostic capture. It preserves the R33 unfocused native-only owned popup, R37 explicit renderer handoff/no-region-churn path, R38 updater lifecycle, and the focused direct WebGPU presenter. Refocus invalidates the stale absolute source deadline on blur and re-anchors plus immediately wakes the Chromium pump on focus. Mini-player topmost is synchronized on both layers: the BrowserWindow uses screen-saver-level always-on-top with event-based self-healing, while the R33 native owned popup follows the owner in both directions (HWND_TOPMOST in PiP and HWND_NOTOPMOST after leaving PiP), preventing stale native-popup z-order state. Diagnostics expose mini-player state and native owner/window topmost state. The R36 deterministic subtitle fallback remains in strip mode while its baseline defaults and vertical position are aligned to the focused DOM subtitle path including the browser-equivalent 22/720 bottom inset. Final qualification reconstructs exact R38, runs the full R39 base qualification, preserves the late correction scripts across nested reconstruction, applies the bidirectional z-order correction, rebuilds the Electron 44 native addon again, repeats R33 visible autonomy plus R37 native-freeze/raw shared-texture E2E, then repackages and re-verifies public bytes.'
+          if($LASTEXITCODE-ne 0){throw 'R39 final release create failed'}
+          gh release upload $env:RELEASE_TAG "dist/$env:INSTALLER_NAME" "dist/$env:MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R39 final release upload failed'}
+
+          $verify=Join-Path $env:RUNNER_TEMP 'r39-final-public'
+          Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:INSTALLER_NAME --pattern $env:MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R39 final public redownload failed'}
+
+          $exe=Join-Path $verify $env:INSTALLER_NAME
+          $manifest=Get-Content (Join-Path $verify $env:MANIFEST_NAME) -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          if($manifest.version-ne $env:APP_VERSION -or
+             $manifest.tag-ne $env:RELEASE_TAG -or
+             $manifest.qualifiedSourceSha-ne $env:QUALIFIED_SOURCE_SHA -or
+             $manifest.installerSha256-ne $hash -or
+             [long]$manifest.installerSize-ne $size -or
+             $manifest.electron-ne $env:ELECTRON_VERSION -or
+             $manifest.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R39 final public identity mismatch'}
+          if($manifest.r33FocusPresenter-ne 'same-libmpv-d3d11-texture+owned-ws-popup-unfocused' -or
+             $manifest.r33OwnedPopupBlackErase-ne $false -or
+             $manifest.r33ChromiumDuplicateDelivery-ne $false){throw 'R39 final lost R33 native-only proof'}
+          if($manifest.focusedPresenter-ne 'direct-receive-webgpu-copy'){throw 'R39 final focused direct WebGPU mismatch'}
+          if($manifest.r37HandoffAck-ne 'explicit-renderer-epoch-after-direct-copy+imported-release'){throw 'R39 final lost R37 handoff proof'}
+          if($manifest.r38UpdaterActivity-ne 'startup5s+periodic3h+second-instance+tray-show+window-focus-cooldown2m'){throw 'R39 final lost R38 updater proof'}
+          if($manifest.r39RefocusPhase-ne 'reset-native-deadline-on-blur+reset-and-immediate-pump-on-focus'){throw 'R39 final refocus proof mismatch'}
+          if($manifest.r39MiniPlayerTopmost-ne 'browser-screen-saver-self-heal+owned-popup-owner-topmost-sync'){throw 'R39 final mini-player proof mismatch'}
+          if($manifest.r39TopmostBidirectional-ne 'owner-topmost=>HWND_TOPMOST+owner-normal=>HWND_NOTOPMOST'){throw 'R39 final bidirectional topmost proof mismatch'}
+          if($manifest.r39SubtitleParity-ne 'native-defaults-100-12-2-700+browser-22over720-bottom-inset+R36-strip'){throw 'R39 final subtitle parity proof mismatch'}
+          if($manifest.r39BlackFlashInvariant-ne 'R37-full-owned-popup-no-ui-holes-preserved'){throw 'R39 final black-flash invariant mismatch'}
+          if($manifest.r39UpdaterInvariant-ne 'R38-updater-byte-identical'){throw 'R39 final updater invariant mismatch'}
+          if($manifest.r39FocusedPresenterInvariant-ne 'R38-shared-preload-byte-identical-direct-webgpu'){throw 'R39 final focused presenter invariant mismatch'}
+          Write-Host "R39_FINAL_PUBLISHED_OK sha256=$hash size=$size electron=$($manifest.electron) refocus=phase-reanchor pip=bidirectional-native-topmost subtitle=parity updater=R38-preserved focused=direct-webgpu"
