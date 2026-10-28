@@ -20,6 +20,29 @@ function replaceFunction(source, marker, nextMarker, replacement, label) {
   if (start < 0 || end <= start || source.indexOf(marker, start + marker.length) >= 0) throw new Error(`${label}: function boundary invalid`);
   return source.slice(0, start) + replacement + source.slice(end);
 }
+function resetPendingWakeInFunction(source, marker, nextMarker, label) {
+  const start = source.indexOf(marker);
+  const end = source.indexOf(nextMarker, start + marker.length);
+  if (start < 0 || end <= start || source.indexOf(marker, start + marker.length) >= 0) {
+    throw new Error(`${label}: function boundary invalid`);
+  }
+  let block = source.slice(start, end);
+  const idReset = '    nativeWakePendingFrameId = 0;';
+  if (block.includes(idReset)) throw new Error(`${label}: frame-id reset already present`);
+  const wakeReset = '    nativeWakePending = false;';
+  const wakeResetCount = block.split(wakeReset).length - 1;
+  if (wakeResetCount === 1) {
+    block = block.replace(wakeReset, `${wakeReset}\n${idReset}`);
+  } else if (wakeResetCount === 0) {
+    const generationAnchor = '    generation += 1;';
+    const generationCount = block.split(generationAnchor).length - 1;
+    if (generationCount !== 1) throw new Error(`${label}: expected one generation boundary, found ${generationCount}`);
+    block = block.replace(generationAnchor, `${generationAnchor}\n${wakeReset}\n${idReset}`);
+  } else {
+    throw new Error(`${label}: expected at most one pending-wake reset, found ${wakeResetCount}`);
+  }
+  return source.slice(0, start) + block + source.slice(end);
+}
 
 let native = read('native/libmpv-d3d11-bridge/player_addon.cc');
 let bridge = read('electron/libmpv-shared-main.cjs');
@@ -128,10 +151,8 @@ const oldFinally = `        if (nativeUpdateCallbackInstalled && nativeWakePendi
 const newFinally = `        if (nativeUpdateCallbackInstalled && nativeWakePending &&\n            (nativeWakePendingFrameId <= 0 || nativeWakePendingFrameId > Number(metrics.lastFrameId || 0))) {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          metrics.nativeUpdateWakeups += 1;\n          void pump('pending-signal');\n        } else {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          schedulePump(nextDelay);\n        }`;
 bridge = once(bridge, oldFinally, newFinally, 'drop stale pending callback wake');
 
-bridge = once(bridge,
-  '    generation += 1;\n    nativeWakePending = false;\n    lastNativeFramePerfAt = 0;',
-  `    generation += 1;\n    nativeWakePending = false;\n    nativeWakePendingFrameId = 0;\n    lastNativeFramePerfAt = 0;`,
-  'reset pending signal id on source change');
+bridge = resetPendingWakeInFunction(bridge, '  async function open(', '\n\n  function command(', 'reset pending signal id on open/source change');
+bridge = resetPendingWakeInFunction(bridge, '  async function stopPlayer(', '\n\n  async function close(', 'reset pending signal id on stop');
 
 for (const marker of [
   'LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER', 'producerWaitingForSlot', 'producerSignalWakeups',
