@@ -130,21 +130,21 @@ jobs:
           $manifest='dist/lilacanime-libmpv-r39-manifest.json'
           if(-not(Test-Path $installer)-or -not(Test-Path $manifest)){throw 'R39 qualified assets missing'}
           $notes=Join-Path $env:RUNNER_TEMP 'r39-release-notes.md'
-          @'
-# LilacAnime Libmpv 0.5.54 r39 runtime recovery
-
-R39 is a targeted runtime recovery on top of the fully qualified R38/R37 stack.
-
-- Preserves the R33 unfocused native-only owned-popup path and the R37 explicit renderer handoff/native freeze that removed black focus flashes.
-- Preserves focused direct WebGPU (`copyExternalImageToTexture`) and does not restore the failed R25 Direct Composition disable or R28 staged WebGPU path.
-- Re-anchors the JavaScript source-frame phase only when returning from native-only presentation to focused direct WebGPU, and records active-playback gaps separately from pause/seek/buffering gaps.
-- Aligns the native unfocused WebVTT fallback with the focused DOM subtitle size, position, outline, weight, and visual baseline settings instead of R38's mismatched defaults.
-- Hardens the libmpv mini-player with Windows `pop-up-menu` always-on-top level, verifies the topmost state, re-pins after focus/z-order events, and exposes mini-player state in diagnostics.
-- Qualification repeats the complete R38/R37 baseline first, reruns the R37 raw shared-texture handoff E2E after the R39 changes, exercises four real native-only -> focused refocus cycles, and verifies PiP/topmost with two real Electron BrowserWindows plus the Win32 `WS_EX_TOPMOST` bit.
-- The R37 native producer, libmpv DLL, focused WebGPU preload/generated preload, R38 updater implementation, and desktop-state persistence implementation remain byte-identical.
-
-No uninstall, profile reset, settings reset, or watch-history reset is required. Install over the existing LilacAnime Libmpv installation.
-'@ | Set-Content -LiteralPath $notes -Encoding UTF8
+          @(
+            '# LilacAnime Libmpv 0.5.54 r39 runtime recovery',
+            '',
+            'R39 is a targeted runtime recovery on top of the fully qualified R38/R37 stack.',
+            '',
+            '- Preserves the R33 unfocused native-only owned-popup path and the R37 explicit renderer handoff/native freeze that removed black focus flashes.',
+            '- Preserves focused direct WebGPU (`copyExternalImageToTexture`) and does not restore the failed R25 Direct Composition disable or R28 staged WebGPU path.',
+            '- Re-anchors the JavaScript source-frame phase only when returning from native-only presentation to focused direct WebGPU, and records active-playback gaps separately from pause/seek/buffering gaps.',
+            '- Aligns the native unfocused WebVTT fallback with the focused DOM subtitle size, position, outline, weight, and visual baseline settings instead of R38 mismatched defaults.',
+            '- Hardens the libmpv mini-player with Windows `pop-up-menu` always-on-top level, verifies the topmost state, re-pins after focus/z-order events, and exposes mini-player state in diagnostics.',
+            '- Qualification repeats the complete R38/R37 baseline first, reruns the R37 raw shared-texture handoff E2E after the R39 changes, exercises four real native-only -> focused refocus cycles, and verifies PiP/topmost with two real Electron BrowserWindows plus the Win32 `WS_EX_TOPMOST` bit.',
+            '- The R37 native producer, libmpv DLL, focused WebGPU preload/generated preload, R38 updater implementation, and desktop-state persistence implementation remain byte-identical.',
+            '',
+            'No uninstall, profile reset, settings reset, or watch-history reset is required. Install over the existing LilacAnime Libmpv installation.'
+          ) | Set-Content -LiteralPath $notes -Encoding UTF8
 
           $tag='libmpv-r2k-v0.5.54-r39'
           $existing=$false
