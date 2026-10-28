@@ -58,7 +58,7 @@ jobs:
           Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
           Copy-Item scripts/r39-rebuild-renderer-bundle.cjs (Join-Path $r 'scripts/r39-rebuild-renderer-bundle.cjs') -Force
           Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
-          Copy-Item -Recurse -Force node_modules (Join-Path $r 'node_modules')
+          $env:NODE_PATH=(Resolve-Path 'node_modules').Path
           '/* LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF fast-public-package-probe-only */' | Set-Content -LiteralPath (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Encoding UTF8
           $pkgPath=Join-Path $r 'package.json'
           $pkg=Get-Content $pkgPath -Raw|ConvertFrom-Json
