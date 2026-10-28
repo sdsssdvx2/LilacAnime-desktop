@@ -44,30 +44,45 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R38-Setup.exe'
-          $probe=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
-          Remove-Item $probe -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $probe | Out-Null
-          $arg="/D=$probe"
-          $p=Start-Process -FilePath $installer -ArgumentList '/S','--updated',$arg -PassThru -Wait
+          $requested=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
+          Remove-Item $requested -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $requested | Out-Null
+          $arg="/D=$requested"
+          $p=Start-Process -FilePath $installer -ArgumentList '/S',$arg -PassThru -Wait
           if($p.ExitCode -ne 0){throw "R38 silent install failed exit=$($p.ExitCode)"}
-          $exe=Join-Path $probe 'LilacAnime-Libmpv-R2K.exe'
-          $asar=Join-Path $probe 'resources/app.asar'
-          if(-not(Test-Path $exe)){throw "isolated R38 exe missing: $exe"}
-          if(-not(Test-Path $asar)){throw "isolated R38 app.asar missing: $asar"}
-          Write-Host "R39_PUBLISHED_R38_INSTALL_OK dir=$probe"
+
+          $roots=@($requested,(Join-Path $env:LOCALAPPDATA 'Programs')) | Where-Object { Test-Path $_ }
+          $asarHit=$null
+          foreach($root in $roots){
+            $hit=Get-ChildItem -LiteralPath $root -Filter app.asar -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'resources[\\/]app\.asar$' } |
+              Select-Object -First 1
+            if($hit){$asarHit=$hit;break}
+          }
+          if(-not $asarHit){
+            Write-Host 'Requested probe contents:'
+            Get-ChildItem -LiteralPath $requested -Force -Recurse -ErrorAction SilentlyContinue | Select-Object -First 80 FullName | Format-Table -AutoSize
+            Write-Host 'Local Programs contents:'
+            if(Test-Path (Join-Path $env:LOCALAPPDATA 'Programs')){Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Programs') -Force -Recurse -ErrorAction SilentlyContinue | Select-Object -First 120 FullName | Format-Table -AutoSize}
+            throw 'published R38 app.asar not found after silent install'
+          }
+          $installRoot=Split-Path (Split-Path $asarHit.FullName -Parent) -Parent
+          "R38_PROBE_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R39_PUBLISHED_R38_INSTALL_OK requested=$requested actual=$installRoot asar=$($asarHit.FullName)"
 
       - name: Extract published app.asar and run final-source probe
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
-          $probe=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
-          $asar=Join-Path $probe 'resources/app.asar'
+          $asar=Join-Path $env:R38_PROBE_INSTALL_ROOT 'resources/app.asar'
+          if(-not(Test-Path $asar)){throw "R38 probe app.asar disappeared: $asar"}
           $extract=Join-Path $env:RUNNER_TEMP 'lilac-r38-asar'
           Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $extract | Out-Null
           & node_modules/.bin/asar.cmd extract $asar $extract
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          New-Item -ItemType Directory -Force -Path (Join-Path $extract 'scripts') | Out-Null
           Copy-Item scripts/r39-runtime-source-probe.cjs (Join-Path $extract 'scripts/r39-runtime-source-probe.cjs') -Force
           Push-Location $extract
           try {
