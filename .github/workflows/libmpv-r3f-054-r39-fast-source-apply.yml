@@ -55,9 +55,6 @@ jobs:
           Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
           Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
           '/* LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF fast-public-package-probe-only */' | Set-Content -LiteralPath (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Encoding UTF8
-          # electron-builder deliberately strips the build block from packaged package.json.
-          # Recreate only the R38 build identity needed by the source-tree transform; the
-          # full qualification uses the real reconstructed source package.json instead.
           $pkgPath=Join-Path $r 'package.json'
           $pkg=Get-Content $pkgPath -Raw|ConvertFrom-Json
           $pkg|Add-Member -Force -NotePropertyName build -NotePropertyValue ([pscustomobject]@{
@@ -65,7 +62,8 @@ jobs:
             productName='LilacAnime Libmpv'
             win=[pscustomobject]@{executableName='LilacAnime-Libmpv-R2K';artifactName='LilacAnime-Libmpv-R38-Setup.${ext}'}
           })
-          $pkg|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $pkgPath -Encoding UTF8
+          $json=$pkg|ConvertTo-Json -Depth 20
+          [System.IO.File]::WriteAllText($pkgPath,$json,(New-Object System.Text.UTF8Encoding($false)))
           Push-Location $r
           try{
             node scripts/r39-runtime-recovery-fix.cjs
