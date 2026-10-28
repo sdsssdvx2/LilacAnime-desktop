@@ -17,12 +17,7 @@ process.on('uncaughtException', fail); process.on('unhandledRejection', fail);
 function fixture(dir) {
   const ffmpeg = require('ffmpeg-static');
   const out = path.join(dir, 'r39-refocus.mp4');
-  const result = spawnSync(ffmpeg, [
-    '-hide_banner','-loglevel','error','-y',
-    '-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=30',
-    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=30',
-    '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',out
-  ], { encoding:'utf8', windowsHide:true, timeout:120000 });
+  const result = spawnSync(ffmpeg, ['-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=640x360:rate=24000/1001:duration=30','-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=30','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',out], { encoding:'utf8', windowsHide:true, timeout:120000 });
   if (result.status !== 0 || !fs.existsSync(out)) throw new Error(`fixture failed ${String(result.stderr || '').slice(0,240)}`);
   return out;
 }
@@ -43,8 +38,8 @@ async function waitUntil(fn, ms, label) {
   throw new Error(`${label} timeout last=${JSON.stringify(last)}`);
 }
 function view(bridge) {
-  const state=bridge.state(), focus=state?.r33FocusSurface||{}, handoff=focus?.r34Handoff||{}, r37=handoff?.r37Handoff||{}, r39=handoff?.r39RuntimeRecovery||{};
-  return {state,focus,handoff,r37,r39};
+  const state=bridge.state(), focus=state?.r33FocusSurface||{}, handoff=focus?.r34Handoff||{}, r36=handoff?.r36Ack||{}, r37=handoff?.r37Handoff||{}, r39=handoff?.r39RuntimeRecovery||{};
+  return {state,focus,handoff,r36,r37,r39};
 }
 
 (async()=>{
@@ -55,8 +50,7 @@ function view(bridge) {
   let main,other,bridge;
   try {
     bridge=createLibmpvSharedBridge({app,ipcMain}); await bridge.ensure();
-    const preload=path.resolve(__dirname,'..','electron','preload-libmpv-shared.generated.cjs');
-    const html=productHtml(dir);
+    const preload=path.resolve(__dirname,'..','electron','preload-libmpv-shared.generated.cjs'), html=productHtml(dir);
     main=new BrowserWindow({show:true,width:800,height:600,backgroundColor:'#181818',webPreferences:{preload,backgroundThrottling:false,contextIsolation:true,nodeIntegration:false,sandbox:true}});
     other=new BrowserWindow({show:false,width:360,height:260,backgroundColor:'#303030',webPreferences:{backgroundThrottling:false}});
     await bridge.attachWindow(main); await main.loadFile(html); await other.loadURL('data:text/html,<body style="background:%23303030"></body>');
@@ -73,18 +67,15 @@ function view(bridge) {
       other.show(); other.focus();
       await waitUntil(()=>!main.isFocused(),3000,`cycle${i} blur`);
       await waitUntil(()=>{const v=view(bridge);return v.focus.active===true&&v.handoff.subtitleVisible===true;},5000,`cycle${i} native-only active`);
-      // Keep the native-only path active long enough that carrying an old absolute
-      // JS deadline would be materially stale on refocus.
       await sleep(1250);
-      const nativeBeforeFocus=view(bridge);
-      const nativeFramesBefore=Number(nativeBeforeFocus.state?.r32NativePresenter?.nativeOnlyFrames||0);
+      const nativeBeforeFocus=view(bridge), nativeFramesBefore=Number(nativeBeforeFocus.state?.r32NativePresenter?.nativeOnlyFrames||0);
       main.show(); main.focus();
       await waitUntil(()=>main.isFocused(),3000,`cycle${i} refocus`);
       const completed=await waitUntil(()=>{const v=view(bridge);return Number(v.r39.focusReanchors||0)>=startReanchors+1&&v.r39.awaitingFirstFrame===false&&v.handoff.pending===false&&v.focus.active===false?v:null;},1800,`cycle${i} first focused frame + R37 ACK`);
       const first=Number(completed.r39.lastFocusFirstFrameMs||0);
       if(!(first>0&&first<500))throw new Error(`cycle${i} focused first-frame latency ${first}ms state=${JSON.stringify(completed.r39)}`);
-      if(Number(completed.r37.failOpenCount||0)!==0)throw new Error(`cycle${i} fail-open used`);
-      if(Number(completed.r37.rejectedRendererAcks||0)!==0)throw new Error(`cycle${i} rejected R37 ACK`);
+      if(Number(completed.r36.failOpenCount||0)!==0)throw new Error(`cycle${i} R36 fail-open used count=${completed.r36.failOpenCount}`);
+      if(Number(completed.r37.rejectedRendererAcks||0)!==0)throw new Error(`cycle${i} rejected R37 ACK count=${completed.r37.rejectedRendererAcks}`);
       const nativeFramesAfter=Number(completed.state?.r32NativePresenter?.nativeOnlyFrames||0);
       samples.push({cycle:i,firstFrameMs:first,reanchors:Number(completed.r39.focusReanchors||0),nativeFramesDelta:nativeFramesAfter-nativeFramesBefore,activeGapCount:Number(completed.r39.activePlaybackGapCount||0),activeGapMaxMs:Number(completed.r39.activePlaybackGapMaxMs||0)});
       await sleep(350);
@@ -92,8 +83,10 @@ function view(bridge) {
     const final=view(bridge);
     if(Number(final.r39.focusReanchors||0)<4)throw new Error(`expected >=4 focus reanchors, got ${final.r39.focusReanchors}`);
     if(Number(final.r39.maxFocusFirstFrameMs||0)>=500)throw new Error(`max refocus first-frame latency too high ${final.r39.maxFocusFirstFrameMs}`);
+    if(Number(final.r36.failOpenCount||0)!==0)throw new Error(`final R36 fail-open count=${final.r36.failOpenCount}`);
+    if(Number(final.r37.rejectedRendererAcks||0)!==0)throw new Error(`final rejected R37 ACK count=${final.r37.rejectedRendererAcks}`);
     if(Number(final.state?.metrics?.importFailures||0)!==0||Number(final.state?.metrics?.sendFailures||0)!==0)throw new Error(`post-cycle transport failure import=${final.state?.metrics?.importFailures} send=${final.state?.metrics?.sendFailures}`);
-    console.log(`R39_REFOCUS_PHASE_E2E_OK cycles=4 reanchors=${final.r39.focusReanchors} maxFirstFrameMs=${final.r39.maxFocusFirstFrameMs} activeGapCount=${final.r39.activePlaybackGapCount} activeGapMaxMs=${final.r39.activePlaybackGapMaxMs} samples=${JSON.stringify(samples)}`);
+    console.log(`R39_REFOCUS_PHASE_E2E_OK cycles=4 reanchors=${final.r39.focusReanchors} maxFirstFrameMs=${final.r39.maxFocusFirstFrameMs} activeGapCount=${final.r39.activePlaybackGapCount} activeGapMaxMs=${final.r39.activePlaybackGapMaxMs} failOpen=0 rejectedAck=0 samples=${JSON.stringify(samples)}`);
   } finally {
     try{bridge?.dispose?.()}catch{}; try{other?.destroy?.()}catch{}; try{main?.destroy?.()}catch{}; clearTimeout(hardDeadline); app.quit();
   }
