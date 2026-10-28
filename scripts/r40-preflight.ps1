@@ -1,0 +1,118 @@
+$ErrorActionPreference='Stop'
+
+function Assert-Exit([string]$label){ if($LASTEXITCODE-ne 0){ throw "$label failed with exit code $LASTEXITCODE" } }
+function Sha256([string]$path){ (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+
+# R39's qualified builder intentionally reconstructs a historical clean worktree.
+# Preserve every R40 source outside it and restore only after R39 final6 has passed.
+$stash=Join-Path $env:RUNNER_TEMP 'lilac-r40-preflight-support'
+Remove-Item $stash -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $stash | Out-Null
+$scriptSupport=@(
+  'r40-callback-pacing-fix.cjs',
+  'r40-single-dom-subtitle-overlay-fix.cjs',
+  'r40-rebundle-renderer.cjs',
+  'r40-finalize-identity.cjs',
+  'r40-preflight.ps1'
+)
+$electronSupport=@(
+  'r40-subtitle-overlay.html',
+  'r40-subtitle-overlay-preload.cjs',
+  'r40-subtitle-overlay-window.cjs'
+)
+foreach($name in $scriptSupport){
+  $src=Join-Path 'scripts' $name
+  if(-not(Test-Path $src)){throw "R40 preflight support missing before R39 reconstruction: $name"}
+  Copy-Item $src (Join-Path $stash $name) -Force
+}
+foreach($name in $electronSupport){
+  $src=Join-Path 'electron' $name
+  if(-not(Test-Path $src)){throw "R40 overlay support missing before R39 reconstruction: $name"}
+  Copy-Item $src (Join-Path $stash $name) -Force
+}
+
+Write-Host 'R40_PREFLIGHT_BEGIN baseline=exact-R39-final6 candidate=callback-pacing+single-dom-subtitle-overlay'
+
+# Same sanitizers and exact qualification entrypoint as authoritative R39 final6.
+node scripts/r32-transform-source-sanitize.cjs
+Assert-Exit 'R40 preflight R32 transform sanitize'
+node scripts/r33-transform-source-sanitize.cjs
+Assert-Exit 'R40 preflight R33 transform sanitize'
+node scripts/r36-transform-r35-anchor-compat.cjs
+Assert-Exit 'R40 preflight R36 transform compat'
+& ./scripts/r39-final-wrapper-v4.ps1
+Assert-Exit 'R40 preflight exact R39 final6 reconstruction/qualification'
+
+# Rehydrate candidate-only files after R39's historical clean checkout.
+New-Item -ItemType Directory -Force -Path scripts | Out-Null
+New-Item -ItemType Directory -Force -Path electron | Out-Null
+foreach($name in $scriptSupport){ Copy-Item (Join-Path $stash $name) (Join-Path 'scripts' $name) -Force }
+foreach($name in $electronSupport){ Copy-Item (Join-Path $stash $name) (Join-Path 'electron' $name) -Force }
+
+$updaterBefore=Sha256 'electron/updater.cjs'
+$focusedPreloadBefore=Sha256 'electron/libmpv-shared-preload.cjs'
+$focusedBundleBefore=Sha256 'electron/preload-libmpv-shared.generated.cjs'
+$dllBefore=Sha256 'electron/libmpv-2.dll'
+if($dllBefore-ne $env:QUALIFIED_DLL_SHA256){throw 'R40 preflight R39 DLL baseline mismatch'}
+
+foreach($script in $scriptSupport | Where-Object {$_ -like '*.cjs'}){
+  node --check (Join-Path 'scripts' $script)
+  Assert-Exit "R40 syntax $script"
+}
+foreach($script in @('electron/r40-subtitle-overlay-preload.cjs','electron/r40-subtitle-overlay-window.cjs')){
+  node --check $script
+  Assert-Exit "R40 syntax $script"
+}
+
+node scripts/r40-callback-pacing-fix.cjs
+Assert-Exit 'R40 callback pacing transform'
+node scripts/r40-single-dom-subtitle-overlay-fix.cjs
+Assert-Exit 'R40 single DOM subtitle transform'
+node scripts/r40-rebundle-renderer.cjs
+Assert-Exit 'R40 renderer rebundle'
+node scripts/r40-finalize-identity.cjs
+Assert-Exit 'R40 identity'
+
+# Parse all changed JavaScript before native compilation.
+foreach($script in @(
+  'electron/main.cjs',
+  'electron/preload.cjs',
+  'electron/libmpv-shared-main.cjs',
+  'src/libmpv-shared-entry.js',
+  'src/libmpv-shared.generated.js',
+  'electron/r40-subtitle-overlay-preload.cjs',
+  'electron/r40-subtitle-overlay-window.cjs'
+)){
+  node --check $script
+  Assert-Exit "R40 post-transform syntax $script"
+}
+
+$native=Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
+$bridge=Get-Content 'electron/libmpv-shared-main.cjs' -Raw
+$entry=Get-Content 'src/libmpv-shared-entry.js' -Raw
+$renderer=Get-Content 'src/libmpv-shared.generated.js' -Raw
+$main=Get-Content 'electron/main.cjs' -Raw
+$preload=Get-Content 'electron/preload.cjs' -Raw
+foreach($marker in @('LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER','producerWaitingForSlot','producerSignalWakeups','producerWatchdogWakeups','producerReleaseWakeups')){if(-not $native.Contains($marker)){throw "R40 native marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_FRESH_FRAME_WAKE_GATING','r40FreshFrameSignals','r40StaleFrameSignals','r40NoFrameTimerTicks','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')){if(-not $bridge.Contains($marker)){throw "R40 bridge marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync')){if(-not $entry.Contains($marker)-or-not $renderer.Contains($marker)){throw "R40 renderer marker missing source/bundle: $marker"}}
+foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','R40SubtitleOverlayWindowController',"player:native-subtitle-overlay")){if(-not $main.Contains($marker)){throw "R40 main overlay marker missing: $marker"}}
+foreach($marker in @('setNativeSubtitleOverlay','nativeSubtitleOverlayState')){if(-not $preload.Contains($marker)){throw "R40 preload overlay marker missing: $marker"}}
+if($native.Contains('std::chrono::milliseconds(6)')){throw 'R40 native 6ms producer polling survived'}
+if($bridge.Contains('focus-staged-gpu-copy')-or$bridge.Contains('copyTextureToTexture')){throw 'R40 resurrected forbidden R28 staged renderer path'}
+if($native.Contains('--disable-direct-composition')){throw 'R40 resurrected forbidden R25 Direct Composition disable'}
+if((Sha256 'electron/updater.cjs')-ne $updaterBefore){throw 'R40 changed protected R38 updater'}
+if((Sha256 'electron/libmpv-shared-preload.cjs')-ne $focusedPreloadBefore-or(Sha256 'electron/preload-libmpv-shared.generated.cjs')-ne $focusedBundleBefore){throw 'R40 changed protected focused direct-WebGPU preload bytes'}
+if((Sha256 'electron/libmpv-2.dll')-ne $dllBefore){throw 'R40 changed qualified libmpv DLL'}
+
+# R40 changes native producer synchronization, so compile it for the same Electron ABI.
+& node_modules/.bin/node-gyp.cmd rebuild --directory native/libmpv-d3d11-bridge --target=$env:ELECTRON_VERSION --dist-url=https://electronjs.org/headers
+Assert-Exit 'R40 native addon compile'
+$rebuilt='native/libmpv-d3d11-bridge/build/Release/lilac_libmpv_player_bridge.node'
+if(-not(Test-Path $rebuilt)){throw 'R40 compiled addon missing'}
+Copy-Item $rebuilt 'electron/lilac-libmpv-player-bridge.node' -Force
+if((Sha256 'electron/libmpv-2.dll')-ne $dllBefore){throw 'R40 DLL drifted after native compile'}
+
+$pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
+if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled releaseWake=backpressure-only jsWake=frameId-gated subtitle=single-DOM-computed-style overlay=transparent-owned-window r33=preserved r37=preserved r38Updater=byte-identical r39PiP=preserved focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
