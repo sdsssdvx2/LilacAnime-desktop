@@ -2,7 +2,8 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const root = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '..');
+const rootArg = process.argv[2] || '';
+const root = rootArg ? path.resolve(rootArg) : path.resolve(__dirname, '..');
 const read = rel => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
 const readOptional = rel => { const p = path.join(root, rel); return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n') : ''; };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
@@ -16,13 +17,18 @@ const main = read('electron/main.cjs');
 const preload = read('electron/preload.cjs');
 const mini = read('electron/miniplayer-window.cjs');
 const native = readOptional('native/libmpv-d3d11-bridge/player_addon.cc');
+const packagedMode = Boolean(rootArg) && !pkg.build;
 
 assert(pkg.version === '0.5.54-libmpv-r3f.rc19', `unexpected R39 version: ${pkg.version}`);
 assert(pkg.lilacCustomTag === 'libmpv-r2k-v0.5.54-r39', `unexpected R39 tag: ${pkg.lilacCustomTag}`);
-assert(pkg.build?.win?.artifactName === 'LilacAnime-Libmpv-R39-Setup.${ext}', 'unexpected R39 artifact name');
-assert(pkg.build?.appId === 'com.lilac.anime.desktop.libmpvr2jcandidate', `stable appId drifted: ${pkg.build?.appId}`);
-assert(pkg.build?.productName === 'LilacAnime Libmpv', `stable productName drifted: ${pkg.build?.productName}`);
-assert(pkg.build?.win?.executableName === 'LilacAnime-Libmpv-R2K', `stable executable drifted: ${pkg.build?.win?.executableName}`);
+if (pkg.build) {
+  assert(pkg.build?.win?.artifactName === 'LilacAnime-Libmpv-R39-Setup.${ext}', 'unexpected R39 artifact name');
+  assert(pkg.build?.appId === 'com.lilac.anime.desktop.libmpvr2jcandidate', `stable appId drifted: ${pkg.build?.appId}`);
+  assert(pkg.build?.productName === 'LilacAnime Libmpv', `stable productName drifted: ${pkg.build?.productName}`);
+  assert(pkg.build?.win?.executableName === 'LilacAnime-Libmpv-R2K', `stable executable drifted: ${pkg.build?.win?.executableName}`);
+} else {
+  assert(packagedMode, 'source package.json unexpectedly lost build metadata');
+}
 
 for (const marker of ['LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','LILAC_R37_NO_STALE_UI_HOLES','LILAC_R37_NO_REGION_CHURN']) assert(bridge.includes(marker), `R37 bridge invariant missing: ${marker}`);
 if (native) assert(native.includes('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF'), 'R37 native freeze invariant missing');
@@ -70,4 +76,4 @@ assert(preload.includes('setMiniPlayer:'), 'mini-player action preload bridge mi
 assert(main.includes('LILAC_R38_UPDATE_ACTIVITY_CHECK'), 'R38 updater activity lifecycle marker missing');
 assert(main.includes("r38CheckUpdaterOnActivity('window-focus')"), 'R38 focus updater hook missing');
 
-console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
+console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} mode=${packagedMode ? 'packaged-app' : 'source-tree'} buildMetadata=${pkg.build ? 'present' : 'electron-builder-stripped'} nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
