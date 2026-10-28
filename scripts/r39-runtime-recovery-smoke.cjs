@@ -63,9 +63,14 @@ for (const marker of ["subtitleSize') || 100", "subtitlePosition') || 12", "vttO
 assert(nativeSub.includes("localStorage.getItem('vttBold') === 'false' ? 400 : 700"), 'native default weight does not match DOM bold policy');
 assert(dom.includes('browserVisualBottom=clamp(position-1.25,0,48)'), 'DOM visual baseline marker missing');
 assert(nativeSub.includes('100 - (position - 1.25)'), 'native vertical baseline does not mirror DOM baseline');
-assert(nativeSub.includes('LILAC_R39_NATIVE_SUBTITLE_PARITY'), 'subtitle parity marker missing');
-for (const marker of ['LILAC_R39_NATIVE_SUBTITLE_PARITY', 'miniPlayerState', 'lilac-mpv-video']) assert(generatedRenderer.includes(marker), `generated renderer missing R39 runtime marker: ${marker}`);
-assert(generatedRenderer.includes('100 - (position - 1.25)'), 'generated renderer missing native subtitle visual-baseline parity');
+assert(nativeSub.includes('LILAC_R39_NATIVE_SUBTITLE_PARITY'), 'subtitle parity source marker missing');
+for (const marker of ['miniPlayerState', 'lilac-mpv-video']) assert(generatedRenderer.includes(marker), `generated renderer missing R39 runtime marker: ${marker}`);
+for (const [pattern, label] of [
+  [/localStorage\.getItem\(["']subtitleSize["']\)\s*\|\|\s*100/, 'native subtitle size default 100'],
+  [/localStorage\.getItem\(["']subtitlePosition["']\)\s*\|\|\s*12/, 'native subtitle position default 12'],
+  [/localStorage\.getItem\(["']vttOutline["']\)\s*\?\?\s*2/, 'native subtitle outline default 2'],
+  [/["']sub-pos["']\s*,\s*clamp\(100\s*-\s*\([^\r\n]*?\s*-\s*1\.25\)/, 'native subtitle visual-baseline parity']
+]) assert(pattern.test(generatedRenderer), `generated renderer missing semantic R39 code: ${label}`);
 
 for (const [source, marker, label] of [
   [player, 'setLibmpvMiniPlayer', 'renderer mini-player'], [player, '맨 위 고정을 확인하지 못했습니다', 'renderer topmost verification'],
@@ -79,4 +84,4 @@ assert(preload.includes('setMiniPlayer:'), 'mini-player action preload bridge mi
 assert(main.includes('LILAC_R38_UPDATE_ACTIVITY_CHECK'), 'R38 updater activity lifecycle marker missing');
 assert(main.includes("r38CheckUpdaterOnActivity('window-focus')"), 'R38 focus updater hook missing');
 
-console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} mode=${packagedMode ? 'packaged-app' : 'source-tree'} buildMetadata=${pkg.build ? 'present' : 'electron-builder-stripped'} generatedRenderer=R39-verified nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
+console.log(`R39_RUNTIME_RECOVERY_SMOKE_OK root=${root} mode=${packagedMode ? 'packaged-app' : 'source-tree'} buildMetadata=${pkg.build ? 'present' : 'electron-builder-stripped'} generatedRenderer=R39-semantic-code-verified nativeSource=${native ? 'present' : 'packaged-unpacked-binary-only'} identity=rc19/r39 blackFlash=R37-preserved focused=direct-webgpu refocus=native-only-reanchor gaps=active-vs-interaction subtitle=DOM/native-parity pip=end-to-end+verified-topmost updater=R38-preserved`);
