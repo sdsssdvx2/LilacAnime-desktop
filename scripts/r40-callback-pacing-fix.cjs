@@ -36,11 +36,12 @@ assert(!bridge.includes('LILAC_R40_FRESH_FRAME_WAKE_GATING'), 'R40 bridge pacing
 // ---------------------------------------------------------------------------
 // Native producer: raw mpv render callbacks are authoritative. R39 hardware
 // diagnostics showed 4022 worker wakeups for 2281 raw callbacks / 1701 frames.
-// releaseProducedFrame() woke the producer for every returned slot even when 23+
-// slots were already free, and the worker also woke every 6 ms as a polling
-// watchdog. Wake on slot release only if producer backpressure actually found no
-// free slot; otherwise wait for a real render callback. Keep a 250 ms recovery
-// watchdog so a lost callback cannot freeze playback.
+// R32 had already extended the watchdog from 6 ms to 250 ms, so the remaining
+// avoidable wake source is releaseProducedFrame(): it woke the producer for every
+// returned slot even when 23+ slots were already free. Wake on slot release only
+// if producer backpressure actually found no free slot; otherwise wait for the
+// real render callback. Keep R32's 250 ms recovery watchdog so a lost callback
+// cannot freeze playback.
 // ---------------------------------------------------------------------------
 native = once(native,
   '  std::atomic<bool> producerStop{false};\n  uint32_t producerWidth = 0;',
@@ -59,9 +60,9 @@ native = once(native,
   `  player->producerStop.store(false, std::memory_order_release);\n  player->producerWaitingForSlot.store(false, std::memory_order_release);\n  player->producerWakePending.store(true, std::memory_order_release);`,
   'reset producer slot wait');
 
-const oldWait = `        player->producerCv.wait_for(lock, std::chrono::milliseconds(6), [player]() {\n          return player->producerStop.load(std::memory_order_acquire) ||\n            player->producerWakePending.load(std::memory_order_acquire);\n        });\n        if (player->producerStop.load(std::memory_order_acquire)) break;\n        player->producerWakePending.store(false, std::memory_order_release);\n        player->producerWakeups += 1;`;
-const newWait = `        const bool r40Signaled = player->producerCv.wait_for(\n          lock, std::chrono::milliseconds(250), [player]() {\n            return player->producerStop.load(std::memory_order_acquire) ||\n              player->producerWakePending.load(std::memory_order_acquire);\n          });\n        if (player->producerStop.load(std::memory_order_acquire)) break;\n        const bool r40HadPending = player->producerWakePending.exchange(false, std::memory_order_acq_rel);\n        player->producerWakeups += 1;\n        if (r40Signaled && r40HadPending) player->producerSignalWakeups += 1;\n        else player->producerWatchdogWakeups += 1;`;
-native = once(native, oldWait, newWait, 'replace 6ms producer poll with callback+250ms watchdog');
+const oldWait = `        player->producerCv.wait_for(lock, std::chrono::milliseconds(250), [player]() { // LILAC_R32_NATIVE_CALLBACK_WATCHDOG\n          return player->producerStop.load(std::memory_order_acquire) ||\n            player->producerWakePending.load(std::memory_order_acquire);\n        });\n        if (player->producerStop.load(std::memory_order_acquire)) break;\n        player->producerWakePending.store(false, std::memory_order_release);\n        player->producerWakeups += 1;`;
+const newWait = `        const bool r40Signaled = player->producerCv.wait_for(\n          lock, std::chrono::milliseconds(250), [player]() { // LILAC_R32_NATIVE_CALLBACK_WATCHDOG\n            return player->producerStop.load(std::memory_order_acquire) ||\n              player->producerWakePending.load(std::memory_order_acquire);\n          });\n        if (player->producerStop.load(std::memory_order_acquire)) break;\n        const bool r40HadPending = player->producerWakePending.exchange(false, std::memory_order_acq_rel);\n        player->producerWakeups += 1;\n        if (r40Signaled && r40HadPending) player->producerSignalWakeups += 1;\n        else player->producerWatchdogWakeups += 1;`;
+native = once(native, oldWait, newWait, 'instrument authoritative R39 250ms callback watchdog');
 
 native = once(native,
   `          if (!slot) {\n            player->producerBackpressure += 1;\n            break;\n          }`,
@@ -71,7 +72,6 @@ native = once(native,
 const oldReleaseWake = `  player->producerWakePending.store(true, std::memory_order_release);\n  player->producerCv.notify_one();\n  return BoolValue(env, true);`;
 const releaseWakeMatches = native.split(oldReleaseWake).length - 1;
 if (releaseWakeMatches < 1) throw new Error('producer release wake anchor missing');
-// Apply only inside ReleaseProducedFrame; resize intentionally still wakes.
 const releaseStart = native.indexOf('napi_value ReleaseProducedFrame(');
 const releaseEnd = native.indexOf('napi_value FrameProducerStats(', releaseStart);
 if (releaseStart < 0 || releaseEnd <= releaseStart) throw new Error('ReleaseProducedFrame boundary missing');
@@ -81,8 +81,6 @@ releaseBlock = once(releaseBlock, oldReleaseWake,
   'wake producer on release only after backpressure');
 native = native.slice(0, releaseStart) + releaseBlock + native.slice(releaseEnd);
 
-// Carry the exact queued frame id through the TSFN. This lets main-process JS
-// reject a callback that arrives after a watchdog already drained that frame.
 native = once(native,
   `void CallUpdateJs(napi_env env, napi_value jsCallback, void*, void*) {\n  if (!env || !jsCallback) return;\n  napi_value undefined;\n  if (napi_get_undefined(env, &undefined) != napi_ok) return;\n  napi_call_function(env, undefined, jsCallback, 0, nullptr, nullptr);\n}`,
   `void CallUpdateJs(napi_env env, napi_value jsCallback, void*, void* data) {\n  std::unique_ptr<uint64_t> r40FrameId(static_cast<uint64_t*>(data));\n  if (!env || !jsCallback) return;\n  napi_value undefined;\n  if (napi_get_undefined(env, &undefined) != napi_ok) return;\n  if (r40FrameId) {\n    napi_value arg;\n    if (napi_create_double(env, static_cast<double>(*r40FrameId), &arg) == napi_ok) {\n      napi_call_function(env, undefined, jsCallback, 1, &arg, nullptr);\n      return;\n    }\n  }\n  napi_call_function(env, undefined, jsCallback, 0, nullptr, nullptr);\n}`,
@@ -97,14 +95,6 @@ native = once(native,
   `  Set(env, out, "workerWakeups", DoubleValue(env, static_cast<double>(player->producerWakeups)));\n  Set(env, out, "signalWakeups", DoubleValue(env, static_cast<double>(player->producerSignalWakeups)));\n  Set(env, out, "watchdogWakeups", DoubleValue(env, static_cast<double>(player->producerWatchdogWakeups)));\n  Set(env, out, "releaseWakeups", DoubleValue(env, static_cast<double>(player->producerReleaseWakeups)));\n  Set(env, out, "waitingForSlot", BoolValue(env, player->producerWaitingForSlot.load(std::memory_order_acquire)));\n  Set(env, out, "renderCalls", DoubleValue(env, static_cast<double>(player->producerRenderCalls)));`,
   'producer wake diagnostics export');
 
-// ---------------------------------------------------------------------------
-// JS drain: a watchdog can beat the queued frame's TSFN to the event loop. R3B's
-// boolean pending wake then pumps the same already-drained frame a second time and
-// records an empty poll. Gate callbacks with their frame id and only retain a
-// pending wake if it names a frame newer than the newest frame already drained.
-// Also tag every pump by reason so the next diagnostic can prove which path is
-// empty instead of inferring it from aggregate counters.
-// ---------------------------------------------------------------------------
 bridge = once(bridge,
   '  let nativeWakePending = false;\n  let frameProducerStarted = false;',
   `  let nativeWakePending = false;\n  let nativeWakePendingFrameId = 0; // LILAC_R40_FRESH_FRAME_WAKE_GATING\n  let frameProducerStarted = false;`,
@@ -117,7 +107,6 @@ bridge = once(bridge,
 const wakeReplacement = `  function wakePumpFromNative(signaledFrameId = 0) {\n    metrics.nativeUpdateSignals += 1;\n    const signalFrameId = Math.max(0, Number(signaledFrameId) || 0);\n    if (signalFrameId > 0) {\n      metrics.r40SignalFrameIdMax = Math.max(metrics.r40SignalFrameIdMax, signalFrameId);\n      if (signalFrameId <= Number(metrics.lastFrameId || 0)) {\n        metrics.r40StaleFrameSignals += 1;\n        return;\n      }\n      metrics.r40FreshFrameSignals += 1;\n    }\n    if (!active || disposed || !addon || playerId == null) return;\n    if (pumpTimer) {\n      clearTimeout(pumpTimer);\n      pumpTimer = null;\n      pumpTimerDuePerfAt = 0;\n    }\n    if (pumpRunning) {\n      nativeWakePending = true;\n      nativeWakePendingFrameId = Math.max(nativeWakePendingFrameId, signalFrameId);\n      return;\n    }\n    nativeWakePending = false;\n    nativeWakePendingFrameId = 0;\n    metrics.nativeUpdateWakeups += 1;\n    void pump('native-signal');\n  }\n\n`;
 bridge = replaceFunction(bridge, '  function wakePumpFromNative() {', '  function schedulePump(', wakeReplacement, 'fresh-frame wake function');
 
-// Tag timer-driven drains. Only the schedulePump body is changed.
 const scheduleStart = bridge.indexOf('  function schedulePump(');
 const scheduleEnd = bridge.indexOf('\n\n  function ', scheduleStart + 1);
 if (scheduleStart < 0 || scheduleEnd <= scheduleStart) throw new Error('schedulePump boundary missing');
