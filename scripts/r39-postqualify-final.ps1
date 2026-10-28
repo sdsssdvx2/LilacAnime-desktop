@@ -32,6 +32,10 @@ node --check scripts/r39-final-subtitle-smoke.cjs
 Assert-Exit 'R39 final subtitle smoke syntax'
 node --check scripts/r39-final-smoke.cjs
 Assert-Exit 'R39 final integrated smoke syntax'
+node --check scripts/r39-long-blur-refocus-runtime-smoke.cjs
+Assert-Exit 'R39 long-blur refocus runtime smoke syntax'
+node --check scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs
+Assert-Exit 'R39 real native topmost runtime smoke syntax'
 
 node scripts/r39-subtitle-r2v-calibration-correction.cjs
 Assert-Exit 'R39 R2V subtitle correction'
@@ -92,7 +96,10 @@ Copy-Item $rebuilt 'electron/lilac-libmpv-player-bridge.node' -Force
 $r39AddonSha = Sha256 'electron/lilac-libmpv-player-bridge.node'
 if ((Sha256 'electron/libmpv-2.dll') -ne $env:QUALIFIED_DLL_SHA256) { throw 'R39 final DLL drift after native rebuild' }
 
-# Repeat strongest existing native/focus runtime evidence only after ALL final changes.
+# Repeat strongest existing native/focus runtime evidence only after ALL final changes,
+# then add the two regressions that directly model the real-user R38 failures:
+#   1) long native-only blur followed by Chromium refocus/cadence recovery;
+#   2) real Windows BrowserWindow + R33 owned-popup topmost visibility and demotion.
 $env:LILAC_LIBMPV_PLAYER_ADDON = (Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
 $env:LILAC_LIBMPV_DLL = (Resolve-Path 'electron/libmpv-2.dll').Path
 try {
@@ -102,12 +109,16 @@ try {
   Assert-Exit 'R39 final R37 native handoff freeze smoke'
   node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
   Assert-Exit 'R39 final R37 raw shared-texture E2E'
+  & node_modules/.bin/electron.cmd scripts/r39-long-blur-refocus-runtime-smoke.cjs
+  Assert-Exit 'R39 final long-blur refocus runtime smoke'
+  & node_modules/.bin/electron.cmd scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs
+  Assert-Exit 'R39 final real native topmost runtime smoke'
 }
 finally {
   Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
   Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
 }
-Write-Host 'R39_FINAL_RUNTIME_SMOKES_OK r33VisibleAutonomy=1 r37NativeFreeze=1 r37RawSharedTextureE2E=3cycles refocusForceWake=source-proven miniplayerStateMachine=1'
+Write-Host 'R39_FINAL_RUNTIME_SMOKES_OK r33VisibleAutonomy=1 r37NativeFreeze=1 r37RawSharedTextureE2E=3cycles longBlurRefocus=3cyclesx4000ms firstFocusedFrameMax=300ms sustainedFrames=12/900ms maxFocusedDispatchGap=300ms realNativeTopmost=desktopCapture bidirectionalTopmost=1'
 
 # Repackage only after final runtime qualification.
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
@@ -152,10 +163,11 @@ $packedAddon = 'dist/win-unpacked/resources/app.asar.unpacked/electron/lilac-lib
 $packedDll = 'dist/win-unpacked/resources/app.asar.unpacked/electron/libmpv-2.dll'
 if (-not (Test-Path $packedAddon) -or (Sha256 $packedAddon) -ne $r39AddonSha) { throw 'R39 final packaged native addon hash mismatch' }
 if (-not (Test-Path $packedDll) -or (Sha256 $packedDll) -ne $env:QUALIFIED_DLL_SHA256) { throw 'R39 final packaged libmpv DLL mismatch' }
-Write-Host "R39_FINAL_PACKAGED_OK updater=R38-byte-identical focused=direct-webgpu-byte-identical rendererBundle=R39-refreshed r37Handoff=preserved nativeAddon=$r39AddonSha dll=$env:QUALIFIED_DLL_SHA256"
+Write-Host "R39_FINAL_PACKAGED_OK updater=R38-byte-identical focused=direct-webgpu-byte-identical rendererBundle=R39-refreshed r37Handoff=preserved nativeAddon=$r39AddonSha dll=$env:QUALIFIED_DLL_SHA256 longBlurRefocus=runtime-qualified realNativeTopmost=runtime-qualified"
 
 # Finalize manifest from the base R39 manifest, replacing the intentionally temporary
-# subtitle proof with the authoritative R2V-calibrated final proof.
+# subtitle proof with the authoritative R2V-calibrated final proof and recording the
+# two real Windows/runtime regression qualifications.
 $hash = Sha256 $installer
 $size = (Get-Item $installer).Length
 $manifest.version = $env:APP_VERSION
@@ -174,6 +186,10 @@ $manifest | Add-Member -NotePropertyName r39RendererBundle -NotePropertyValue 'r
 $manifest | Add-Member -NotePropertyName r39BlackFlashInvariant -NotePropertyValue 'R37-full-owned-popup-no-ui-holes-preserved' -Force
 $manifest | Add-Member -NotePropertyName r39UpdaterInvariant -NotePropertyValue 'R38-updater-byte-identical' -Force
 $manifest | Add-Member -NotePropertyName r39FocusedPresenterInvariant -NotePropertyValue 'R38-shared-preload-byte-identical-direct-webgpu' -Force
+$manifest | Add-Member -NotePropertyName r39LongBlurRefocusRuntimeQualified -NotePropertyValue $true -Force
+$manifest | Add-Member -NotePropertyName r39LongBlurRefocusRuntime -NotePropertyValue 'real-product-bridge+3cycles+blur4000ms+first-focused-frame<=300ms+12frames<=900ms+focused-dispatch-gap<300ms' -Force
+$manifest | Add-Member -NotePropertyName r39RealNativeTopmostRuntimeQualified -NotePropertyValue $true -Force
+$manifest | Add-Member -NotePropertyName r39RealNativeTopmostRuntime -NotePropertyValue 'real-browserwindow+real-r33-owned-popup+desktop-capture-visible-above-rival+HWND_TOPMOST/HWND_NOTOPMOST-bidirectional' -Force
 [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 30) + [Environment]::NewLine), $utf8NoBom)
 
-Write-Host "R39_FINAL_BUILD_OK sha256=$hash size=$size addon=$r39AddonSha refocus=phase-reanchor+forced-wake pip=direct+fallback+bidirectional-native-topmost subtitle=R2V-calibrated rendererBundle=refreshed updater=R38-preserved focused=direct-webgpu"
+Write-Host "R39_FINAL_BUILD_OK sha256=$hash size=$size addon=$r39AddonSha refocus=phase-reanchor+forced-wake+long-blur-runtime pip=direct+fallback+bidirectional-native-topmost+desktop-capture-runtime subtitle=R2V-calibrated rendererBundle=refreshed updater=R38-preserved focused=direct-webgpu"
