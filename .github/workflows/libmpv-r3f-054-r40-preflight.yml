@@ -74,7 +74,13 @@ jobs:
             node --check $script
             if($LASTEXITCODE-ne 0){throw "R40 preflight syntax failed $script"}
           }
-          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked-before-r39-reconstruction'
+          $compatProbe=Join-Path $env:RUNNER_TEMP 'r40-single-dom-subtitle-overlay-fix.compat-probe.cjs'
+          Copy-Item 'scripts/r40-single-dom-subtitle-overlay-fix.cjs' $compatProbe -Force
+          node scripts/r40-subtitle-anchor-compat.cjs $compatProbe
+          if($LASTEXITCODE-ne 0){throw 'R40 subtitle transform compat probe failed'}
+          node --check $compatProbe
+          if($LASTEXITCODE-ne 0){throw 'R40 subtitle compat-probed transform syntax failed'}
+          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction'
       - name: Reconstruct exact R39 final6 and compile R40
         shell: powershell
         env:
