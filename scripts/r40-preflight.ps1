@@ -106,7 +106,10 @@ $main=Get-Content 'electron/main.cjs' -Raw
 $preload=Get-Content 'electron/preload.cjs' -Raw
 foreach($marker in @('LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER','producerWaitingForSlot','producerSignalWakeups','producerWatchdogWakeups','producerReleaseWakeups')){if(-not $native.Contains($marker)){throw "R40 native marker missing: $marker"}}
 foreach($marker in @('LILAC_R40_FRESH_FRAME_WAKE_GATING','r40FreshFrameSignals','r40StaleFrameSignals','r40NoFrameTimerTicks','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')){if(-not $bridge.Contains($marker)){throw "R40 bridge marker missing: $marker"}}
-foreach($marker in @('LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync')){if(-not $entry.Contains($marker)-or-not $renderer.Contains($marker)){throw "R40 renderer marker missing source/bundle: $marker"}}
+# Source-only comments prove the transform ran; bundled output is checked against
+# executable symbols/strings because esbuild may strip comments by design.
+foreach($marker in @('LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync')){if(-not $entry.Contains($marker)){throw "R40 renderer source marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync','setNativeSubtitleOverlay','getBoundingClientRect')){if(-not $renderer.Contains($marker)){throw "R40 renderer bundle semantic marker missing: $marker"}}
 foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','R40SubtitleOverlayWindowController',"player:native-subtitle-overlay")){if(-not $main.Contains($marker)){throw "R40 main overlay marker missing: $marker"}}
 foreach($marker in @('setNativeSubtitleOverlay','nativeSubtitleOverlayState')){if(-not $preload.Contains($marker)){throw "R40 preload overlay marker missing: $marker"}}
 if($native.Contains('std::chrono::milliseconds(6)')){throw 'R40 native 6ms producer polling survived'}
