@@ -11,6 +11,7 @@ New-Item -ItemType Directory -Force -Path $stash | Out-Null
 $scriptSupport=@(
   'r40-callback-pacing-fix.cjs',
   'r40-callback-pacing-runtime-smoke.cjs',
+  'r40-native-subtitle-overlay-runtime-smoke.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
   'r40-subtitle-anchor-compat.cjs',
   'r40-run-electron-gate.cjs',
@@ -130,6 +131,8 @@ $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
 try{
   node scripts/r40-run-electron-gate.cjs scripts/r40-callback-pacing-runtime-smoke.cjs R40_CALLBACK_PACING_RUNTIME_OK 180000
   Assert-Exit 'R40 callback pacing runtime hard gate'
+  node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
+  Assert-Exit 'R40 native subtitle overlay raw-HWND pixel hard gate'
   node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
   Assert-Exit 'R40 protected R37 raw shared-texture E2E'
   node scripts/r40-run-electron-gate.cjs scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs R39_MINIPLAYER_NATIVE_TOPMOST_RUNTIME_OK 150000
@@ -142,4 +145,4 @@ finally{
 
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
-Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only jsWake=frameId-gated subtitle=single-DOM-computed-style overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only jsWake=frameId-gated subtitle=single-DOM-computed-style+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
