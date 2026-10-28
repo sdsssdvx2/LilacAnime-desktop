@@ -23,12 +23,14 @@ $protected = [ordered]@{
 }
 $rendererBefore = Sha256 'src/libmpv-shared.generated.js'
 
-foreach ($script in @('scripts/r39-runtime-recovery-fix.cjs','scripts/r39-rebuild-renderer-bundle.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-run-e2e-with-timeout.cjs','scripts/r39-miniplayer-electron-smoke.cjs')) {
+foreach ($script in @('scripts/r39-runtime-recovery-fix.cjs','scripts/r39-miniplayer-transition-hardening.cjs','scripts/r39-rebuild-renderer-bundle.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-run-e2e-with-timeout.cjs','scripts/r39-miniplayer-electron-smoke.cjs')) {
   node --check $script
   Assert-Exit "syntax $script"
 }
 node scripts/r39-runtime-recovery-fix.cjs
 Assert-Exit 'R39 runtime recovery transform'
+node scripts/r39-miniplayer-transition-hardening.cjs
+Assert-Exit 'R39 mini-player fullscreen transition hardening'
 node scripts/r39-rebuild-renderer-bundle.cjs
 Assert-Exit 'R39 runtime renderer bundle rebuild'
 
@@ -38,6 +40,7 @@ foreach ($file in @('electron/libmpv-shared-main.cjs','src/libmpv-shared-entry.j
 }
 node scripts/r39-runtime-recovery-smoke.cjs
 Assert-Exit 'R39 source recovery smoke'
+if (-not (Select-String -LiteralPath 'electron/miniplayer-window.cjs' -SimpleMatch 'LILAC_R39_MINIPLAYER_BOUNDS_SETTLE' -Quiet)) { throw 'R39 mini-player bounds settle marker missing after transform' }
 $rendererAfter = Sha256 'src/libmpv-shared.generated.js'
 if ($rendererAfter -eq $rendererBefore) { throw 'R39 renderer bundle did not change after entry modifications' }
 Write-Host "R39_RENDERER_BUNDLE_HASH_OK before=$rendererBefore after=$rendererAfter"
@@ -49,9 +52,6 @@ if ($pkg.version -ne $env:APP_VERSION -or $pkg.lilacCustomTag -ne $env:RELEASE_T
   throw 'R39 stable package/update identity gate failed'
 }
 
-# R39 deliberately changes the main bridge/renderer entry+bundle/player/window controller.
-# The native producer, focused WebGPU preload, libmpv DLL, updater implementation,
-# and desktop-state persistence implementation must remain byte-identical to R38.
 if ((Sha256 'electron/libmpv-shared-preload.cjs') -ne $protected.sharedPreload -or
     (Sha256 'electron/preload-libmpv-shared.generated.cjs') -ne $protected.sharedPreloadBundle -or
     (Sha256 'native/libmpv-d3d11-bridge/player_addon.cc') -ne $protected.nativeSource -or
@@ -65,7 +65,6 @@ Write-Host "R39_PROTECTED_BYTES_OK sharedPreload=$($protected.sharedPreload) add
 
 node --test tests/player-interactions.test.cjs tests/desktop-state.test.cjs
 Assert-Exit 'R39 player/desktop-state unit tests'
-
 node scripts/r38-updater-lifecycle-smoke.cjs
 Assert-Exit 'R39 inherited actual custom updater lifecycle smoke'
 
@@ -89,7 +88,7 @@ finally {
 
 & node_modules/.bin/electron.cmd scripts/r39-miniplayer-electron-smoke.cjs
 Assert-Exit 'R39 real Electron mini-player topmost smoke'
-Write-Host 'R39_RUNTIME_SMOKES_OK r37BlackFlashRegression=1 r37RawE2E=1 r39RefocusE2E=4cycles+sustained-cadence miniPlayerRealWindows=2 win32Topmost=1 rendererBundle=rebuilt'
+Write-Host 'R39_RUNTIME_SMOKES_OK r37BlackFlashRegression=1 r37RawE2E=1 r39RefocusE2E=4cycles+sustained-cadence miniPlayerRealWindows=2 win32Topmost=1 miniPlayerBounds=settled+verified rendererBundle=rebuilt'
 
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64 --publish never
@@ -106,6 +105,7 @@ New-Item -ItemType Directory -Force -Path $asarCheck | Out-Null
 Assert-Exit 'R39 packaged asar extract'
 node scripts/r39-runtime-recovery-smoke.cjs $asarCheck
 Assert-Exit 'R39 packaged source recovery smoke'
+if (-not (Select-String -LiteralPath (Join-Path $asarCheck 'electron/miniplayer-window.cjs') -SimpleMatch 'LILAC_R39_MINIPLAYER_BOUNDS_SETTLE' -Quiet)) { throw 'packaged R39 mini-player bounds settle marker missing' }
 
 $shipPkg = Get-Content (Join-Path $asarCheck 'package.json') -Raw | ConvertFrom-Json
 if ($shipPkg.version -ne $env:APP_VERSION -or $shipPkg.lilacCustomTag -ne $env:RELEASE_TAG) { throw 'packaged R39 identity mismatch' }
@@ -123,7 +123,7 @@ $packedAddon = 'dist/win-unpacked/resources/app.asar.unpacked/electron/lilac-lib
 $packedDll = 'dist/win-unpacked/resources/app.asar.unpacked/electron/libmpv-2.dll'
 if (-not (Test-Path $packedAddon) -or (Sha256 $packedAddon) -ne $protected.addon) { throw 'packaged R39 native addon drifted' }
 if (-not (Test-Path $packedDll) -or (Sha256 $packedDll) -ne $protected.dll) { throw 'packaged R39 libmpv DLL drifted' }
-Write-Host "R39_PACKAGED_SOURCE_OK customTag=$($shipPkg.lilacCustomTag) rendererBundle=$packedRendererHash sharedPreload=$($protected.sharedPreload) addon=$($protected.addon) dll=$($protected.dll) native=R37-identical updater=R38-identical"
+Write-Host "R39_PACKAGED_SOURCE_OK customTag=$($shipPkg.lilacCustomTag) rendererBundle=$packedRendererHash sharedPreload=$($protected.sharedPreload) addon=$($protected.addon) dll=$($protected.dll) native=R37-identical updater=R38-identical miniPlayerBounds=settled"
 
 $hash = Sha256 $installer
 $size = (Get-Item $installer).Length
@@ -148,10 +148,10 @@ $manifest = [ordered]@{
   r39RefocusRecovery = 'native-only-to-focused-phase-reanchor+immediate-pump+sustained-gap-gate'
   r39GapDiagnostics = 'active-playback-vs-interaction-buffering'
   r39SubtitleParity = 'native-fallback-uses-DOM-size-position-outline-weight-baseline'
-  r39MiniPlayer = 'real-BrowserWindow+Win32-topmost-verified+runtime-diagnostics'
+  r39MiniPlayer = 'real-BrowserWindow+Win32-topmost-verified+fullscreen-bounds-settle'
   r39Updater = 'R38-activity-aware-lifecycle-preserved'
 }
 $manifestPath = Join-Path 'dist' $env:MANIFEST_NAME
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine), $utf8NoBom)
-Write-Host "R39_BUILD_OK sha256=$hash size=$size electron=$electronVersion rendererBundle=$rendererAfter refocus=4cycles+sustained-gap-gate pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
+Write-Host "R39_BUILD_OK sha256=$hash size=$size electron=$electronVersion rendererBundle=$rendererAfter refocus=4cycles+sustained-gap-gate pip=real-win32-topmost+bounds-settle subtitle=native-DOM-parity blackFlash=R37-preserved"
