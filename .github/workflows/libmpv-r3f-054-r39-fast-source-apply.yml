@@ -1,4 +1,4 @@
-name: LilacAnime Libmpv R39 fast source apply
+name: LilacAnime Libmpv R39 fast public R38 E2E
 
 on:
   push:
@@ -8,10 +8,12 @@ on:
       - scripts/r39-runtime-recovery-fix.cjs
       - scripts/r39-rebuild-renderer-bundle.cjs
       - scripts/r39-runtime-recovery-smoke.cjs
+      - scripts/r39-refocus-phase-e2e-smoke.cjs
+      - scripts/r39-miniplayer-electron-smoke.cjs
   workflow_dispatch:
 
 concurrency:
-  group: lilac-libmpv-r39-fast-source
+  group: lilac-libmpv-r39-fast-public-e2e
   cancel-in-progress: true
 
 permissions:
@@ -20,7 +22,7 @@ permissions:
 jobs:
   apply-public-r38:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,20 +47,33 @@ jobs:
           & 7z x -y "-o$nested" $appArchive.FullName|Out-Host;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           $asar=Get-ChildItem $nested -File -Filter app.asar -Recurse|Select-Object -First 1
           if(-not$asar){throw 'app.asar missing'}
-          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 esbuild
+          $addon=Get-ChildItem $nested -File -Filter lilac-libmpv-player-bridge.node -Recurse|Select-Object -First 1
+          $dll=Get-ChildItem $nested -File -Filter libmpv-2.dll -Recurse|Select-Object -First 1
+          if(-not$addon){throw 'published R38 native addon missing from unpacked installer'}
+          if(-not$dll){throw 'published R38 libmpv DLL missing from unpacked installer'}
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 esbuild electron@44.9.3 ffmpeg-static
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           & node_modules/.bin/asar.cmd extract $asar.FullName $root;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          "R39_FAST_ROOT=$root"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "R39_FAST_EXTRACT_OK root=$root"
+          $electron=(Resolve-Path 'node_modules/.bin/electron.cmd').Path
+          $nodeModules=(Resolve-Path 'node_modules').Path
+          @(
+            "R39_FAST_ROOT=$root",
+            "R39_FAST_ADDON=$($addon.FullName)",
+            "R39_FAST_DLL=$($dll.FullName)",
+            "R39_FAST_ELECTRON=$electron",
+            "R39_FAST_NODE_MODULES=$nodeModules"
+          )|ForEach-Object{$_|Out-File $env:GITHUB_ENV -Append -Encoding utf8}
+          Write-Host "R39_FAST_EXTRACT_OK root=$root addon=$($addon.FullName) dll=$($dll.FullName) publicSha=$sha"
       - name: Apply R39 transform and rebuild actual renderer bundle
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $r=$env:R39_FAST_ROOT
           New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
-          Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
-          Copy-Item scripts/r39-rebuild-renderer-bundle.cjs (Join-Path $r 'scripts/r39-rebuild-renderer-bundle.cjs') -Force
-          Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
-          $env:NODE_PATH=(Resolve-Path 'node_modules').Path
+          foreach($name in @('r39-runtime-recovery-fix.cjs','r39-rebuild-renderer-bundle.cjs','r39-runtime-recovery-smoke.cjs','r39-refocus-phase-e2e-smoke.cjs','r39-miniplayer-electron-smoke.cjs')){
+            Copy-Item (Join-Path 'scripts' $name) (Join-Path $r "scripts/$name") -Force
+          }
+          $env:NODE_PATH=$env:R39_FAST_NODE_MODULES
           '/* LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF fast-public-package-probe-only */' | Set-Content -LiteralPath (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Encoding UTF8
           $pkgPath=Join-Path $r 'package.json'
           $pkg=Get-Content $pkgPath -Raw|ConvertFrom-Json
@@ -78,4 +93,23 @@ jobs:
             node scripts/r39-runtime-recovery-smoke.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
-          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified smoke=pass metadata=probe-restored nativeSource=marker-only-probe fullQualification=real-source'
+          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified smoke=pass metadata=probe-restored nativeSource=marker-only-probe'
+      - name: Run real R39 refocus and topmost E2E on public R38 binaries
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:NODE_PATH=$env:R39_FAST_NODE_MODULES
+          $env:LILAC_LIBMPV_PLAYER_ADDON=$env:R39_FAST_ADDON
+          $env:LILAC_LIBMPV_DLL=$env:R39_FAST_DLL
+          Push-Location $env:R39_FAST_ROOT
+          try{
+            & $env:R39_FAST_ELECTRON scripts/r39-refocus-phase-e2e-smoke.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            & $env:R39_FAST_ELECTRON scripts/r39-miniplayer-electron-smoke.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }finally{
+            Pop-Location
+            Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
+            Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
+          }
+          Write-Host 'R39_FAST_PUBLIC_E2E_OK source=exact-public-r38 nativeAddon=published-r38 dll=published-r38 refocus=4cycles+sustained-focused-cadence topmost=real-browserwindows+win32'
