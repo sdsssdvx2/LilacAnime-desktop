@@ -10,7 +10,10 @@ Remove-Item $stash -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stash | Out-Null
 $scriptSupport=@(
   'r40-callback-pacing-fix.cjs',
+  'r40-callback-pacing-runtime-smoke.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
+  'r40-subtitle-anchor-compat.cjs',
+  'r40-run-electron-gate.cjs',
   'r40-rebundle-renderer.cjs',
   'r40-finalize-identity.cjs',
   'r40-preflight.ps1'
@@ -64,6 +67,13 @@ foreach($script in @('electron/r40-subtitle-overlay-preload.cjs','electron/r40-s
   Assert-Exit "R40 syntax $script"
 }
 
+# Normalize only the R40 transform script itself against exact final-R39 formatting.
+# Product files are still fail-closed and are not modified by this compatibility pass.
+node scripts/r40-subtitle-anchor-compat.cjs scripts/r40-single-dom-subtitle-overlay-fix.cjs
+Assert-Exit 'R40 subtitle transform anchor compat'
+node --check scripts/r40-single-dom-subtitle-overlay-fix.cjs
+Assert-Exit 'R40 subtitle transform syntax after compat'
+
 node scripts/r40-callback-pacing-fix.cjs
 Assert-Exit 'R40 callback pacing transform'
 node scripts/r40-single-dom-subtitle-overlay-fix.cjs
@@ -113,6 +123,23 @@ if(-not(Test-Path $rebuilt)){throw 'R40 compiled addon missing'}
 Copy-Item $rebuilt 'electron/lilac-libmpv-player-bridge.node' -Force
 if((Sha256 'electron/libmpv-2.dll')-ne $dllBefore){throw 'R40 DLL drifted after native compile'}
 
+# Hard runtime gates. The parent launcher requires an explicit success marker as
+# well as exit code 0, so an Electron app.quit() false-pass cannot qualify R40.
+$env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
+$env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
+try{
+  node scripts/r40-run-electron-gate.cjs scripts/r40-callback-pacing-runtime-smoke.cjs R40_CALLBACK_PACING_RUNTIME_OK 180000
+  Assert-Exit 'R40 callback pacing runtime hard gate'
+  node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
+  Assert-Exit 'R40 protected R37 raw shared-texture E2E'
+  node scripts/r40-run-electron-gate.cjs scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs R39_MINIPLAYER_NATIVE_TOPMOST_RUNTIME_OK 150000
+  Assert-Exit 'R40 protected R39 mini-player/native topmost hard gate'
+}
+finally{
+  Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
+  Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
+}
+
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
-Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled releaseWake=backpressure-only jsWake=frameId-gated subtitle=single-DOM-computed-style overlay=transparent-owned-window r33=preserved r37=preserved r38Updater=byte-identical r39PiP=preserved focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only jsWake=frameId-gated subtitle=single-DOM-computed-style overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
