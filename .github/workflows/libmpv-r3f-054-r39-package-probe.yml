@@ -1,0 +1,77 @@
+name: LilacAnime Libmpv R39 published R38 package probe
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-runtime-recovery]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r39-package-probe.yml
+      - scripts/r39-runtime-source-probe.cjs
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r39-package-probe
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  published-package-probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download and verify published R38 installer
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release download libmpv-r2k-v0.5.54-r38 --repo '${{ github.repository }}' --pattern 'LilacAnime-Libmpv-R38-Setup.exe' --dir $env:RUNNER_TEMP
+          $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R38-Setup.exe'
+          if(-not(Test-Path $installer)){throw 'published R38 installer missing'}
+          $sha=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne 'd94e818ceb7c4658a16075894d0583cb7e221f969de066d33ce06d03a94ab647'){throw "R38 installer hash mismatch: $sha"}
+          if((Get-Item $installer).Length -ne 182594634){throw "R38 installer size mismatch: $((Get-Item $installer).Length)"}
+          Write-Host "R39_PUBLISHED_R38_BYTES_OK sha256=$sha size=$((Get-Item $installer).Length)"
+
+      - name: Install published R38 into isolated probe directory
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R38-Setup.exe'
+          $probe=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
+          Remove-Item $probe -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $probe | Out-Null
+          $arg="/D=$probe"
+          $p=Start-Process -FilePath $installer -ArgumentList '/S','--updated',$arg -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "R38 silent install failed exit=$($p.ExitCode)"}
+          $exe=Join-Path $probe 'LilacAnime-Libmpv-R2K.exe'
+          $asar=Join-Path $probe 'resources/app.asar'
+          if(-not(Test-Path $exe)){throw "isolated R38 exe missing: $exe"}
+          if(-not(Test-Path $asar)){throw "isolated R38 app.asar missing: $asar"}
+          Write-Host "R39_PUBLISHED_R38_INSTALL_OK dir=$probe"
+
+      - name: Extract published app.asar and run final-source probe
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          $probe=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
+          $asar=Join-Path $probe 'resources/app.asar'
+          $extract=Join-Path $env:RUNNER_TEMP 'lilac-r38-asar'
+          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & node_modules/.bin/asar.cmd extract $asar $extract
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Copy-Item scripts/r39-runtime-source-probe.cjs (Join-Path $extract 'scripts/r39-runtime-source-probe.cjs') -Force
+          Push-Location $extract
+          try {
+            node scripts/r39-runtime-source-probe.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          } finally { Pop-Location }
+          Write-Host 'R39_PUBLISHED_PACKAGE_SOURCE_PROBE_OK source=public-r38-installer'
