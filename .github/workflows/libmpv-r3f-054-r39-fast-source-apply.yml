@@ -9,6 +9,7 @@ on:
       - scripts/r39-rebuild-renderer-bundle.cjs
       - scripts/r39-runtime-recovery-smoke.cjs
       - scripts/r39-refocus-phase-e2e-smoke.cjs
+      - scripts/r39-run-e2e-with-timeout.cjs
       - scripts/r39-miniplayer-electron-smoke.cjs
   workflow_dispatch:
 
@@ -70,7 +71,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $r=$env:R39_FAST_ROOT
           New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
-          foreach($name in @('r39-runtime-recovery-fix.cjs','r39-rebuild-renderer-bundle.cjs','r39-runtime-recovery-smoke.cjs','r39-refocus-phase-e2e-smoke.cjs','r39-miniplayer-electron-smoke.cjs')){
+          foreach($name in @('r39-runtime-recovery-fix.cjs','r39-rebuild-renderer-bundle.cjs','r39-runtime-recovery-smoke.cjs','r39-refocus-phase-e2e-smoke.cjs','r39-run-e2e-with-timeout.cjs','r39-miniplayer-electron-smoke.cjs')){
             Copy-Item (Join-Path 'scripts' $name) (Join-Path $r "scripts/$name") -Force
           }
           $env:NODE_PATH=$env:R39_FAST_NODE_MODULES
@@ -94,7 +95,18 @@ jobs:
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
           Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified smoke=pass metadata=probe-restored nativeSource=marker-only-probe'
-      - name: Run real R39 refocus and topmost E2E on public R38 binaries
+      - name: Run real R39 topmost E2E on public R38 app source
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:NODE_PATH=$env:R39_FAST_NODE_MODULES
+          Push-Location $env:R39_FAST_ROOT
+          try{
+            & $env:R39_FAST_ELECTRON scripts/r39-miniplayer-electron-smoke.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }finally{Pop-Location}
+          Write-Host 'R39_FAST_PUBLIC_TOPMOST_OK source=exact-public-r38 realBrowserWindows=2 win32Topmost=1'
+      - name: Run real R39 refocus E2E on public R38 native binaries
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -103,13 +115,11 @@ jobs:
           $env:LILAC_LIBMPV_DLL=$env:R39_FAST_DLL
           Push-Location $env:R39_FAST_ROOT
           try{
-            & $env:R39_FAST_ELECTRON scripts/r39-refocus-phase-e2e-smoke.cjs
-            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-            & $env:R39_FAST_ELECTRON scripts/r39-miniplayer-electron-smoke.cjs
+            node scripts/r39-run-e2e-with-timeout.cjs scripts/r39-refocus-phase-e2e-smoke.cjs 180000
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{
             Pop-Location
             Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
             Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
           }
-          Write-Host 'R39_FAST_PUBLIC_E2E_OK source=exact-public-r38 nativeAddon=published-r38 dll=published-r38 refocus=4cycles+sustained-focused-cadence topmost=real-browserwindows+win32'
+          Write-Host 'R39_FAST_PUBLIC_REFOCUS_OK source=exact-public-r38 nativeAddon=published-r38 dll=published-r38 webgpuFlags=qualified-R37 refocus=4cycles+sustained-focused-cadence'
