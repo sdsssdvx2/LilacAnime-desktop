@@ -6,23 +6,24 @@ const path = require('node:path');
 const target = path.resolve(process.argv[2] || path.join(__dirname, 'r40-single-dom-subtitle-overlay-fix.cjs'));
 let source = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
 
-function transformCallBoundsByLabel(text, label) {
+function transformCallBoundsByLabel(text, label, variable = 'main') {
   const quoted = `'${label}'`;
   const labelAt = text.indexOf(quoted);
   if (labelAt < 0 || text.indexOf(quoted, labelAt + quoted.length) >= 0) {
     throw new Error(`${label}: expected exactly one transform label`);
   }
-  const start = text.lastIndexOf('main = once(main,', labelAt);
-  if (start < 0) throw new Error(`${label}: main=once start not found`);
+  const startMarker = `${variable} = once(${variable},`;
+  const start = text.lastIndexOf(startMarker, labelAt);
+  if (start < 0) throw new Error(`${label}: ${variable}=once start not found`);
   const endMarker = ');';
   const endAt = text.indexOf(endMarker, labelAt + quoted.length);
   if (endAt < 0) throw new Error(`${label}: transform end not found`);
   return { start, end: endAt + endMarker.length };
 }
 
-function replaceTransformRange(firstLabel, lastLabel, replacement, label) {
-  const first = transformCallBoundsByLabel(source, firstLabel);
-  const last = transformCallBoundsByLabel(source, lastLabel);
+function replaceTransformRange(firstLabel, lastLabel, replacement, label, variable = 'main') {
+  const first = transformCallBoundsByLabel(source, firstLabel, variable);
+  const last = transformCallBoundsByLabel(source, lastLabel, variable);
   if (last.end <= first.start) throw new Error(`${label}: transform range invalid`);
   source = source.slice(0, first.start) + replacement + source.slice(last.end);
 }
@@ -55,6 +56,24 @@ const newIpc = [
   '}'
 ].join('\n');
 
+const newRendererState = [
+  '{',
+  "  const connectedMarker = '  connectedCallback() {';",
+  '  const connectedAt = entry.indexOf(connectedMarker);',
+  "  if (connectedAt < 0 || entry.indexOf(connectedMarker, connectedAt + connectedMarker.length) >= 0) throw new Error('R40 renderer connectedCallback boundary invalid');",
+  "  const constructorMarker = '  constructor() {';",
+  '  const constructorAt = entry.lastIndexOf(constructorMarker, connectedAt);',
+  "  if (constructorAt < 0) throw new Error('R40 renderer subtitle constructor not found');",
+  '  let constructorBlock = entry.slice(constructorAt, connectedAt);',
+  "  const stateNeedle = `    this._subtitleOverlayText = '';`;",
+  '  const stateCount = constructorBlock.split(stateNeedle).length - 1;',
+  "  if (stateCount !== 1) throw new Error(`R40 renderer overlay constructor state: expected exactly one anchor, found ${stateCount}`);",
+  "  const stateReplacement = `    this._subtitleOverlayText = '';\\n    this._r40SubtitleOverlayRevision = 0; // LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY\\n    this._r40SubtitleOverlaySignature = '';\\n    this._r40SubtitleOverlayQueued = false;\\n    this._r40SubtitleOverlayState = null;\\n    this._r40SubtitleFocusHandler = () => this._r40QueueSubtitleOverlaySync(true);\\n    this._r40SubtitleMutationObserver = new MutationObserver(() => this._r40QueueSubtitleOverlaySync());`;",
+  '  constructorBlock = constructorBlock.replace(stateNeedle, stateReplacement);',
+  '  entry = entry.slice(0, constructorAt) + constructorBlock + entry.slice(connectedAt);',
+  '}'
+].join('\n');
+
 replaceTransformRange(
   'R40 subtitle overlay owner lifecycle',
   'R40 subtitle overlay owner close',
@@ -67,11 +86,20 @@ replaceTransformRange(
   newIpc,
   'R40 IPC transform compat'
 );
+replaceTransformRange(
+  'R40 renderer overlay state',
+  'R40 renderer overlay state',
+  newRendererState,
+  'R40 renderer state transform compat',
+  'entry'
+);
 
 if (!source.includes('R40 subtitle overlay createWindow boundary invalid')) throw new Error('R40 structural lifecycle replacement missing');
 if (!source.includes('settingsMatches = [...main.matchAll')) throw new Error('R40 structural IPC replacement missing');
+if (!source.includes('R40 renderer overlay constructor state')) throw new Error('R40 structural renderer-state replacement missing');
 if (source.includes("'R40 subtitle overlay owner close'")) throw new Error('R40 stale owner-close exact anchor survived');
 if (source.includes("'R40 subtitle overlay owner lifecycle'")) throw new Error('R40 stale owner-lifecycle exact anchor survived');
+if (source.includes("'R40 renderer overlay state'")) throw new Error('R40 stale renderer-state exact anchor survived');
 
 fs.writeFileSync(target, source, 'utf8');
-console.log(`R40_SUBTITLE_ANCHOR_COMPAT_OK target=${path.basename(target)} lifecycle=createWindow-structural ipc=desktop-settings-regex close=independent-listener`);
+console.log(`R40_SUBTITLE_ANCHOR_COMPAT_OK target=${path.basename(target)} lifecycle=createWindow-structural ipc=desktop-settings-regex rendererState=constructor-scoped close=independent-listener`);
