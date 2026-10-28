@@ -148,8 +148,8 @@ bridge = once(bridge,
   'count empty pumps by reason');
 
 const oldFinally = `        if (nativeUpdateCallbackInstalled && nativeWakePending) {\n          nativeWakePending = false;\n          metrics.nativeUpdateWakeups += 1;\n          void pump();\n        } else {\n          schedulePump(nextDelay);\n        }`;
-const newFinally = `        if (nativeUpdateCallbackInstalled && nativeWakePending &&\n            (nativeWakePendingFrameId <= 0 || nativeWakePendingFrameId > Number(metrics.lastFrameId || 0))) {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          metrics.nativeUpdateWakeups += 1;\n          void pump('pending-signal');\n        } else {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          schedulePump(nextDelay);\n        }`;
-bridge = once(bridge, oldFinally, newFinally, 'drop stale pending callback wake');
+const newFinally = `        if (nativeUpdateCallbackInstalled && nativeWakePending &&\n            (nativeWakePendingFrameId <= 0 || nativeWakePendingFrameId > Number(metrics.lastFrameId || 0))) {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          metrics.nativeUpdateWakeups += 1;\n          void pump('pending-signal');\n        } else {\n          nativeWakePending = false;\n          nativeWakePendingFrameId = 0;\n          // LILAC_R40_CALLBACK_WATCHDOG_ONLY: native callbacks own frame cadence;\n          // the timer exists only as a 250 ms recovery path when callbacks stop.\n          schedulePump(nativeUpdateCallbackInstalled ? R30_PRODUCER_JS_WATCHDOG_MS : nextDelay);\n        }`;
+bridge = once(bridge, oldFinally, newFinally, 'drop stale pending callback wake and demote phase timer to watchdog');
 
 bridge = resetPendingWakeInFunction(bridge, '  async function open(', '\n\n  function command(', 'reset pending signal id on open/source change');
 bridge = resetPendingWakeInFunction(bridge, '  async function stopPlayer(', '\n\n  async function close(', 'reset pending signal id on stop');
@@ -160,7 +160,7 @@ for (const marker of [
   'r40SignalFrameId', 'signalWakeups', 'watchdogWakeups', 'releaseWakeups'
 ]) assert(native.includes(marker), `R40 native marker missing: ${marker}`);
 for (const marker of [
-  'LILAC_R40_FRESH_FRAME_WAKE_GATING', 'nativeWakePendingFrameId', 'r40FreshFrameSignals',
+  'LILAC_R40_FRESH_FRAME_WAKE_GATING', 'LILAC_R40_CALLBACK_WATCHDOG_ONLY', 'nativeWakePendingFrameId', 'r40FreshFrameSignals',
   'r40StaleFrameSignals', "pump('native-signal')", "pump('pending-signal')", "pump('timer')",
   'r40NoFrameTimerTicks'
 ]) assert(bridge.includes(marker), `R40 bridge marker missing: ${marker}`);
@@ -172,4 +172,4 @@ assert(!bridge.includes('focus-staged-gpu-copy') && !bridge.includes('copyTextur
 
 write('native/libmpv-d3d11-bridge/player_addon.cc', native);
 write('electron/libmpv-shared-main.cjs', bridge);
-console.log('R40_CALLBACK_PACING_OK native=raw-callback+250ms-watchdog releaseWake=backpressure-only js=frame-id-fresh-gated pumpReasons=instrumented r24=preserved r30=newest-only r37=preserved');
+console.log('R40_CALLBACK_PACING_OK native=raw-callback+250ms-watchdog releaseWake=backpressure-only js=frame-id-fresh-gated+250ms-callback-watchdog pumpReasons=instrumented r24=preserved r30=newest-only r37=preserved');
