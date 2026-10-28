@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file: data:; script-src 'self'; img-src 'none'; media-src 'none'; connect-src 'none';">
+  <title>Lilac subtitle overlay</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent!important;color:transparent;pointer-events:none;user-select:none}
+    #root{position:fixed;inset:0;overflow:hidden;background:transparent;pointer-events:none}
+    #stack{position:absolute;display:flex;flex-direction:column;align-items:center;pointer-events:none;background:transparent;transform:none}
+    .lilac-vtt-cue{display:block;background:transparent;pointer-events:none;box-sizing:border-box}
+  </style>
+</head>
+<body>
+  <div id="root"><div id="stack"></div></div>
+  <style id="customFont"></style>
+</body>
+</html>
