@@ -23,7 +23,7 @@ $protected = [ordered]@{
 }
 $rendererBefore = Sha256 'src/libmpv-shared.generated.js'
 
-foreach ($script in @('scripts/r39-runtime-recovery-fix.cjs','scripts/r39-rebuild-renderer-bundle.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-miniplayer-electron-smoke.cjs')) {
+foreach ($script in @('scripts/r39-runtime-recovery-fix.cjs','scripts/r39-rebuild-renderer-bundle.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-run-e2e-with-timeout.cjs','scripts/r39-miniplayer-electron-smoke.cjs')) {
   node --check $script
   Assert-Exit "syntax $script"
 }
@@ -79,7 +79,7 @@ try {
   Assert-Exit 'R39 inherited R37 native handoff freeze smoke'
   node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
   Assert-Exit 'R39 inherited R37 explicit handoff raw E2E'
-  node scripts/r37-run-e2e-with-timeout.cjs scripts/r39-refocus-phase-e2e-smoke.cjs 180000
+  node scripts/r39-run-e2e-with-timeout.cjs scripts/r39-refocus-phase-e2e-smoke.cjs 180000
   Assert-Exit 'R39 native-only refocus phase E2E'
 }
 finally {
@@ -89,7 +89,7 @@ finally {
 
 & node_modules/.bin/electron.cmd scripts/r39-miniplayer-electron-smoke.cjs
 Assert-Exit 'R39 real Electron mini-player topmost smoke'
-Write-Host 'R39_RUNTIME_SMOKES_OK r37BlackFlashRegression=1 r37RawE2E=1 r39RefocusE2E=4cycles miniPlayerRealWindows=2 win32Topmost=1 rendererBundle=rebuilt'
+Write-Host 'R39_RUNTIME_SMOKES_OK r37BlackFlashRegression=1 r37RawE2E=1 r39RefocusE2E=4cycles+sustained-cadence miniPlayerRealWindows=2 win32Topmost=1 rendererBundle=rebuilt'
 
 Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
 & node_modules/.bin/electron-builder.cmd --win nsis --x64 --publish never
@@ -145,7 +145,7 @@ $manifest = [ordered]@{
   rendererBundleSha256 = $rendererAfter
   r39BlackFlashInvariant = 'R37-explicit-renderer-ACK+native-freeze-preserved'
   r39FocusedPresenter = 'direct-receive-webgpu-copy-preserved'
-  r39RefocusRecovery = 'native-only-to-focused-phase-reanchor+immediate-pump'
+  r39RefocusRecovery = 'native-only-to-focused-phase-reanchor+immediate-pump+sustained-gap-gate'
   r39GapDiagnostics = 'active-playback-vs-interaction-buffering'
   r39SubtitleParity = 'native-fallback-uses-DOM-size-position-outline-weight-baseline'
   r39MiniPlayer = 'real-BrowserWindow+Win32-topmost-verified+runtime-diagnostics'
@@ -154,4 +154,4 @@ $manifest = [ordered]@{
 $manifestPath = Join-Path 'dist' $env:MANIFEST_NAME
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine), $utf8NoBom)
-Write-Host "R39_BUILD_OK sha256=$hash size=$size electron=$electronVersion rendererBundle=$rendererAfter refocus=4cycles-bounded-first-frame pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
+Write-Host "R39_BUILD_OK sha256=$hash size=$size electron=$electronVersion rendererBundle=$rendererAfter refocus=4cycles+sustained-gap-gate pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
