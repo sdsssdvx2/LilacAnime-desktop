@@ -39,44 +39,43 @@ jobs:
           if((Get-Item $installer).Length -ne 182594634){throw "R38 installer size mismatch: $((Get-Item $installer).Length)"}
           Write-Host "R39_PUBLISHED_R38_BYTES_OK sha256=$sha size=$((Get-Item $installer).Length)"
 
-      - name: Install published R38 into isolated probe directory
+      - name: Extract published R38 NSIS payload without installing
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R38-Setup.exe'
-          $requested=Join-Path $env:RUNNER_TEMP 'lilac-r38-installed'
-          Remove-Item $requested -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $requested | Out-Null
-          $arg="/D=$requested"
-          $p=Start-Process -FilePath $installer -ArgumentList '/S',$arg -PassThru -Wait
-          if($p.ExitCode -ne 0){throw "R38 silent install failed exit=$($p.ExitCode)"}
+          $outer=Join-Path $env:RUNNER_TEMP 'lilac-r38-nsis'
+          Remove-Item $outer -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $outer | Out-Null
+          & 7z x -y "-o$outer" $installer
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R39_NSIS_OUTER_LIST_BEGIN'
+          Get-ChildItem -LiteralPath $outer -Force -Recurse | Select-Object FullName,Length | Format-Table -AutoSize
+          Write-Host 'R39_NSIS_OUTER_LIST_END'
 
-          $roots=@($requested,(Join-Path $env:LOCALAPPDATA 'Programs')) | Where-Object { Test-Path $_ }
-          $asarHit=$null
-          foreach($root in $roots){
-            $hit=Get-ChildItem -LiteralPath $root -Filter app.asar -File -Recurse -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match 'resources[\\/]app\.asar$' } |
-              Select-Object -First 1
-            if($hit){$asarHit=$hit;break}
-          }
+          $asarHit=Get-ChildItem -LiteralPath $outer -Filter app.asar -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if(-not $asarHit){
-            Write-Host 'Requested probe contents:'
-            Get-ChildItem -LiteralPath $requested -Force -Recurse -ErrorAction SilentlyContinue | Select-Object -First 80 FullName | Format-Table -AutoSize
-            Write-Host 'Local Programs contents:'
-            if(Test-Path (Join-Path $env:LOCALAPPDATA 'Programs')){Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Programs') -Force -Recurse -ErrorAction SilentlyContinue | Select-Object -First 120 FullName | Format-Table -AutoSize}
-            throw 'published R38 app.asar not found after silent install'
+            $archives=Get-ChildItem -LiteralPath $outer -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.7z','.zip','.nupkg' -or $_.Name -match 'app.*64|package' }
+            foreach($archive in $archives){
+              $nested=Join-Path $env:RUNNER_TEMP ('lilac-r38-nested-'+[guid]::NewGuid().ToString('N'))
+              New-Item -ItemType Directory -Force -Path $nested | Out-Null
+              & 7z x -y "-o$nested" $archive.FullName | Out-Host
+              if($LASTEXITCODE-ne 0){continue}
+              $hit=Get-ChildItem -LiteralPath $nested -Filter app.asar -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if($hit){$asarHit=$hit;break}
+            }
           }
-          $installRoot=Split-Path (Split-Path $asarHit.FullName -Parent) -Parent
-          "R38_PROBE_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "R39_PUBLISHED_R38_INSTALL_OK requested=$requested actual=$installRoot asar=$($asarHit.FullName)"
+          if(-not $asarHit){throw 'published R38 app.asar not found in extracted NSIS payload'}
+          "R38_PROBE_ASAR=$($asarHit.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "R39_PUBLISHED_R38_EXTRACT_OK asar=$($asarHit.FullName)"
 
       - name: Extract published app.asar and run final-source probe
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
-          $asar=Join-Path $env:R38_PROBE_INSTALL_ROOT 'resources/app.asar'
-          if(-not(Test-Path $asar)){throw "R38 probe app.asar disappeared: $asar"}
+          $asar=$env:R38_PROBE_ASAR
+          if(-not(Test-Path $asar)){throw "R38 probe app.asar missing: $asar"}
           $extract=Join-Path $env:RUNNER_TEMP 'lilac-r38-asar'
           Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $extract | Out-Null
