@@ -21,13 +21,18 @@ buildSync({
 });
 
 const bundled = fs.readFileSync(output, 'utf8');
-for (const marker of [
-  'LILAC_R39_NATIVE_SUBTITLE_PARITY',
-  'miniPlayerState',
-  'lilac-mpv-video'
-]) {
-  if (!bundled.includes(marker)) throw new Error(`R39 generated renderer missing marker: ${marker}`);
+for (const marker of ['miniPlayerState', 'lilac-mpv-video']) {
+  if (!bundled.includes(marker)) throw new Error(`R39 generated renderer missing runtime marker: ${marker}`);
 }
-if (!bundled.includes('100 - (position - 1.25)')) throw new Error('R39 generated renderer missing native subtitle visual-baseline parity');
+const semanticChecks = [
+  [/localStorage\.getItem\(["']subtitleSize["']\)\s*\|\|\s*100/, 'native subtitle size default 100'],
+  [/localStorage\.getItem\(["']subtitlePosition["']\)\s*\|\|\s*12/, 'native subtitle position default 12'],
+  [/localStorage\.getItem\(["']vttOutline["']\)\s*\?\?\s*2/, 'native subtitle outline default 2'],
+  [/["']sub-pos["']\s*,\s*clamp\(100\s*-\s*\([^\r\n]*?\s*-\s*1\.25\)/, 'native subtitle visual-baseline parity']
+];
+for (const [pattern, label] of semanticChecks) {
+  if (!pattern.test(bundled)) throw new Error(`R39 generated renderer missing semantic code: ${label}`);
+}
+if (bundled.includes("subtitleSize') || 105") || bundled.includes('subtitleSize") || 105')) throw new Error('R39 generated renderer retained R38 native subtitle size default 105');
 
-console.log('R39_RENDERER_BUNDLE_OK entry=src/libmpv-shared-entry.js output=src/libmpv-shared.generated.js subtitleParity=1 miniPlayerDiagnostics=1');
+console.log('R39_RENDERER_BUNDLE_OK entry=src/libmpv-shared-entry.js output=src/libmpv-shared.generated.js subtitleParity=semantic-code-verified miniPlayerDiagnostics=1');
