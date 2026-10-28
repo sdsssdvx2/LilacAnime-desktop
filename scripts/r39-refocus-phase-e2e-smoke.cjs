@@ -41,6 +41,10 @@ function view(bridge) {
   const state=bridge.state(), focus=state?.r33FocusSurface||{}, handoff=focus?.r34Handoff||{}, r36=handoff?.r36Ack||{}, r37=handoff?.r37Handoff||{}, r39=handoff?.r39RuntimeRecovery||{};
   return {state,focus,handoff,r36,r37,r39};
 }
+function severeFocusedDispatchGapsSince(state, wallMs, thresholdMs = 120) {
+  const anomalies = Array.isArray(state?.r27FocusStallRetention?.mainAnomalies) ? state.r27FocusStallRetention.mainAnomalies : [];
+  return anomalies.filter(item => item?.kind === 'dispatch-gap' && item?.focused === true && Number(item?.wallMs || 0) >= wallMs && Number(item?.gapMs || 0) >= thresholdMs);
+}
 
 (async()=>{
   await app.whenReady();
@@ -76,9 +80,24 @@ function view(bridge) {
       if(!(first>0&&first<500))throw new Error(`cycle${i} focused first-frame latency ${first}ms state=${JSON.stringify(completed.r39)}`);
       if(Number(completed.r36.failOpenCount||0)!==0)throw new Error(`cycle${i} R36 fail-open used count=${completed.r36.failOpenCount}`);
       if(Number(completed.r37.rejectedRendererAcks||0)!==0)throw new Error(`cycle${i} rejected R37 ACK count=${completed.r37.rejectedRendererAcks}`);
-      const nativeFramesAfter=Number(completed.state?.r32NativePresenter?.nativeOnlyFrames||0);
-      samples.push({cycle:i,firstFrameMs:first,reanchors:Number(completed.r39.focusReanchors||0),nativeFramesDelta:nativeFramesAfter-nativeFramesBefore,activeGapCount:Number(completed.r39.activePlaybackGapCount||0),activeGapMaxMs:Number(completed.r39.activePlaybackGapMaxMs||0)});
-      await sleep(350);
+
+      // The user-visible R38 defect was not merely a slow first handoff frame: severe
+      // 156/386/1109ms focused dispatch gaps continued after refocus. Prove sustained
+      // focused cadence by requiring at least 20 additional presented frames, then fail
+      // on any >=120ms focused main-dispatch stall that starts after the handoff settled.
+      const stableWindowStartedAt=Date.now();
+      const presentedBefore=Number(completed.state?.receiver?.presentedFrames||0);
+      const stable=await waitUntil(()=>{
+        const v=view(bridge);
+        const presented=Number(v.state?.receiver?.presentedFrames||0);
+        return main.isFocused()&&v.focus.active===false&&v.handoff.pending===false&&presented>=presentedBefore+20?v:null;
+      },2200,`cycle${i} sustained focused cadence`);
+      const severeGaps=severeFocusedDispatchGapsSince(stable.state,stableWindowStartedAt,120);
+      if(severeGaps.length)throw new Error(`cycle${i} severe post-refocus focused dispatch gap(s): ${JSON.stringify(severeGaps)}`);
+
+      const nativeFramesAfter=Number(stable.state?.r32NativePresenter?.nativeOnlyFrames||0);
+      samples.push({cycle:i,firstFrameMs:first,reanchors:Number(stable.r39.focusReanchors||0),nativeFramesDelta:nativeFramesAfter-nativeFramesBefore,focusedFramesObserved:Number(stable.state?.receiver?.presentedFrames||0)-presentedBefore,severePostRefocusGapCount:severeGaps.length,activeGapCount:Number(stable.r39.activePlaybackGapCount||0),activeGapMaxMs:Number(stable.r39.activePlaybackGapMaxMs||0)});
+      await sleep(250);
     }
     const final=view(bridge);
     if(Number(final.r39.focusReanchors||0)<4)throw new Error(`expected >=4 focus reanchors, got ${final.r39.focusReanchors}`);
@@ -86,7 +105,7 @@ function view(bridge) {
     if(Number(final.r36.failOpenCount||0)!==0)throw new Error(`final R36 fail-open count=${final.r36.failOpenCount}`);
     if(Number(final.r37.rejectedRendererAcks||0)!==0)throw new Error(`final rejected R37 ACK count=${final.r37.rejectedRendererAcks}`);
     if(Number(final.state?.metrics?.importFailures||0)!==0||Number(final.state?.metrics?.sendFailures||0)!==0)throw new Error(`post-cycle transport failure import=${final.state?.metrics?.importFailures} send=${final.state?.metrics?.sendFailures}`);
-    console.log(`R39_REFOCUS_PHASE_E2E_OK cycles=4 reanchors=${final.r39.focusReanchors} maxFirstFrameMs=${final.r39.maxFocusFirstFrameMs} activeGapCount=${final.r39.activePlaybackGapCount} activeGapMaxMs=${final.r39.activePlaybackGapMaxMs} failOpen=0 rejectedAck=0 samples=${JSON.stringify(samples)}`);
+    console.log(`R39_REFOCUS_PHASE_E2E_OK cycles=4 reanchors=${final.r39.focusReanchors} maxFirstFrameMs=${final.r39.maxFocusFirstFrameMs} postRefocusSevereGapThresholdMs=120 severePostRefocusGaps=0 activeGapCount=${final.r39.activePlaybackGapCount} activeGapMaxMs=${final.r39.activePlaybackGapMaxMs} failOpen=0 rejectedAck=0 samples=${JSON.stringify(samples)}`);
   } finally {
     try{bridge?.dispose?.()}catch{}; try{other?.destroy?.()}catch{}; try{main?.destroy?.()}catch{}; clearTimeout(hardDeadline); app.quit();
   }
