@@ -10,6 +10,7 @@ on:
       - scripts/r39-rebuild-renderer-bundle.cjs
       - scripts/r39-runtime-recovery-smoke.cjs
       - scripts/r39-refocus-phase-e2e-smoke.cjs
+      - scripts/r39-run-e2e-with-timeout.cjs
       - scripts/r39-miniplayer-electron-smoke.cjs
       - scripts/r39-qualified-build.ps1
   workflow_dispatch:
@@ -72,6 +73,7 @@ jobs:
             'r39-rebuild-renderer-bundle.cjs',
             'r39-runtime-recovery-smoke.cjs',
             'r39-refocus-phase-e2e-smoke.cjs',
+            'r39-run-e2e-with-timeout.cjs',
             'r39-miniplayer-electron-smoke.cjs',
             'r39-qualified-build.ps1'
           )
@@ -111,6 +113,7 @@ jobs:
             'r39-rebuild-renderer-bundle.cjs',
             'r39-runtime-recovery-smoke.cjs',
             'r39-refocus-phase-e2e-smoke.cjs',
+            'r39-run-e2e-with-timeout.cjs',
             'r39-miniplayer-electron-smoke.cjs',
             'r39-qualified-build.ps1'
           )
@@ -180,7 +183,7 @@ jobs:
             '- Aligns the native unfocused WebVTT fallback with the focused DOM subtitle size, position, outline, weight, and visual baseline settings.',
             '- Rebuilds and verifies the actual shipped `src/libmpv-shared.generated.js` after the subtitle/diagnostic entry changes.',
             '- Hardens the libmpv mini-player with Windows `pop-up-menu` always-on-top level, verifies the topmost state, re-pins after focus/z-order events, and exposes mini-player state in diagnostics.',
-            '- Qualification repeats the complete R38/R37 baseline first, reruns the R37 raw shared-texture handoff E2E after the R39 changes, exercises four real native-only -> focused refocus cycles, and verifies PiP/topmost with two real Electron BrowserWindows plus the Win32 `WS_EX_TOPMOST` bit.',
+            '- Qualification repeats the complete R38/R37 baseline first, reruns the R37 raw shared-texture handoff E2E after the R39 changes, exercises four real native-only -> focused refocus cycles plus sustained focused cadence, and verifies PiP/topmost with two real Electron BrowserWindows plus the Win32 `WS_EX_TOPMOST` bit.',
             '- The R37 native producer, libmpv DLL, focused WebGPU preload/generated preload, R38 updater implementation, and desktop-state persistence implementation remain byte-identical.','',
             'No uninstall, profile reset, settings reset, or watch-history reset is required. Install over the existing LilacAnime Libmpv installation.'
           ) | Set-Content -LiteralPath $notes -Encoding UTF8
@@ -216,4 +219,4 @@ jobs:
           if($manifest.installerSha256 -ne $hash){throw "public R39 SHA mismatch manifest=$($manifest.installerSha256) actual=$hash"}
           if([int64]$manifest.installerSize -ne $size){throw "public R39 size mismatch manifest=$($manifest.installerSize) actual=$size"}
           if($manifest.version -ne '0.5.54-libmpv-r3f.rc19' -or $manifest.tag -ne 'libmpv-r2k-v0.5.54-r39' -or [string]::IsNullOrWhiteSpace($manifest.rendererBundleSha256)){throw 'public R39 manifest identity/renderer bundle mismatch'}
-          Write-Host "R39_PUBLISHED_OK sha256=$hash size=$size rendererBundle=$($manifest.rendererBundleSha256) electron=$($manifest.electron) refocus=4cycles pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
+          Write-Host "R39_PUBLISHED_OK sha256=$hash size=$size rendererBundle=$($manifest.rendererBundleSha256) electron=$($manifest.electron) refocus=4cycles+sustained-gap-gate pip=real-win32-topmost subtitle=native-DOM-parity blackFlash=R37-preserved"
