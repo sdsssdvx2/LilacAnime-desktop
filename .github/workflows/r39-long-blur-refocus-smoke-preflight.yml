@@ -1,4 +1,4 @@
-name: R39 long-blur refocus smoke preflight
+name: R39 runtime regression smoke preflight
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/r39-long-blur-refocus-smoke-preflight.yml
       - scripts/r39-long-blur-refocus-runtime-smoke.cjs
+      - scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs
   workflow_dispatch:
 
 permissions:
@@ -20,13 +21,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate long-blur refocus runtime smoke
+      - name: Validate R39 runtime regression smokes
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          node --check scripts/r39-long-blur-refocus-runtime-smoke.cjs
-          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
-          $text=Get-Content scripts/r39-long-blur-refocus-runtime-smoke.cjs -Raw
+          foreach($script in @(
+            'scripts/r39-long-blur-refocus-runtime-smoke.cjs',
+            'scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs'
+          )){
+            node --check $script
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }
+          $refocus=Get-Content scripts/r39-long-blur-refocus-runtime-smoke.cjs -Raw
           foreach($marker in @(
             'R39_LONG_BLUR_REFOCUS_RUNTIME_OK',
             'blurMs=4000',
@@ -34,5 +40,14 @@ jobs:
             'sustained focused cadence',
             'focused dispatch gap survived refocus',
             'LILAC_R39_REFOCUS_PHASE_REANCHOR'
-          )){if(-not $text.Contains($marker)){throw "R39 refocus smoke marker missing: $marker"}}
-          Write-Host 'R39_LONG_BLUR_REFOCUS_PREFLIGHT_OK syntax=1 cycles=3 blurMs=4000 firstFrameLimitMs=300 sustainedFrames=12 sustainedWindowMs=900 dispatchGapLimitMs=300'
+          )){if(-not $refocus.Contains($marker)){throw "R39 refocus smoke marker missing: $marker"}}
+          $topmost=Get-Content scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs -Raw
+          foreach($marker in @(
+            'R39_MINIPLAYER_NATIVE_TOPMOST_RUNTIME_OK',
+            'ownerTopmost===true',
+            'windowTopmost===true',
+            'ownerTopmost===false',
+            'windowTopmost===false',
+            'desktopCapturer'
+          )){if(-not $topmost.Contains($marker)){throw "R39 topmost smoke marker missing: $marker"}}
+          Write-Host 'R39_RUNTIME_REGRESSION_PREFLIGHT_OK refocusSyntax=1 cycles=3 blurMs=4000 firstFrameLimitMs=300 sustainedFrames=12 dispatchGapLimitMs=300 topmostSyntax=1 realBrowserWindow=1 realNativePopup=1 desktopCapture=1 bidirectional=1'
