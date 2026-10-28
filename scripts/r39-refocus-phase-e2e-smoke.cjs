@@ -66,7 +66,7 @@ function view(bridge) {
       const startReanchors=Number(view(bridge).r39.focusReanchors||0);
       other.show(); other.focus();
       await waitUntil(()=>!main.isFocused(),3000,`cycle${i} blur`);
-      await waitUntil(()=>{const v=view(bridge);return v.focus.active===true&&v.handoff.subtitleVisible===true;},5000,`cycle${i} native-only active`);
+      await waitUntil(()=>{const v=view(bridge);return v.focus.active===true&&v.state?.r32NativePresenter?.visible===true?v:null;},5000,`cycle${i} native-only presenter active`);
       await sleep(1250);
       const nativeBeforeFocus=view(bridge), nativeFramesBefore=Number(nativeBeforeFocus.state?.r32NativePresenter?.nativeOnlyFrames||0);
       main.show(); main.focus();
