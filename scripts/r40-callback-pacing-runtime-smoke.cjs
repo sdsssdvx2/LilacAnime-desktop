@@ -21,7 +21,7 @@ function html(dir){
   const bundle=path.resolve(__dirname,'..','src','libmpv-shared.generated.js');
   fs.copyFileSync(bundle,path.join(dir,'libmpv-shared.generated.js'));
   const out=path.join(dir,'r40-pacing.html');
-  fs.writeFileSync(out,`<!doctype html><html><head><meta charset="utf-8"><style>html,body,#playerView,#immersivePlayer,#videoStage{margin:0;width:100%;height:100%;overflow:hidden;background:#202020}#immersivePlayer,#videoStage{position:relative}lilac-mpv-video{position:absolute;inset:0;width:100%;height:100%}#gpu{position:absolute;width:16px;height:16px;opacity:.01}</style></head><body class="player-mode"><section id="playerView" class="active"><div id="immersivePlayer"><div id="videoStage"><lilac-mpv-video id="video"></lilac-mpv-video><canvas id="gpu" width="16" height="16"></canvas></div></div></section><script src="./libmpv-shared.generated.js"></script><script>window.__warm=async()=>{const a=await navigator.gpu?.requestAdapter({powerPreference:'high-performance'});if(!a)return false;const d=await a.requestDevice();const c=document.querySelector('#gpu'),x=c.getContext('webgpu'),f=navigator.gpu.getPreferredCanvasFormat();x.configure({device:d,format:f,alphaMode:'opaque'});const e=d.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:x.getCurrentTexture().createView(),clearValue:{r:.02,g:.03,b:.04,a:1},loadOp:'clear',storeOp:'store'}]});p.end();d.queue.submit([e.finish()]);await d.queue.onSubmittedWorkDone();window.__device=d;return true};window.__start=async src=>{await customElements.whenDefined('lilac-mpv-video');const v=document.querySelector('#video');await v.openLilacSource(src,{hls:false,headers:{}});await v.play();return true}</script></body></html>`,'utf8');
+  fs.writeFileSync(out,`<!doctype html><html><head><meta charset="utf-8"><style>html,body,#playerView,#immersivePlayer,#videoStage{margin:0;width:100%;height:100%;overflow:hidden;background:#202020}#immersivePlayer,#videoStage{position:relative}lilac-mpv-video{position:absolute;inset:0;width:100%;height:100%}</style></head><body class="player-mode"><section id="playerView" class="active"><div id="immersivePlayer"><div id="videoStage"><lilac-mpv-video id="video"></lilac-mpv-video></div></div></section><script src="./libmpv-shared.generated.js"></script><script>window.__start=async src=>{await customElements.whenDefined('lilac-mpv-video');const v=document.querySelector('#video');await v.openLilacSource(src,{hls:false,headers:{}});await v.play();return true}</script></body></html>`,'utf8');
   return out;
 }
 async function waitUntil(fn,ms,label){const end=Date.now()+ms;let last;while(Date.now()<end){try{last=await fn();if(last)return last}catch{}await sleep(20)}throw new Error(`${label} timeout last=${JSON.stringify(last)}`)}
@@ -40,12 +40,24 @@ const delta=(a,b,k)=>n(b,k)-n(a,k);
     win=new BrowserWindow({show:true,width:800,height:600,backgroundColor:'#202020',webPreferences:{preload,backgroundThrottling:false,contextIsolation:true,nodeIntegration:false,sandbox:true}});
     await bridge.attachWindow(win);await win.loadFile(html(dir));win.focus();
     await waitUntil(()=>win.isFocused(),3000,'focus');
-    if(await win.webContents.executeJavaScript('window.__warm()')!==true)throw new Error('WebGPU warmup failed');
+
+    // Do not use a synthetic navigator.gpu.requestAdapter() warm-up as a gate.
+    // R37 proved the real product shared-texture/direct-WebGPU path can work on
+    // the hosted Windows runner even when an isolated adapter probe returns null.
+    // The actual product renderer below is the authority: if it cannot initialize
+    // direct WebGPU, import/present real frames, and sustain cadence, this test fails.
     const media=pathToFileURL(fixture(dir)).href;
     if(await win.webContents.executeJavaScript(`window.__start(${JSON.stringify(media)})`)!==true)throw new Error('product start failed');
-    await waitUntil(()=>{const s=bridge.state();return s?.fileLoaded===true&&n(s.metrics,'sentFrames')>=24&&n(s.receiver,'presentedFrames')>=20?s:null},15000,'baseline frames');
+    await waitUntil(()=>{
+      const s=bridge.state();
+      const direct=String(s?.receiver?.presentationMode||'')==='direct-receive-webgpu-copy';
+      const frames=n(s?.metrics,'sentFrames')>=24&&n(s?.receiver,'presentedFrames')>=20;
+      return s?.fileLoaded===true&&direct&&frames?s:null;
+    },20000,'actual product direct-WebGPU frames');
     await sleep(1000);
     const before=bridge.state(),p0=before.frameProducer||{},m0=before.metrics||{};
+    if(String(before?.receiver?.presentationMode)!=='direct-receive-webgpu-copy')throw new Error(`actual product direct WebGPU not active at baseline: ${before?.receiver?.presentationMode}`);
+    if(n(m0,'importFailures')!==0||n(m0,'sendFailures')!==0)throw new Error(`actual product WebGPU transport failed at baseline import=${m0.importFailures} send=${m0.sendFailures}`);
     if(String(p0.enabled)!=='true'&&p0.enabled!==true)throw new Error('native producer not enabled');
     if(!Object.hasOwn(p0,'signalWakeups')||!Object.hasOwn(p0,'watchdogWakeups')||!Object.hasOwn(p0,'releaseWakeups'))throw new Error('R40 producer diagnostics missing');
     if(!Object.hasOwn(m0,'r40PumpNativeSignalTicks')||!Object.hasOwn(m0,'r40NoFrameTimerTicks'))throw new Error('R40 JS pacing diagnostics missing');
@@ -74,7 +86,7 @@ const delta=(a,b,k)=>n(b,k)-n(a,k);
     if(Number(cadence.sampleCount||0)<10)throw new Error('renderer cadence sample too small');
     if(Number(cadence.intervalP95Ms||999)>65||Number(cadence.intervalMaxMs||999)>160)throw new Error(`focused cadence regressed p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs}`);
 
-    console.log(`R40_CALLBACK_PACING_RUNTIME_OK seconds=8 raw=${raw} worker=${worker} signalWake=${signals} watchdogWake=${watchdogs} releaseWake=${releaseWakes} produced=${produced} sent=${sent} freshSignals=${fresh} staleSignals=${stale} timerTicks=${timerTicks} nativeTicks=${nativeTicks} pendingTicks=${pendingTicks} noFrameTimer=${noTimer} noFrameNative=${noNative} noFramePending=${noPending} p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs} directWebgpu=1 backpressure=0`);
+    console.log(`R40_CALLBACK_PACING_RUNTIME_OK seconds=8 productDirectWebgpu=1 raw=${raw} worker=${worker} signalWake=${signals} watchdogWake=${watchdogs} releaseWake=${releaseWakes} produced=${produced} sent=${sent} freshSignals=${fresh} staleSignals=${stale} timerTicks=${timerTicks} nativeTicks=${nativeTicks} pendingTicks=${pendingTicks} noFrameTimer=${noTimer} noFrameNative=${noNative} noFramePending=${noPending} p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs} directWebgpu=1 backpressure=0`);
   }finally{
     clearTimeout(deadline);try{await bridge?.close?.()}catch{}try{await bridge?.dispose?.()}catch{}try{win?.destroy()}catch{}try{fs.rmSync(dir,{recursive:true,force:true})}catch{}delete process.env.LILAC_LIBMPV_TEST_AO_NULL;app.quit();
   }
