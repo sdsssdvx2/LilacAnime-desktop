@@ -1,0 +1,122 @@
+name: LilacAnime Libmpv R39 final qualification
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-runtime-recovery]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r39-final.yml
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r39-final-independent
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r38
+  INSTALLER_NAME: LilacAnime-Libmpv-R38-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r38-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc18
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+jobs:
+  final:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Preflight
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($s in @('scripts/r39-runtime-recovery-fix.cjs','scripts/r39-runtime-recovery-smoke.cjs','scripts/r39-refocus-phase-e2e-smoke.cjs','scripts/r39-miniplayer-electron-smoke.cjs')){node --check $s;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}}
+          $null=[scriptblock]::Create((Get-Content scripts/r39-qualified-build.ps1 -Raw))
+          Write-Host 'R39_FINAL_PREFLIGHT_OK'
+      - name: Reconstruct and fully qualify exact R38
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r32-transform-source-sanitize.cjs;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r33-transform-source-sanitize.cjs;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          node scripts/r36-transform-r35-anchor-compat.cjs;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          ./scripts/r38-qualified-build.ps1
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          Write-Host 'R39_FINAL_R38_BASELINE_OK'
+      - name: Qualify and package R39
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $env:RELEASE_TAG='libmpv-r2k-v0.5.54-r39'
+          $env:INSTALLER_NAME='LilacAnime-Libmpv-R39-Setup.exe'
+          $env:MANIFEST_NAME='lilacanime-libmpv-r39-manifest.json'
+          $env:APP_VERSION='0.5.54-libmpv-r3f.rc19'
+          ./scripts/r39-qualified-build.ps1
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+      - name: Upload qualification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LilacAnime-Libmpv-R39-final
+          path: |
+            dist/LilacAnime-Libmpv-R39-Setup.exe
+            dist/lilacanime-libmpv-r39-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish qualified release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $tag='libmpv-r2k-v0.5.54-r39'
+          $exe='dist/LilacAnime-Libmpv-R39-Setup.exe'
+          $manifest='dist/lilacanime-libmpv-r39-manifest.json'
+          $notes='R39 preserves the R37 black-flash fix and focused direct WebGPU path; adds native-only refocus phase re-anchoring, focused/unfocused subtitle style parity, and verified Windows always-on-top mini-player behavior. Qualification repeats the full R38/R37 baseline, reruns the R37 raw handoff E2E after R39 changes, performs four real native-only/refocus cycles, verifies two real Electron windows plus Win32 WS_EX_TOPMOST, validates packaged app.asar, and proves the native addon/libmpv DLL/shared WebGPU preload/R38 updater protected bytes remain unchanged. Install over the existing build; no uninstall or profile/settings/history reset is required.'
+          gh release view $tag --repo '${{ github.repository }}' *> $null
+          if($LASTEXITCODE-eq 0){
+            gh release upload $tag $exe $manifest --repo '${{ github.repository }}' --clobber;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            gh release edit $tag --repo '${{ github.repository }}' --title 'LilacAnime Libmpv 0.5.54 r39 runtime recovery' --notes $notes;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }else{
+            gh release create $tag $exe $manifest --repo '${{ github.repository }}' --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r39 runtime recovery' --notes $notes;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          }
+          Write-Host 'R39_FINAL_RELEASE_UPLOAD_OK'
+      - name: Reverify public release bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $d=Join-Path $env:RUNNER_TEMP 'r39-public';New-Item -ItemType Directory -Force -Path $d|Out-Null
+          gh release download libmpv-r2k-v0.5.54-r39 --repo '${{ github.repository }}' --pattern 'LilacAnime-Libmpv-R39-Setup.exe' --pattern 'lilacanime-libmpv-r39-manifest.json' --dir $d;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $e=Join-Path $d 'LilacAnime-Libmpv-R39-Setup.exe';$m=Get-Content (Join-Path $d 'lilacanime-libmpv-r39-manifest.json') -Raw|ConvertFrom-Json
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();$z=(Get-Item $e).Length
+          if($h-ne$m.installerSha256-or$z-ne[long]$m.installerSize){throw 'R39 public bytes mismatch'}
+          if($m.version-ne'0.5.54-libmpv-r3f.rc19'-or$m.tag-ne'libmpv-r2k-v0.5.54-r39'){throw 'R39 public identity mismatch'}
+          Write-Host "R39_FINAL_PUBLISHED_OK sha256=$h size=$z electron=$($m.electron) blackFlash=R37-preserved refocus=4cycles pip=win32-topmost subtitle=parity"
