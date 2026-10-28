@@ -61,7 +61,11 @@ jobs:
           $ErrorActionPreference='Stop'
           foreach($script in @(
             'scripts/r40-callback-pacing-fix.cjs',
+            'scripts/r40-callback-pacing-runtime-smoke.cjs',
+            'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
             'scripts/r40-single-dom-subtitle-overlay-fix.cjs',
+            'scripts/r40-subtitle-anchor-compat.cjs',
+            'scripts/r40-run-electron-gate.cjs',
             'scripts/r40-rebundle-renderer.cjs',
             'scripts/r40-finalize-identity.cjs',
             'electron/r40-subtitle-overlay-preload.cjs',
@@ -70,7 +74,7 @@ jobs:
             node --check $script
             if($LASTEXITCODE-ne 0){throw "R40 preflight syntax failed $script"}
           }
-          Write-Host 'R40_SUPPORT_SYNTAX_OK'
+          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked-before-r39-reconstruction'
       - name: Reconstruct exact R39 final6 and compile R40
         shell: powershell
         env:
