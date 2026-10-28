@@ -5,6 +5,9 @@ on:
     branches: [libmpv-r3f-054-r39-runtime-recovery]
     paths:
       - .github/workflows/libmpv-r3f-054-r39-fast-source-apply.yml
+      - scripts/r39-runtime-recovery-fix.cjs
+      - scripts/r39-rebuild-renderer-bundle.cjs
+      - scripts/r39-runtime-recovery-smoke.cjs
   workflow_dispatch:
 
 concurrency:
@@ -42,18 +45,20 @@ jobs:
           & 7z x -y "-o$nested" $appArchive.FullName|Out-Host;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           $asar=Get-ChildItem $nested -File -Filter app.asar -Recurse|Select-Object -First 1
           if(-not$asar){throw 'app.asar missing'}
-          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18
+          npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 esbuild
           & node_modules/.bin/asar.cmd extract $asar.FullName $root;if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           "R39_FAST_ROOT=$root"|Out-File $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "R39_FAST_EXTRACT_OK root=$root"
-      - name: Apply R39 transform to exact public R38 source
+      - name: Apply R39 transform and rebuild actual renderer bundle
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $r=$env:R39_FAST_ROOT
           New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
           Copy-Item scripts/r39-runtime-recovery-fix.cjs (Join-Path $r 'scripts/r39-runtime-recovery-fix.cjs') -Force
+          Copy-Item scripts/r39-rebuild-renderer-bundle.cjs (Join-Path $r 'scripts/r39-rebuild-renderer-bundle.cjs') -Force
           Copy-Item scripts/r39-runtime-recovery-smoke.cjs (Join-Path $r 'scripts/r39-runtime-recovery-smoke.cjs') -Force
+          Copy-Item -Recurse -Force node_modules (Join-Path $r 'node_modules')
           '/* LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF fast-public-package-probe-only */' | Set-Content -LiteralPath (Join-Path $r 'native/libmpv-d3d11-bridge/player_addon.cc') -Encoding UTF8
           $pkgPath=Join-Path $r 'package.json'
           $pkg=Get-Content $pkgPath -Raw|ConvertFrom-Json
@@ -68,7 +73,9 @@ jobs:
           try{
             node scripts/r39-runtime-recovery-fix.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            node scripts/r39-rebuild-renderer-bundle.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
             node scripts/r39-runtime-recovery-smoke.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
-          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 smoke=pass metadata=probe-restored nativeSource=marker-only-probe fullQualification=real-source'
+          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified smoke=pass metadata=probe-restored nativeSource=marker-only-probe fullQualification=real-source'
