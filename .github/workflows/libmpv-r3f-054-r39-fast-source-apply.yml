@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/libmpv-r3f-054-r39-fast-source-apply.yml
       - scripts/r39-runtime-recovery-fix.cjs
+      - scripts/r39-miniplayer-transition-hardening.cjs
       - scripts/r39-rebuild-renderer-bundle.cjs
       - scripts/r39-runtime-recovery-smoke.cjs
       - scripts/r39-refocus-phase-e2e-smoke.cjs
@@ -71,7 +72,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $r=$env:R39_FAST_ROOT
           New-Item -ItemType Directory -Force -Path (Join-Path $r 'scripts'),(Join-Path $r 'native/libmpv-d3d11-bridge')|Out-Null
-          foreach($name in @('r39-runtime-recovery-fix.cjs','r39-rebuild-renderer-bundle.cjs','r39-runtime-recovery-smoke.cjs','r39-refocus-phase-e2e-smoke.cjs','r39-run-e2e-with-timeout.cjs','r39-miniplayer-electron-smoke.cjs')){
+          foreach($name in @('r39-runtime-recovery-fix.cjs','r39-miniplayer-transition-hardening.cjs','r39-rebuild-renderer-bundle.cjs','r39-runtime-recovery-smoke.cjs','r39-refocus-phase-e2e-smoke.cjs','r39-run-e2e-with-timeout.cjs','r39-miniplayer-electron-smoke.cjs')){
             Copy-Item (Join-Path 'scripts' $name) (Join-Path $r "scripts/$name") -Force
           }
           $env:NODE_PATH=$env:R39_FAST_NODE_MODULES
@@ -89,12 +90,14 @@ jobs:
           try{
             node scripts/r39-runtime-recovery-fix.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+            node scripts/r39-miniplayer-transition-hardening.cjs
+            if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
             node scripts/r39-rebuild-renderer-bundle.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
             node scripts/r39-runtime-recovery-smoke.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
-          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified smoke=pass metadata=probe-restored nativeSource=marker-only-probe'
+          Write-Host 'R39_FAST_PUBLIC_SOURCE_APPLY_OK source=published-r38 transform=r39 rendererBundle=rebuilt+verified miniPlayerBounds=settled smoke=pass metadata=probe-restored nativeSource=marker-only-probe'
       - name: Run real R39 topmost E2E on public R38 app source
         shell: powershell
         run: |
@@ -105,7 +108,7 @@ jobs:
             & $env:R39_FAST_ELECTRON scripts/r39-miniplayer-electron-smoke.cjs
             if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           }finally{Pop-Location}
-          Write-Host 'R39_FAST_PUBLIC_TOPMOST_OK source=exact-public-r38 realBrowserWindows=2 win32Topmost=1'
+          Write-Host 'R39_FAST_PUBLIC_TOPMOST_OK source=exact-public-r38 realBrowserWindows=2 win32Topmost=1 bounds=fullscreen-settled'
       - name: Run real R39 refocus E2E on public R38 native binaries
         shell: powershell
         run: |
