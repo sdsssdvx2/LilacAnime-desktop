@@ -1,0 +1,38 @@
+name: R39 long-blur refocus smoke preflight
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r39-refocus-pip-subtitle]
+    paths:
+      - .github/workflows/r39-long-blur-refocus-smoke-preflight.yml
+      - scripts/r39-long-blur-refocus-runtime-smoke.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate long-blur refocus runtime smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node --check scripts/r39-long-blur-refocus-runtime-smoke.cjs
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $text=Get-Content scripts/r39-long-blur-refocus-runtime-smoke.cjs -Raw
+          foreach($marker in @(
+            'R39_LONG_BLUR_REFOCUS_RUNTIME_OK',
+            'blurMs=4000',
+            'first focused frame too slow',
+            'sustained focused cadence',
+            'focused dispatch gap survived refocus',
+            'LILAC_R39_REFOCUS_PHASE_REANCHOR'
+          )){if(-not $text.Contains($marker)){throw "R39 refocus smoke marker missing: $marker"}}
+          Write-Host 'R39_LONG_BLUR_REFOCUS_PREFLIGHT_OK syntax=1 cycles=3 blurMs=4000 firstFrameLimitMs=300 sustainedFrames=12 sustainedWindowMs=900 dispatchGapLimitMs=300'
