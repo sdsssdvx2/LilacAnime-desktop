@@ -42,6 +42,7 @@ function sanitizePayload(payload = {}) {
     stackGap: String(payload.stackGap || '0px').slice(0, 128),
     stackAlignItems: String(payload.stackAlignItems || 'center').slice(0, 64),
     stackJustifyContent: String(payload.stackJustifyContent || 'normal').slice(0, 64),
+    fontPath: fontUrl ? fontPath : '',
     fontUrl,
     cues
   };
