@@ -121,14 +121,28 @@ jobs:
           # acceptance build must remain a draft until direct testing is complete.
           # Never delete or overwrite a published R40 release. A rerun may clean up
           # only a draft targeted at this exact workflow SHA.
-          $existingRaw = gh release view $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish 2>$null
-          if($LASTEXITCODE-eq 0){
+          # Windows PowerShell 5.1 can turn redirected native stderr into a terminating
+          # NativeCommandError when ErrorActionPreference=Stop. Existence probes are
+          # intentionally allowed to return exit 1, so temporarily relax only that probe.
+          $savedErrorActionPreference=$ErrorActionPreference
+          try {
+            $ErrorActionPreference='Continue'
+            $existingRaw = gh release view $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish 2>$null
+            $existingExit=$LASTEXITCODE
+          }
+          finally {
+            $ErrorActionPreference=$savedErrorActionPreference
+          }
+          if($existingExit-eq 0){
             $existing=$existingRaw|ConvertFrom-Json
             if($existing.isDraft-ne $true -or $existing.targetCommitish-ne $env:GITHUB_SHA){
               throw "Refusing to replace existing R40 release: prerelease=$($existing.isPrerelease) draft=$($existing.isDraft) target=$($existing.targetCommitish) expected=$env:GITHUB_SHA"
             }
             gh release delete $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag
             if($LASTEXITCODE-ne 0){throw 'R40 safe draft cleanup failed'}
+          }
+          elseif($existingExit-ne 1){
+            throw "R40 draft release existence probe failed with exit $existingExit"
           }
 
           gh release create $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r40 callback pacing + single-DOM subtitle' --notes 'R40 is a qualified draft for one direct user acceptance test. It is deliberately kept as a GitHub draft because the existing R2K custom updater reads the releases collection and excludes drafts but does not exclude prereleases. This prevents R39 installations from automatically selecting R40 before the direct test passes. R40 preserves the R33 unfocused native-only owned popup, R37 explicit renderer handoff/full-popup no-hole black-flash path, R38 updater lifecycle, R39 PiP/miniplayer bidirectional native topmost behavior, and focused direct WebGPU presenter. R40 makes the native frame callback authoritative, keeps the 250 ms watchdog recovery-only, removes release-wake cadence amplification except real backpressure, and gates JS wakeups by fresh frame IDs. The real product direct-WebGPU runtime gate measures a focused 11-second interval with a 10-second cadence window and three 4-second native-only blur/refocus cycles, requiring prompt direct-WebGPU recovery and no >=300 ms focused dispatch gaps. R40 also moves unfocused subtitles to a transparent owned overlay sourced from the same focused Chromium DOM/computed style, with real rival-focus ordering, deferred one-shot replay, explicit hide/minimize lifecycle suppression, format-agnostic custom FontFace byte loading/readiness, natural multiline/nested-markup geometry, and raw-HWND pixel/z-order qualification. A producer-thread one-shot current-frame redraw closes the paused/no-subtitle R37 handoff case without moving playback or restoring native subtitle authority. Exact R39 final6 reconstruction, R37 E2E, R39 real native-topmost runtime, packaged ASAR/native hash verification, release-asset redownload verification, and an exact simulation of the R2K custom-updater release filter are mandatory in this workflow.'
@@ -146,12 +160,23 @@ jobs:
           # created one, it must point at this exact workflow SHA; otherwise the
           # release targetCommitish check above is authoritative until publication.
           git fetch --tags --force
-          $tagOutput=@(git rev-list -n 1 $env:R40_RELEASE_TAG 2>$null)
-          $tagExists=($LASTEXITCODE-eq 0 -and $tagOutput.Count-gt 0)
+          $savedErrorActionPreference=$ErrorActionPreference
+          try {
+            $ErrorActionPreference='Continue'
+            $tagOutput=@(git rev-list -n 1 $env:R40_RELEASE_TAG 2>$null)
+            $tagProbeExit=$LASTEXITCODE
+          }
+          finally {
+            $ErrorActionPreference=$savedErrorActionPreference
+          }
+          $tagExists=($tagProbeExit-eq 0 -and $tagOutput.Count-gt 0)
           $publishedTagSha='draft-no-tag-ref'
           if($tagExists){
             $publishedTagSha=([string]$tagOutput[0]).Trim()
             if($publishedTagSha-ne $env:GITHUB_SHA){throw "R40 draft tag target mismatch $publishedTagSha != $env:GITHUB_SHA"}
+          }
+          elseif($tagProbeExit-ne 128 -and $tagProbeExit-ne 1){
+            throw "R40 draft tag existence probe failed with exit $tagProbeExit"
           }
 
           $verify=Join-Path $env:RUNNER_TEMP 'r40-draft-reverify'
