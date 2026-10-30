@@ -93,12 +93,26 @@ native = once(
   'preserve forced redraw across real slot backpressure'
 );
 
-native = once(
-  native,
-  '            player->producerProducedFrames += 1;\n            player->producerQueueMax = std::max<uint64_t>(',
-  `            player->producerProducedFrames += 1;\n            if (r40ForceRedraw) player->producerForcedRedrawFrames.fetch_add(1, std::memory_order_relaxed);\n            player->producerQueueMax = std::max<uint64_t>(`,
+// R33 wraps the Chromium queue in a native-only ownership branch, and later
+// handoff hardening may insert diagnostics between producedFrames and queueMax.
+// Count the completed one-shot at the semantic success point inside the producer
+// worker instead of depending on those two statements remaining adjacent.
+const producerWorkerStart = native.indexOf('bool StartFrameProducerWorker(');
+const producerWorkerEnd = native.indexOf('\nnapi_value StartFrameProducer(', producerWorkerStart);
+if (producerWorkerStart < 0 || producerWorkerEnd <= producerWorkerStart) {
+  throw new Error('StartFrameProducerWorker structural boundary missing');
+}
+let producerWorkerBlock = native.slice(producerWorkerStart, producerWorkerEnd);
+for (const marker of ['player->producerReady.push_back({', 'player->producerQueueMax = std::max<uint64_t>(']) {
+  if (!producerWorkerBlock.includes(marker)) throw new Error(`completed forced redraw frame context missing: ${marker}`);
+}
+producerWorkerBlock = once(
+  producerWorkerBlock,
+  '            player->producerProducedFrames += 1;',
+  `            player->producerProducedFrames += 1;\n            if (r40ForceRedraw) player->producerForcedRedrawFrames.fetch_add(1, std::memory_order_relaxed);`,
   'count completed forced redraw frame'
 );
+native = native.slice(0, producerWorkerStart) + producerWorkerBlock + native.slice(producerWorkerEnd);
 
 const redrawApi = String.raw`
 napi_value RequestFrameProducerRedraw(napi_env env, napi_callback_info info) {
