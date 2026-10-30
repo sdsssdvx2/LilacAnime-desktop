@@ -13,6 +13,20 @@ if (!source.includes('LILAC_R40_FRESH_FRAME_WAKE_GATING')) {
 if (!source.includes('LILAC_R40_PRODUCER_CALLBACK_AUTHORITY')) {
   throw new Error('R40 schedule audit requires producer callback-authority correction');
 }
+if (!source.includes('LILAC_R40_RELEASE_CALLBACK_AUTHORITY')) {
+  throw new Error('R40 schedule audit requires release callback-authority correction');
+}
+
+const releaseStart = source.indexOf('  function releaseNativeFrame(');
+const releaseEnd = source.indexOf('\n\n  function schedulePump(', releaseStart);
+if (releaseStart < 0 || releaseEnd <= releaseStart) throw new Error('releaseNativeFrame boundary missing in generated bridge');
+const releaseBlock = source.slice(releaseStart, releaseEnd);
+if (!releaseBlock.includes('if (!(frameProducerStarted || nativeUpdateCallbackInstalled))')) {
+  throw new Error('releaseNativeFrame immediate pump is not callback-authority gated');
+}
+if ((releaseBlock.split('schedulePump(0);').length - 1) !== 1) {
+  throw new Error('releaseNativeFrame must retain exactly one legacy-only immediate pump');
+}
 
 const hits = [];
 for (let index = 0; index < lines.length; index += 1) {
@@ -41,6 +55,10 @@ const definitions = hits.filter(hit => /function\s+schedulePump\s*\(/.test(hit.t
 if (definitions.length !== 1) {
   throw new Error(`expected exactly one schedulePump definition, found ${definitions.length}`);
 }
+const releaseHits = hits.filter(hit => hit.owner === 'releaseNativeFrame' && hit.text === 'schedulePump(0);');
+if (releaseHits.length !== 1) {
+  throw new Error(`expected one callback-gated releaseNativeFrame legacy pump, found ${releaseHits.length}`);
+}
 
 console.log(`R40_SCHEDULE_CALLSITE_AUDIT_BEGIN count=${hits.length}`);
 for (let index = 0; index < hits.length; index += 1) {
@@ -48,4 +66,4 @@ for (let index = 0; index < hits.length; index += 1) {
   console.log(`R40_SCHEDULE_CALLSITE index=${index + 1} line=${hit.line} owner=${hit.owner} text=${JSON.stringify(hit.text)}`);
   for (const line of hit.context) console.log(line);
 }
-console.log(`R40_SCHEDULE_CALLSITE_AUDIT_OK count=${hits.length} definitionLine=${definitions[0].line}`);
+console.log(`R40_SCHEDULE_CALLSITE_AUDIT_OK count=${hits.length} definitionLine=${definitions[0].line} releaseImmediatePump=legacy-only`);
