@@ -102,4 +102,35 @@ if (source.includes("'R40 subtitle overlay owner lifecycle'")) throw new Error('
 if (source.includes("'R40 renderer overlay state'")) throw new Error('R40 stale renderer-state exact anchor survived');
 
 fs.writeFileSync(target, source, 'utf8');
-console.log(`R40_SUBTITLE_ANCHOR_COMPAT_OK target=${path.basename(target)} lifecycle=createWindow-structural ipc=desktop-settings-regex rendererState=constructor-scoped close=independent-listener`);
+
+// The original R3B pending-wake lifecycle is generation-scoped, not open()/stop()
+// function-name scoped. R39 preserves that authoritative reset sequence. Normalize
+// the R40 callback transform itself so it extends the exact R3B generation reset
+// with the frame-id latch reset, instead of guessing later function boundaries.
+const callbackTarget = path.resolve(__dirname, 'r40-callback-pacing-fix.cjs');
+let callbackSource = fs.readFileSync(callbackTarget, 'utf8').replace(/\r\n/g, '\n');
+const openLabel = "'reset pending signal id on open/source change'";
+const stopLabel = "'reset pending signal id on stop'";
+const openAt = callbackSource.indexOf(openLabel);
+const stopAt = callbackSource.indexOf(stopLabel);
+if (openAt < 0 || stopAt <= openAt || callbackSource.indexOf(openLabel, openAt + openLabel.length) >= 0 || callbackSource.indexOf(stopLabel, stopAt + stopLabel.length) >= 0) {
+  throw new Error('R40 callback lifecycle compat labels missing or ambiguous');
+}
+const callbackRangeStart = callbackSource.lastIndexOf('bridge = resetPendingWakeInFunction(', openAt);
+const callbackRangeEndMarker = ');';
+const callbackRangeEndAt = callbackSource.indexOf(callbackRangeEndMarker, stopAt + stopLabel.length);
+if (callbackRangeStart < 0 || callbackRangeEndAt < 0) throw new Error('R40 callback lifecycle compat range invalid');
+const callbackReplacement = [
+  'bridge = once(',
+  '  bridge,',
+  "  '    generation += 1;\\n    nativeWakePending = false;',",
+  '  `    generation += 1;\\n    nativeWakePending = false;\\n    nativeWakePendingFrameId = 0;`,',
+  "  'reset pending signal id on authoritative source generation change'",
+  ');'
+].join('\n');
+callbackSource = callbackSource.slice(0, callbackRangeStart) + callbackReplacement + callbackSource.slice(callbackRangeEndAt + callbackRangeEndMarker.length);
+if (callbackSource.includes(openLabel) || callbackSource.includes(stopLabel)) throw new Error('R40 stale callback lifecycle labels survived compat');
+if (!callbackSource.includes('reset pending signal id on authoritative source generation change')) throw new Error('R40 generation-scoped callback reset replacement missing');
+fs.writeFileSync(callbackTarget, callbackSource, 'utf8');
+
+console.log(`R40_SUBTITLE_ANCHOR_COMPAT_OK target=${path.basename(target)} lifecycle=createWindow-structural ipc=desktop-settings-regex rendererState=constructor-scoped close=independent-listener callbackLifecycle=authoritative-generation-reset`);
