@@ -101,14 +101,19 @@ async function blurRefocusCycle(bridge,main,rival,index){
     if(!Object.hasOwn(p0,'signalWakeups')||!Object.hasOwn(p0,'watchdogWakeups')||!Object.hasOwn(p0,'releaseWakeups'))throw new Error('R40 producer diagnostics missing');
     if(!Object.hasOwn(m0,'r40PumpNativeSignalTicks')||!Object.hasOwn(m0,'r40NoFrameTimerTicks'))throw new Error('R40 JS pacing diagnostics missing');
 
-    await sleep(8000);
+    // R24 cadence is a 10 s rolling window. Measure for longer than that so the
+    // final cadence snapshot is composed entirely of this focused steady-state
+    // epoch rather than carrying startup/warm-up intervals from before baseline.
+    const focusedMeasureMs=11000,cadenceWindowMs=10000,focusedMeasureStartWallMs=Date.now();
+    await sleep(focusedMeasureMs);
     const after=bridge.state(),p1=after.frameProducer||{},m1=after.metrics||{};
     const raw=delta(p0,p1,'rawWakeSignals'),worker=delta(p0,p1,'workerWakeups'),signals=delta(p0,p1,'signalWakeups'),watchdogs=delta(p0,p1,'watchdogWakeups'),releaseWakes=delta(p0,p1,'releaseWakeups'),produced=delta(p0,p1,'producedFrames');
     const sentDelta=delta(m0,m1,'sentFrames'),timerTicks=delta(m0,m1,'r40PumpTimerTicks'),nativeTicks=delta(m0,m1,'r40PumpNativeSignalTicks'),pendingTicks=delta(m0,m1,'r40PumpPendingSignalTicks');
     const noTimer=delta(m0,m1,'r40NoFrameTimerTicks'),noNative=delta(m0,m1,'r40NoFrameNativeSignalTicks'),noPending=delta(m0,m1,'r40NoFramePendingSignalTicks');
     const fresh=delta(m0,m1,'r40FreshFrameSignals'),stale=delta(m0,m1,'r40StaleFrameSignals');
+    const minProduced=Math.ceil(140*focusedMeasureMs/8000),minSent=Math.ceil(130*focusedMeasureMs/8000);
 
-    if(produced<140||sentDelta<130)throw new Error(`insufficient sustained playback produced=${produced} sent=${sentDelta}`);
+    if(produced<minProduced||sentDelta<minSent)throw new Error(`insufficient sustained playback produced=${produced}/${minProduced} sent=${sentDelta}/${minSent}`);
     if(n(p1,'backpressure')!==0)throw new Error(`unexpected producer backpressure=${p1.backpressure}`);
     if(releaseWakes!==0)throw new Error(`slot release woke producer without backpressure releaseWakes=${releaseWakes}`);
     if(p1.waitingForSlot===true)throw new Error('producer left waitingForSlot asserted');
@@ -124,6 +129,7 @@ async function blurRefocusCycle(bridge,main,rival,index){
     const cadence=after?.receiver?.cadence||{};
     if(Number(cadence.sampleCount||0)<10)throw new Error('renderer cadence sample too small');
     if(Number(cadence.intervalP95Ms||999)>65||Number(cadence.intervalMaxMs||999)>160)throw new Error(`focused cadence regressed p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs}`);
+    const focusedGaps=postFocusGaps(after,focusedMeasureStartWallMs),steadyFocusedMaxGap=focusedGaps.length?Math.max(...focusedGaps):0;
 
     // Replace R39's synthetic adapter warm-up evidence with the real R40 product
     // renderer itself. Three long native-only epochs must return to actual direct
@@ -134,7 +140,7 @@ async function blurRefocusCycle(bridge,main,rival,index){
     const maxFirst=Math.max(...cycles.map(x=>x.firstFrameMs)),maxGap=Math.max(...cycles.map(x=>x.maxGap));
     if(String(bridge.state()?.receiver?.presentationMode||'')!=='direct-receive-webgpu-copy')throw new Error('direct WebGPU not active after final refocus cycle');
 
-    console.log(`R40_CALLBACK_PACING_RUNTIME_OK seconds=8 productDirectWebgpu=1 raw=${raw} worker=${worker} signalWake=${signals} watchdogWake=${watchdogs} releaseWake=${releaseWakes} produced=${produced} sent=${sentDelta} freshSignals=${fresh} staleSignals=${stale} timerTicks=${timerTicks} nativeTicks=${nativeTicks} pendingTicks=${pendingTicks} noFrameTimer=${noTimer} noFrameNative=${noNative} noFramePending=${noPending} p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs} directWebgpu=1 backpressure=0 refocusCycles=3 blurMs=4000 maxFirstFocusedFrameMs=${maxFirst} maxPostFocusDispatchGapMs=${maxGap} nativeOnlyChromiumSuppressed=1`);
+    console.log(`R40_CALLBACK_PACING_RUNTIME_OK focusedMs=${focusedMeasureMs} cadenceWindowMs=${cadenceWindowMs} productDirectWebgpu=1 raw=${raw} worker=${worker} signalWake=${signals} watchdogWake=${watchdogs} releaseWake=${releaseWakes} produced=${produced} sent=${sentDelta} freshSignals=${fresh} staleSignals=${stale} timerTicks=${timerTicks} nativeTicks=${nativeTicks} pendingTicks=${pendingTicks} noFrameTimer=${noTimer} noFrameNative=${noNative} noFramePending=${noPending} p95=${cadence.intervalP95Ms} max=${cadence.intervalMaxMs} steadyFocusedDispatchGapMs=${steadyFocusedMaxGap} directWebgpu=1 backpressure=0 refocusCycles=3 blurMs=4000 maxFirstFocusedFrameMs=${maxFirst} maxPostFocusDispatchGapMs=${maxGap} nativeOnlyChromiumSuppressed=1`);
   }finally{
     clearTimeout(deadline);try{await bridge?.close?.()}catch{}try{await bridge?.dispose?.()}catch{}try{rival?.destroy()}catch{}try{win?.destroy()}catch{}try{fs.rmSync(dir,{recursive:true,force:true})}catch{}delete process.env.LILAC_LIBMPV_TEST_AO_NULL;app.quit();
   }
