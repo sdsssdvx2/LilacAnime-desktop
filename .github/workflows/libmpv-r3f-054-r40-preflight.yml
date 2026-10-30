@@ -66,6 +66,7 @@ jobs:
             'scripts/r40-schedule-callsite-audit.cjs',
             'scripts/r40-callback-pacing-runtime-smoke.cjs',
             'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
+            'scripts/r40-fontface-overlay-diagnostic-smoke.cjs',
             'scripts/r40-subtitle-runtime-focus-hardening.cjs',
             'scripts/r40-subtitle-runtime-coverage-hardening.cjs',
             'scripts/r40-subtitle-controller-lifecycle-hardening.cjs',
@@ -87,6 +88,12 @@ jobs:
           node --check $compatProbe
           if($LASTEXITCODE-ne 0){throw 'R40 subtitle compat-probed transform syntax failed'}
           Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction'
+      - name: Fast sandbox custom-font diagnostic
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r40-run-electron-gate.cjs scripts/r40-fontface-overlay-diagnostic-smoke.cjs R40_FONTFACE_OVERLAY_DIAGNOSTIC_OK 30000
+          if($LASTEXITCODE-ne 0){throw 'R40 fast sandbox custom-font diagnostic failed'}
       - name: Reconstruct exact R39 final6 and compile R40
         shell: powershell
         env:
