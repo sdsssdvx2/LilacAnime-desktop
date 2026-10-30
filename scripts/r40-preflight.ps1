@@ -11,6 +11,7 @@ New-Item -ItemType Directory -Force -Path $stash | Out-Null
 $scriptSupport=@(
   'r40-callback-pacing-fix.cjs',
   'r40-callback-watchdog-authority-correction.cjs',
+  'r40-schedule-callsite-audit.cjs',
   'r40-callback-pacing-runtime-smoke.cjs',
   'r40-native-subtitle-overlay-runtime-smoke.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
@@ -86,6 +87,12 @@ node scripts/r40-rebundle-renderer.cjs
 Assert-Exit 'R40 renderer rebundle'
 node scripts/r40-finalize-identity.cjs
 Assert-Exit 'R40 identity'
+
+# Read-only audit of the fully generated bridge. This must run before native
+# compilation/runtime so every schedulePump caller is visible in CI logs and a
+# pacing failure can be attributed to an exact source location instead of guessed.
+node scripts/r40-schedule-callsite-audit.cjs
+Assert-Exit 'R40 schedulePump generated-callsite audit'
 
 # Parse all changed JavaScript before native compilation.
 foreach($script in @(
