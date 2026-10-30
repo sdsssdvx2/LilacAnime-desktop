@@ -15,6 +15,7 @@ $scriptSupport=@(
   'r40-schedule-callsite-audit.cjs',
   'r40-callback-pacing-runtime-smoke.cjs',
   'r40-native-subtitle-overlay-runtime-smoke.cjs',
+  'r40-subtitle-runtime-focus-hardening.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
   'r40-subtitle-anchor-compat.cjs',
   'r40-run-electron-gate.cjs',
@@ -70,6 +71,14 @@ foreach($script in @('electron/r40-subtitle-overlay-preload.cjs','electron/r40-s
   node --check $script
   Assert-Exit "R40 syntax $script"
 }
+
+# Harden the hosted Windows subtitle runtime proof without changing product code.
+# The native presenter must already be visible and a real rival BrowserWindow must
+# still own focus at the exact instant the unfocused overlay is activated.
+node scripts/r40-subtitle-runtime-focus-hardening.cjs
+Assert-Exit 'R40 subtitle runtime post-presenter focus hardening'
+node --check scripts/r40-native-subtitle-overlay-runtime-smoke.cjs
+Assert-Exit 'R40 hardened subtitle runtime smoke syntax'
 
 # Normalize only the R40 transform script itself against exact final-R39 formatting.
 # Product files are still fail-closed and are not modified by this compatibility pass.
