@@ -1,0 +1,76 @@
+name: R40 next hardening prep syntax
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r40-next-hardening-prep]
+    paths:
+      - .github/workflows/r40-next-hardening-prep-syntax.yml
+      - scripts/r40-subtitle-*.cjs
+      - scripts/r40-native-subtitle-overlay-runtime-smoke.cjs
+      - electron/r40-subtitle-overlay-preload.cjs
+      - electron/r40-subtitle-overlay-window.cjs
+      - scripts/r40-preflight.ps1
+      - .github/workflows/libmpv-r3f-054-r40-preflight.yml
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-r40-next-hardening-prep-syntax
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-transform-probe:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parse new hardening support
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $scripts=@(
+            'scripts/r40-subtitle-runtime-focus-hardening.cjs',
+            'scripts/r40-subtitle-runtime-coverage-hardening.cjs',
+            'scripts/r40-subtitle-controller-lifecycle-hardening.cjs',
+            'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
+            'electron/r40-subtitle-overlay-preload.cjs',
+            'electron/r40-subtitle-overlay-window.cjs'
+          )
+          foreach($script in $scripts){
+            node --check $script
+            if($LASTEXITCODE-ne 0){throw "node syntax failed: $script"}
+          }
+          $tokens=$null;$errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/r40-preflight.ps1'),[ref]$tokens,[ref]$errors)
+          if($errors.Count-ne 0){throw "PowerShell parse failed: $($errors|Out-String)"}
+          Write-Host 'R40_PREP_SYNTAX_OK js=6 powershell=1'
+      - name: Apply subtitle smoke hardening chain on clean checkout
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r40-subtitle-runtime-focus-hardening.cjs
+          if($LASTEXITCODE-ne 0){throw 'focus hardening transform failed'}
+          node scripts/r40-subtitle-runtime-coverage-hardening.cjs
+          if($LASTEXITCODE-ne 0){throw 'coverage hardening transform failed'}
+          node --check scripts/r40-native-subtitle-overlay-runtime-smoke.cjs
+          if($LASTEXITCODE-ne 0){throw 'hardened runtime smoke syntax failed'}
+          $smoke=Get-Content 'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs' -Raw
+          foreach($marker in @(
+            'R40_SUBTITLE_POST_PRESENTER_FOCUS_PROOF',
+            'R40_SUBTITLE_DEFERRED_REPLAY_RUNTIME_OK',
+            'focused DOM reference did not produce multiline geometry',
+            "controller.reconcileDeferred(owner,'smoke-owner-blur')",
+            "document.body.dataset.fontReady==='1'",
+            "document.body.dataset.fontCustom==='1'"
+          )){if(-not $smoke.Contains($marker)){throw "hardened smoke marker missing: $marker"}}
+          $overlay=Get-Content 'electron/r40-subtitle-overlay-preload.cjs' -Raw
+          if($overlay.Contains('format("truetype")')){throw 'hard-coded truetype hint survived prep'}
+          foreach($marker in @('LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC','document.fonts.load','renderGeneration')){if(-not $overlay.Contains($marker)){throw "font hardening marker missing: $marker"}}
+          $controller=Get-Content 'electron/r40-subtitle-overlay-window.cjs' -Raw
+          foreach($marker in @('LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','deferredActivePayload','deferredReplayCount','async reconcileDeferred(')){if(-not $controller.Contains($marker)){throw "controller hardening marker missing: $marker"}}
+          Write-Host 'R40_PREP_TRANSFORM_PROBE_OK focus=post-presenter race=deferred-replay font=format-agnostic+ready multiline=natural-wrap nested-bold=1'
