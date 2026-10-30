@@ -71,4 +71,4 @@ jobs:
           $ErrorActionPreference='Stop'
           node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
           if($LASTEXITCODE-ne 0){throw 'R40 subtitle diagnostic against public R39 native runtime failed'}
-          Write-Host 'R40_R39_NATIVE_SUBTITLE_DIAGNOSTIC_OK publicR39Native=1 currentR40Overlay=1'
+          Write-Host 'R40_R39_NATIVE_SUBTITLE_DIAGNOSTIC_OK publicR39Native=1 currentR40Overlay=1 deterministicRefocus=1'
