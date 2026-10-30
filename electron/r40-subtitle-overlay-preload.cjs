@@ -25,20 +25,48 @@ function cssUrl(value = '') { return String(value).replace(/\\/g, '\\\\').replac
 
 let ready = false;
 let lastPayload = null;
+let renderGeneration = 0;
 
-function render(payload = {}) {
+async function prepareCustomFont(fontStyle, fontUrl, generation) {
+  if (!/^file:\/\//i.test(fontUrl)) {
+    fontStyle.textContent = '';
+    return { current: generation === renderGeneration, ready: true, custom: false };
+  }
+
+  // Do not force a TrueType-only source-format hint: the app accepts TTF/OTF/TTC/WOFF/WOFF2.
+  // Chromium should infer the actual container from the file URL, matching the
+  // focused DOM path that loads the same bytes through FontFace('LilacSubtitle').
+  fontStyle.textContent = `@font-face{font-family:LilacSubtitle;src:url("${cssUrl(fontUrl)}");font-display:block}`; // LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC
+  try {
+    const loaded = await document.fonts.load('16px "LilacSubtitle"', 'R40');
+    if (generation !== renderGeneration) return { current: false, ready: false, custom: true };
+    const fontReady = Array.isArray(loaded) ? loaded.length > 0 : true;
+    return { current: true, ready: fontReady, custom: true };
+  } catch {
+    return { current: generation === renderGeneration, ready: false, custom: true };
+  }
+}
+
+async function render(payload = {}) {
   lastPayload = payload;
   if (!ready) return;
+  const generation = ++renderGeneration;
   const root = document.getElementById('root');
   const stack = document.getElementById('stack');
   const fontStyle = document.getElementById('customFont');
   if (!root || !stack || !fontStyle) return;
 
   const active = payload.active === true && Array.isArray(payload.cues) && payload.cues.length > 0;
-  root.style.display = active ? 'block' : 'none';
+  // Hide while rebuilding and while a custom font is loading. A stale async font
+  // completion is ignored by renderGeneration, so an older cue can never flash.
+  root.style.display = 'none';
+  document.body.dataset.active = '0';
+  document.body.dataset.fontReady = '0';
   if (!active) {
     stack.replaceChildren();
-    document.body.dataset.active = '0';
+    fontStyle.textContent = '';
+    document.body.dataset.fontReady = '1';
+    document.body.dataset.revision = String(payload.revision || 0);
     return;
   }
 
@@ -54,11 +82,6 @@ function render(payload = {}) {
   stack.style.justifyContent = String(payload.stackJustifyContent || 'normal');
   applyStyle(stack, payload.stackStyle);
 
-  const fontUrl = String(payload.fontUrl || '');
-  fontStyle.textContent = /^file:\/\//i.test(fontUrl)
-    ? `@font-face{font-family:LilacSubtitle;src:url("${cssUrl(fontUrl)}") format("truetype");font-display:block}`
-    : '';
-
   const fragment = document.createDocumentFragment();
   for (const cue of payload.cues) {
     const line = document.createElement('div');
@@ -68,6 +91,17 @@ function render(payload = {}) {
     fragment.append(line);
   }
   stack.replaceChildren(fragment);
+
+  const fontUrl = String(payload.fontUrl || '');
+  const font = await prepareCustomFont(fontStyle, fontUrl, generation);
+  if (!font.current || generation !== renderGeneration) return;
+
+  // If a selected custom font is unreadable, remain usable with the exact
+  // computed fallback family already serialized by the focused DOM, but expose
+  // the failure to runtime diagnostics instead of silently claiming font parity.
+  document.body.dataset.fontReady = font.ready ? '1' : '0';
+  document.body.dataset.fontCustom = font.custom ? '1' : '0';
+  root.style.display = 'block';
   document.body.dataset.active = '1';
   document.body.dataset.revision = String(payload.revision || 0);
   document.body.dataset.marker = 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY';
@@ -75,7 +109,7 @@ function render(payload = {}) {
 
 window.addEventListener('DOMContentLoaded', () => {
   ready = true;
-  render(lastPayload || { active:false, cues:[] });
+  void render(lastPayload || { active:false, cues:[] });
   ipcRenderer.send('r40-subtitle-overlay:ready');
 });
-ipcRenderer.on('r40-subtitle-overlay:render', (_event, payload) => render(payload));
+ipcRenderer.on('r40-subtitle-overlay:render', (_event, payload) => { void render(payload); });
