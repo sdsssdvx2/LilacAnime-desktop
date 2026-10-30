@@ -20,6 +20,17 @@ if (source.includes('R40_SUBTITLE_DEFERRED_REPLAY_RUNTIME_OK')) {
 }
 
 replaceOnce(
+  `const { app, BrowserWindow, desktopCapturer, screen } = require('electron');`,
+  `const { app, BrowserWindow, desktopCapturer, screen, ipcMain } = require('electron');`,
+  'custom-font byte IPC smoke import'
+);
+replaceOnce(
+  `  await app.whenReady();`,
+  `  await app.whenReady();\n  // Standalone smoke does not boot electron/main.cjs, so reproduce the product's\n  // existing font:default byte service for the exact custom font selected below.\n  // The overlay must consume bytes through FontFace, not bypass the test with file://.\n  ipcMain.handle('font:default', (_event, _choice = '기본체', customPath = '') => {\n    const file = String(customPath || '');\n    if (!/\\.(ttf|otf|ttc)$/i.test(file) || !fs.existsSync(file)) return null;\n    try { return { name:path.basename(file), family:'R40SmokeFont', data:fs.readFileSync(file) }; } catch { return null; }\n  });`,
+  'custom-font byte IPC smoke handler'
+);
+
+replaceOnce(
   `      #stack{position:absolute;left:120px;top:405px;width:660px;height:86px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:0}\n      #cue{display:block;color:rgb(255,0,255);font-family:Arial,sans-serif;font-size:42px;font-weight:700;font-style:normal;line-height:50px;letter-spacing:0.5px;text-align:center;white-space:nowrap;text-shadow:2px 2px 0 rgb(0,0,0);-webkit-text-stroke:1px rgb(255,0,255);max-width:660px}\n    </style></head><body><div id="stack"><div id="cue">R40 SAME DOM SUBTITLE</div></div><script>`,
   `      @font-face{font-family:LilacSubtitle;src:local("Arial");font-display:block}\n      #stack{position:absolute;left:170px;top:340px;width:560px;height:130px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:0}\n      #cue{display:block;color:rgb(255,0,255);font-family:LilacSubtitle,Arial,sans-serif;font-size:42px;font-weight:700;font-style:normal;line-height:50px;letter-spacing:0.5px;text-align:center;white-space:normal;overflow-wrap:normal;word-break:normal;text-shadow:2px 2px 0 rgb(0,0,0);-webkit-text-stroke:1px rgb(255,0,255);max-width:520px}\n    </style></head><body><div id="stack"><div id="cue"><b>R40 SAME DOM SUBTITLE WRAPS</b> ON TWO LINES</div></div><script>`,
   'multiline focused DOM reference'
@@ -48,6 +59,7 @@ for (const marker of [
   'R40_SUBTITLE_OWNER_LIFECYCLE_RUNTIME_OK',
   'focused DOM reference did not produce multiline geometry',
   "payload.fontPath=customFontPath",
+  "ipcMain.handle('font:default'",
   "document.body.dataset.fontReady==='1'",
   "document.body.dataset.fontCustom==='1'",
   "controller.reconcileDeferred(owner,'smoke-owner-blur')",
@@ -58,4 +70,4 @@ for (const marker of [
 }
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R40_SUBTITLE_RUNTIME_COVERAGE_HARDENING_OK race=focused-payload->real-blur->single-replay lifecycle=explicit-hide-blocked->show-release font=custom-ready multiline=natural-wrap nested-bold=1 geometry=strict');
+console.log('R40_SUBTITLE_RUNTIME_COVERAGE_HARDENING_OK race=focused-payload->real-blur->single-replay lifecycle=explicit-hide-blocked->show-release font=product-byte-IPC+FontFace-ready multiline=natural-wrap nested-bold=1 geometry=strict');
