@@ -21,13 +21,13 @@ function once(needle, replacement, label) {
 // present in the generated bridge state.
 once(
   `    const view = r37State(bridge);\n    return view.focus.active === true && view.handoff.subtitleVisible === true;`,
-  `    const view = r37State(bridge);\n    const r40SingleDom = Object.prototype.hasOwnProperty.call(view.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n    return view.focus.active === true && (r40SingleDom ? view.handoff.subtitleVisible === false : view.handoff.subtitleVisible === true);`,
+  `    const view = r37State(bridge);\n    const r40SingleDom = Object.prototype.hasOwnProperty.call(view.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n    const r40SuppressionReady = view.handoff.subtitleVisible === false && Number(view.handoff.r40NativeSubtitleSuppressedRequests || 0) >= expectedAck;\n    return view.focus.active === true && (r40SingleDom ? r40SuppressionReady : view.handoff.subtitleVisible === true);`,
   'R37 native-active subtitle proxy'
 );
 
 once(
   `  const blurred = r37State(bridge);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
-  `  const blurred = r37State(bridge);\n  const r40SingleDom = Object.prototype.hasOwnProperty.call(blurred.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n  if (r40SingleDom && blurred.handoff.subtitleVisible !== false) throw new Error(\`\${label} R40 native subtitle unexpectedly visible\`);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
+  `  const blurred = r37State(bridge);\n  const r40SingleDom = Object.prototype.hasOwnProperty.call(blurred.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n  if (r40SingleDom && blurred.handoff.subtitleVisible !== false) throw new Error(\`\${label} R40 native subtitle unexpectedly visible\`);\n  if (r40SingleDom && Number(blurred.handoff.r40NativeSubtitleSuppressedRequests || 0) < expectedAck) throw new Error(\`\${label} R40 native subtitle suppression count too low=\${blurred.handoff.r40NativeSubtitleSuppressedRequests}\`);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
   'R37 blurred R40 subtitle authority assertion'
 );
 
@@ -38,4 +38,4 @@ once(
 );
 
 fs.writeFileSync(target, source, 'utf8');
-console.log('R40_R37_E2E_SEMANTIC_COMPAT_OK nativeSurface=R37-preserved nativeSubtitle=R40-single-DOM-suppressed ackTransportAssertions=unchanged');
+console.log('R40_R37_E2E_SEMANTIC_COMPAT_OK nativeSurface=R37-preserved nativeSubtitle=R40-single-DOM-suppressed perCycleSuppression=required ackTransportAssertions=unchanged');
