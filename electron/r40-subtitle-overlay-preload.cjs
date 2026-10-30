@@ -21,6 +21,14 @@ function finite(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 function px(value) { return `${Math.round(finite(value) * 1000) / 1000}px`; }
+function fontDiag(stage, { error = '', bytes = 0, kind = '' } = {}) {
+  const body = document.body;
+  if (!body) return;
+  body.dataset.fontStage = String(stage || '').slice(0, 96);
+  body.dataset.fontError = String(error || '').slice(0, 320);
+  body.dataset.fontBytes = String(Math.max(0, Number(bytes) || 0));
+  body.dataset.fontDataKind = String(kind || '').slice(0, 96);
+}
 
 let ready = false;
 let lastPayload = null;
@@ -31,6 +39,7 @@ let loadedCustomFontPromise = null;
 async function prepareCustomFont(fontStyle, fontPath, generation) {
   fontStyle.textContent = '';
   if (!fontPath) {
+    fontDiag('no-custom-font');
     return { current: generation === renderGeneration, ready: true, custom: false };
   }
 
@@ -44,24 +53,51 @@ async function prepareCustomFont(fontStyle, fontPath, generation) {
     const requestedPath = fontPath;
     loadedCustomFontPath = requestedPath;
     loadedCustomFontPromise = (async () => {
+      fontDiag('ipc-start');
       const font = await ipcRenderer.invoke('font:default', '기본체', requestedPath);
-      if (loadedCustomFontPath !== requestedPath || !font?.data) return false;
-      const bytes = new Uint8Array(font.data);
-      if (!bytes.byteLength) return false;
+      const raw = font?.data;
+      const rawKind = raw == null ? 'null' : `${Object.prototype.toString.call(raw)}:${raw?.constructor?.name || ''}`;
+      fontDiag('ipc-result', { bytes: raw?.byteLength || raw?.length || raw?.data?.length || 0, kind: rawKind });
+      if (loadedCustomFontPath !== requestedPath) {
+        fontDiag('stale-after-ipc', { kind: rawKind });
+        return false;
+      }
+      if (!raw) throw new Error('font:default returned no data');
+      const bytes = new Uint8Array(raw);
+      fontDiag('bytes-converted', { bytes: bytes.byteLength, kind: rawKind });
+      if (!bytes.byteLength) throw new Error(`font bytes empty kind=${rawKind}`);
+      if (typeof FontFace !== 'function') throw new Error(`FontFace unavailable type=${typeof FontFace}`);
       const face = new FontFace('LilacSubtitle', bytes);
+      fontDiag('face-created', { bytes: bytes.byteLength, kind: rawKind });
       await face.load();
-      if (loadedCustomFontPath !== requestedPath) return false;
+      fontDiag('face-loaded', { bytes: bytes.byteLength, kind: rawKind });
+      if (loadedCustomFontPath !== requestedPath) {
+        fontDiag('stale-after-face-load', { bytes: bytes.byteLength, kind: rawKind });
+        return false;
+      }
       [...document.fonts].filter(item => item.family === 'LilacSubtitle').forEach(item => document.fonts.delete(item));
       document.fonts.add(face);
+      fontDiag('fontset-added', { bytes: bytes.byteLength, kind: rawKind });
       // Keep an explicit FontFaceSet verification in addition to face.load(); this is
       // the runtime proof consumed by the hard gate, not a timing delay or fallback.
       const verified = await document.fonts.load('16px "LilacSubtitle"', 'R40');
+      const verifiedCount = Array.isArray(verified) ? verified.length : Number(verified?.length || 0);
+      fontDiag('fontset-verified', { bytes: bytes.byteLength, kind: `${rawKind}:verified=${verifiedCount}` });
       return !Array.isArray(verified) || verified.length > 0;
-    })().catch(() => false);
+    })().catch(error => {
+      fontDiag('failed', { error: String(error?.stack || error?.message || error), kind: document.body?.dataset?.fontDataKind || '' });
+      return false;
+    });
+  } else {
+    fontDiag('cached-promise');
   }
 
   const fontReady = await loadedCustomFontPromise;
-  if (generation !== renderGeneration) return { current: false, ready: false, custom: true };
+  if (generation !== renderGeneration) {
+    fontDiag('stale-generation');
+    return { current: false, ready: false, custom: true };
+  }
+  if (fontReady === true) fontDiag('ready', { bytes: document.body?.dataset?.fontBytes || 0, kind: document.body?.dataset?.fontDataKind || '' });
   return { current: true, ready: fontReady === true, custom: true };
 }
 
@@ -127,6 +163,7 @@ async function render(payload = {}) {
 
 window.addEventListener('DOMContentLoaded', () => {
   ready = true;
+  fontDiag('dom-ready');
   void render(lastPayload || { active:false, cues:[] });
   ipcRenderer.send('r40-subtitle-overlay:ready');
 });
