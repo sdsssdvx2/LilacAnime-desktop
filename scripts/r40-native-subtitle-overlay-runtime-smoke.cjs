@@ -47,6 +47,11 @@ async function waitUntil(predicate, timeoutMs, label) {
   throw new Error(`${label} timeout last=${JSON.stringify(last)}`);
 }
 
+async function twoPaints(win) {
+  if (!win || win.isDestroyed()) throw new Error('twoPaints requires live BrowserWindow');
+  await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+}
+
 async function capturePrimary() {
   const display = screen.getPrimaryDisplay();
   const width = Math.max(320, Math.round(display.bounds.width));
@@ -58,6 +63,40 @@ async function capturePrimary() {
   const size = image.getSize();
   if (size.width < 64 || size.height < 64) throw new Error(`invalid desktop capture ${size.width}x${size.height}`);
   return { image, size, display };
+}
+
+function scanMagentaBitmap(image, rect, origin = { x:0, y:0 }) {
+  const size = image.getSize();
+  if (size.width < 1 || size.height < 1) return null;
+  const bitmap = image.toBitmap();
+  const logicalWidth = Math.max(1, Number(rect.width) || size.width);
+  const logicalHeight = Math.max(1, Number(rect.height) || size.height);
+  const sx = size.width / logicalWidth;
+  const sy = size.height / logicalHeight;
+  const x0 = Math.max(0, Math.floor((Number(rect.x) || 0) * sx));
+  const y0 = Math.max(0, Math.floor((Number(rect.y) || 0) * sy));
+  const x1 = Math.min(size.width, Math.ceil(((Number(rect.x) || 0) + logicalWidth) * sx));
+  const y1 = Math.min(size.height, Math.ceil(((Number(rect.y) || 0) + logicalHeight) * sy));
+  let minX=Infinity,minY=Infinity,maxX=-1,maxY=-1,count=0;
+  for(let y=y0;y<y1;y+=1){
+    for(let x=x0;x<x1;x+=1){
+      const o=(y*size.width+x)*4;
+      const c0=bitmap[o],c1=bitmap[o+1],c2=bitmap[o+2];
+      if(c0>175&&c2>175&&c1<145){
+        minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);count+=1;
+      }
+    }
+  }
+  if(!count)return null;
+  return {
+    x:(minX/sx)+(Number(origin.x)||0),
+    y:(minY/sy)+(Number(origin.y)||0),
+    width:(maxX-minX+1)/sx,
+    height:(maxY-minY+1)/sy,
+    count,
+    cx:((minX+maxX+1)/2/sx)+(Number(origin.x)||0),
+    cy:((minY+maxY+1)/2/sy)+(Number(origin.y)||0)
+  };
 }
 
 function scanMagenta(capture, rect) {
@@ -74,8 +113,6 @@ function scanMagenta(capture, rect) {
     for(let x=x0;x<x1;x+=1){
       const o=(y*size.width+x)*4;
       const c0=bitmap[o],c1=bitmap[o+1],c2=bitmap[o+2];
-      // Bright magenta is invariant under R/B channel ordering: channels 0 and 2
-      // are both high while green is low.
       if(c0>175&&c2>175&&c1<145){
         minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);count+=1;
       }
@@ -113,6 +150,68 @@ function closeEnough(a,b,tolerance,label){
   if(Math.abs(a-b)>tolerance)throw new Error(`${label} mismatch focused=${a} unfocused=${b} tolerance=${tolerance}`);
 }
 
+function probeOwnedPopupZOrder(ownerHandleText, overlayHandleText) {
+  const ps = `
+$ErrorActionPreference='Stop'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class R40Win32ZOrder {
+  [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+}
+"@
+$owner=[IntPtr]([Int64]::Parse('${ownerHandleText}'))
+$overlay=[IntPtr]([Int64]::Parse('${overlayHandleText}'))
+$GW_HWNDNEXT=2
+$GW_OWNER=4
+$overlayIndex=-1
+$presenterIndex=-1
+$presenter=[IntPtr]::Zero
+$overlayOwner=[R40Win32ZOrder]::GetWindow($overlay,$GW_OWNER)
+$h=[R40Win32ZOrder]::GetTopWindow([IntPtr]::Zero)
+$i=0
+while($h -ne [IntPtr]::Zero -and $i -lt 4096){
+  $sb=New-Object System.Text.StringBuilder 256
+  [void][R40Win32ZOrder]::GetClassName($h,$sb,$sb.Capacity)
+  $className=$sb.ToString()
+  $windowOwner=[R40Win32ZOrder]::GetWindow($h,$GW_OWNER)
+  if($h -eq $overlay){$overlayIndex=$i}
+  if($presenter -eq [IntPtr]::Zero -and $className -eq 'LilacR32NativeFocusPresenter' -and $windowOwner -eq $owner -and [R40Win32ZOrder]::IsWindowVisible($h)){
+    $presenter=$h
+    $presenterIndex=$i
+  }
+  $h=[R40Win32ZOrder]::GetWindow($h,$GW_HWNDNEXT)
+  $i+=1
+}
+[ordered]@{
+  overlayIndex=$overlayIndex
+  presenterIndex=$presenterIndex
+  overlayAbove=($overlayIndex -ge 0 -and $presenterIndex -ge 0 -and $overlayIndex -lt $presenterIndex)
+  overlayOwnerMatches=($overlayOwner -eq $owner)
+  presenterHwnd=if($presenter -eq [IntPtr]::Zero){'0'}else{$presenter.ToInt64().ToString()}
+  scanned=$i
+} | ConvertTo-Json -Compress
+`;
+  const result = spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-Command', ps], {
+    encoding:'utf8', windowsHide:true, timeout:15000
+  });
+  if (result.status !== 0) throw new Error(`Win32 z-order probe failed status=${result.status} stderr=${String(result.stderr||'').slice(0,500)}`);
+  const lines=String(result.stdout||'').trim().split(/\r?\n/).filter(Boolean);
+  let parsed=null;
+  for(let i=lines.length-1;i>=0;i-=1){
+    try{parsed=JSON.parse(lines[i]);break}catch{}
+  }
+  if(!parsed)throw new Error(`Win32 z-order probe returned no JSON stdout=${String(result.stdout||'').slice(0,800)}`);
+  if(parsed.overlayOwnerMatches!==true)throw new Error(`overlay HWND is not owned by product owner ${JSON.stringify(parsed)}`);
+  if(Number(parsed.overlayIndex)<0||Number(parsed.presenterIndex)<0||String(parsed.presenterHwnd||'0')==='0')throw new Error(`owned native presenter or overlay missing from Win32 z-order ${JSON.stringify(parsed)}`);
+  if(parsed.overlayAbove!==true)throw new Error(`subtitle overlay is not above R33 native presenter in Win32 z-order ${JSON.stringify(parsed)}`);
+  return parsed;
+}
+
 (async()=>{
   await app.whenReady();
   const addonPath=process.env.LILAC_LIBMPV_PLAYER_ADDON;
@@ -141,10 +240,11 @@ function closeEnough(a,b,tolerance,label){
     await owner.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     owner.show();owner.focus();
     await waitUntil(()=>owner.isFocused(),3000,'owner focus');
-    await sleep(300);
+    await twoPaints(owner);
     const ownerRect=owner.getContentBounds();
-    const focusedBox=scanMagenta(await capturePrimary(),ownerRect);
-    if(!focusedBox||focusedBox.count<80)throw new Error(`focused DOM subtitle pixels missing ${JSON.stringify(focusedBox)}`);
+    const focusedImage=await owner.capturePage();
+    const focusedBox=scanMagentaBitmap(focusedImage,{x:0,y:0,width:ownerRect.width,height:ownerRect.height},{x:ownerRect.x,y:ownerRect.y});
+    if(!focusedBox||focusedBox.count<80)throw new Error(`focused DOM subtitle capturePage pixels missing ${JSON.stringify(focusedBox)}`);
     const payload=await owner.webContents.executeJavaScript('window.__r40Payload()');
     if(!payload?.active||payload?.cues?.length!==1)throw new Error(`focused DOM payload invalid ${JSON.stringify(payload)}`);
 
@@ -170,26 +270,43 @@ function closeEnough(a,b,tolerance,label){
     const overlayState=await controller.update(owner,payload);
     if(overlayState?.visible!==true)throw new Error(`R40 overlay did not activate ${JSON.stringify(overlayState)}`);
     await waitUntil(()=>{const s=controller.snapshot();return s.ready&&s.windowVisible&&s.failures===0?s:null},5000,'R40 overlay visible');
-    await sleep(250);
+    const overlayWin=controller.window;
+    if(!overlayWin||overlayWin.isDestroyed())throw new Error('R40 overlay BrowserWindow missing after activation');
+    await waitUntil(async()=>await overlayWin.webContents.executeJavaScript("document.body.dataset.active==='1'&&document.body.dataset.revision==='1'"),5000,'R40 overlay DOM active');
+    await twoPaints(overlayWin);
 
-    const unfocusedCapture=await capturePrimary();
-    const unfocusedBox=scanMagenta(unfocusedCapture,owner.getContentBounds());
-    if(!unfocusedBox||unfocusedBox.count<80)throw new Error(`unfocused DOM overlay subtitle pixels missing above native popup ${JSON.stringify(unfocusedBox)} state=${JSON.stringify(controller.snapshot())}`);
-    const videoRect=owner.getContentBounds();
-    const redProbe=sampleMeans(unfocusedCapture,videoRect.x+videoRect.width/2,videoRect.y+videoRect.height*0.28,18);
-    if(!dominantRed(redProbe))throw new Error(`R33 native popup red video not visible behind subtitle overlay ${JSON.stringify(redProbe)}`);
+    // Chromium BrowserWindows are not consistently observable through desktopCapturer
+    // on GitHub-hosted Windows. Prove exact DOM parity from each Chromium surface's
+    // own compositor capture, then independently prove raw native video visibility and
+    // the real Win32 z-order between the overlay HWND and R33 owned presenter HWND.
+    const overlayRect=overlayWin.getContentBounds();
+    const overlayImage=await overlayWin.capturePage();
+    const unfocusedBox=scanMagentaBitmap(overlayImage,{x:0,y:0,width:overlayRect.width,height:overlayRect.height},{x:overlayRect.x,y:overlayRect.y});
+    if(!unfocusedBox||unfocusedBox.count<80)throw new Error(`unfocused overlay capturePage subtitle pixels missing ${JSON.stringify(unfocusedBox)} state=${JSON.stringify(controller.snapshot())}`);
 
     closeEnough(focusedBox.cx,unfocusedBox.cx,3.5,'subtitle center-x');
     closeEnough(focusedBox.cy,unfocusedBox.cy,3.5,'subtitle center-y');
     closeEnough(focusedBox.width,unfocusedBox.width,5,'subtitle width');
     closeEnough(focusedBox.height,unfocusedBox.height,5,'subtitle height');
 
+    const zOrder=probeOwnedPopupZOrder(hwndText(owner),hwndText(overlayWin));
+    const unfocusedCapture=await capturePrimary();
+    const videoRect=owner.getContentBounds();
+    const redProbe=sampleMeans(unfocusedCapture,videoRect.x+videoRect.width/2,videoRect.y+videoRect.height*0.28,18);
+    if(!dominantRed(redProbe))throw new Error(`R33 native popup red video not visible on actual desktop ${JSON.stringify(redProbe)} stats=${JSON.stringify(addon.nativePresenterStats(id))}`);
+    const desktopOverlayBox=scanMagenta(unfocusedCapture,videoRect);
+    const desktopOverlayVisible=Boolean(desktopOverlayBox&&desktopOverlayBox.count>=80);
+    if(desktopOverlayVisible){
+      closeEnough(unfocusedBox.cx,desktopOverlayBox.cx,5,'desktop overlay center-x');
+      closeEnough(unfocusedBox.cy,desktopOverlayBox.cy,5,'desktop overlay center-y');
+    }
+
     owner.focus();
     await waitUntil(()=>owner.isFocused(),3000,'owner refocus');
     const hidden=await controller.update(owner,payload);
     if(hidden?.visible!==false||controller.snapshot().windowVisible)throw new Error(`overlay survived refocus ${JSON.stringify(controller.snapshot())}`);
 
-    console.log(`R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK focusedPixels=${focusedBox.count} unfocusedPixels=${unfocusedBox.count} dx=${Math.abs(focusedBox.cx-unfocusedBox.cx).toFixed(2)} dy=${Math.abs(focusedBox.cy-unfocusedBox.cy).toFixed(2)} dw=${Math.abs(focusedBox.width-unfocusedBox.width).toFixed(2)} dh=${Math.abs(focusedBox.height-unfocusedBox.height).toFixed(2)} nativeRedBehind=1 overlayAboveRawHwnd=1 refocusHide=1 failures=0`);
+    console.log(`R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK focusedPixels=${focusedBox.count} unfocusedPixels=${unfocusedBox.count} dx=${Math.abs(focusedBox.cx-unfocusedBox.cx).toFixed(2)} dy=${Math.abs(focusedBox.cy-unfocusedBox.cy).toFixed(2)} dw=${Math.abs(focusedBox.width-unfocusedBox.width).toFixed(2)} dh=${Math.abs(focusedBox.height-unfocusedBox.height).toFixed(2)} focusedCapturePage=1 overlayCapturePage=1 nativeDesktopRed=1 hwndZOrder=overlay-above-presenter overlayIndex=${zOrder.overlayIndex} presenterIndex=${zOrder.presenterIndex} desktopOverlayVisible=${desktopOverlayVisible?1:0} refocusHide=1 failures=0`);
   }finally{
     clearTimeout(hardDeadline);
     try{controller?.destroy('test-cleanup')}catch{}
