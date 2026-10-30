@@ -1,0 +1,162 @@
+name: LilacAnime Libmpv R40 qualified prerelease
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r40-callback-pacing-subtitle-overlay]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r40-release.yml
+      - scripts/r40-postqualify-release.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r40-qualified-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # Exact historical values needed by r40-preflight.ps1 to reconstruct and
+  # requalify the authoritative R39 final6 baseline before applying R40.
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r39
+  INSTALLER_NAME: LilacAnime-Libmpv-R39-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r39-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc19
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+
+  # R40 shipping identity. Keep these separate from the R39 reconstruction env.
+  R40_RELEASE_TAG: libmpv-r2k-v0.5.54-r40
+  R40_INSTALLER_NAME: LilacAnime-Libmpv-R40-Setup.exe
+  R40_MANIFEST_NAME: lilacanime-libmpv-r40-manifest.json
+  R40_APP_VERSION: 0.5.54-libmpv-r3f.rc20
+
+jobs:
+  qualify-package-publish:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install qualification and packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+
+      - name: Parse R40 release PowerShell before qualification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $tokens=$null
+          $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/r40-postqualify-release.ps1'),[ref]$tokens,[ref]$errors)
+          if($errors.Count){$errors|ForEach-Object{Write-Error $_};throw 'R40 release PowerShell parse failed'}
+          Write-Host 'R40_RELEASE_SCRIPT_PARSE_OK'
+
+      - name: Re-run exact R40 preflight and all runtime hard gates
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/r40-preflight.ps1
+
+      - name: Package and postqualify exact R40 workspace
+        shell: powershell
+        run: ./scripts/r40-postqualify-release.ps1
+
+      - name: Upload qualified R40 installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r40-qualified-prerelease
+          path: |
+            dist/LilacAnime-Libmpv-R40-Setup.exe
+            dist/lilacanime-libmpv-r40-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish prerelease and reverify release assets
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+
+          # Never delete or overwrite a stable R40 release. A rerun may clean up
+          # only a prerelease whose tag resolves to this exact workflow SHA.
+          $existingRaw = gh release view $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft 2>$null
+          if($LASTEXITCODE-eq 0){
+            $existing=$existingRaw|ConvertFrom-Json
+            git fetch --tags --force
+            $tagSha=(git rev-list -n 1 $env:R40_RELEASE_TAG 2>$null).Trim()
+            if(-not $existing.isPrerelease -or $existing.isDraft -or $tagSha-ne $env:GITHUB_SHA){
+              throw "Refusing to replace existing R40 release: prerelease=$($existing.isPrerelease) draft=$($existing.isDraft) tagSha=$tagSha expected=$env:GITHUB_SHA"
+            }
+            gh release delete $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag
+            if($LASTEXITCODE-ne 0){throw 'R40 safe prerelease cleanup failed'}
+          }
+
+          gh release create $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r40 callback pacing + single-DOM subtitle' --notes 'R40 is a qualified prerelease for direct user testing. It preserves the R33 unfocused native-only owned popup, R37 explicit renderer handoff/full-popup no-hole black-flash path, R38 updater lifecycle, R39 PiP/miniplayer bidirectional native topmost behavior, and focused direct WebGPU presenter. R40 makes the native frame callback authoritative, keeps the 250 ms watchdog recovery-only, removes release-wake cadence amplification except real backpressure, and gates JS wakeups by fresh frame IDs. The real product direct-WebGPU runtime gate measures a focused 11-second interval with a 10-second cadence window and three 4-second native-only blur/refocus cycles, requiring prompt direct-WebGPU recovery and no >=300 ms focused dispatch gaps. R40 also moves unfocused subtitles to a transparent owned overlay sourced from the same focused Chromium DOM/computed style, with real rival-focus ordering, deferred one-shot replay, explicit hide/minimize lifecycle suppression, format-agnostic custom FontFace byte loading/readiness, natural multiline/nested-markup geometry, and raw-HWND pixel/z-order qualification. A producer-thread one-shot current-frame redraw closes the paused/no-subtitle R37 handoff case without moving playback or restoring native subtitle authority. Exact R39 final6 reconstruction, R37 E2E, R39 real native-topmost runtime, packaged ASAR/native hash verification, and release-asset redownload verification are mandatory in this workflow. This prerelease is intentionally not GitHub Latest, so the existing /releases/latest updater channel does not automatically select it before direct user testing.'
+          if($LASTEXITCODE-ne 0){throw 'R40 prerelease create failed'}
+
+          gh release upload $env:R40_RELEASE_TAG "dist/$env:R40_INSTALLER_NAME" "dist/$env:R40_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R40 prerelease upload failed'}
+
+          $releaseInfo=gh release view $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft
+          if($LASTEXITCODE-ne 0){throw 'R40 release metadata lookup failed'}
+          $release=$releaseInfo|ConvertFrom-Json
+          if($release.tagName-ne $env:R40_RELEASE_TAG -or $release.isPrerelease-ne $true -or $release.isDraft-ne $false){throw 'R40 release publication state mismatch'}
+          git fetch --tags --force
+          $publishedTagSha=(git rev-list -n 1 $env:R40_RELEASE_TAG).Trim()
+          if($publishedTagSha-ne $env:GITHUB_SHA){throw "R40 release tag target mismatch $publishedTagSha != $env:GITHUB_SHA"}
+
+          $verify=Join-Path $env:RUNNER_TEMP 'r40-public-reverify'
+          Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:R40_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:R40_INSTALLER_NAME --pattern $env:R40_MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R40 release asset redownload failed'}
+
+          $exe=Join-Path $verify $env:R40_INSTALLER_NAME
+          $manifestPath=Join-Path $verify $env:R40_MANIFEST_NAME
+          if(-not(Test-Path $exe)-or-not(Test-Path $manifestPath)){throw 'R40 redownloaded assets missing'}
+          $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          if($manifest.version-ne $env:R40_APP_VERSION -or
+             $manifest.tag-ne $env:R40_RELEASE_TAG -or
+             $manifest.releaseWorkflowSourceSha-ne $env:GITHUB_SHA -or
+             $manifest.qualifiedSourceSha-ne $env:QUALIFIED_SOURCE_SHA -or
+             $manifest.installer-ne $env:R40_INSTALLER_NAME -or
+             $manifest.installerSha256-ne $hash -or
+             [long]$manifest.installerSize-ne $size -or
+             $manifest.electron-ne $env:ELECTRON_VERSION -or
+             $manifest.nativeDll-ne $env:QUALIFIED_DLL_SHA256){throw 'R40 redownloaded identity/hash mismatch'}
+
+          foreach($flag in @('r40PreflightQualified','r40CallbackPacingRuntimeQualified','r40HandoffForcedRedrawQualified','r40SingleDomSubtitleRuntimeQualified','r40SubtitleFontRuntimeQualified','r40SubtitleGeometryRuntimeQualified','r40R37ProtectedE2EQualified','r40R39TopmostRuntimeRequalified')){
+            if($manifest.$flag-ne $true){throw "R40 redownloaded qualification flag missing: $flag"}
+          }
+          if($manifest.r40BlackFlashInvariant-ne 'R37-full-owned-popup-no-ui-holes-preserved'){throw 'R40 black-flash invariant mismatch'}
+          if($manifest.r40UpdaterInvariant-ne 'R38-updater-byte-identical'){throw 'R40 updater invariant mismatch'}
+          if($manifest.r40PiPInvariant-ne 'R39-browser+owned-popup-bidirectional-topmost-runtime-repassed'){throw 'R40 PiP/topmost invariant mismatch'}
+          if($manifest.r40FocusedPresenterInvariant-ne 'R39-shared-preload-byte-identical-direct-webgpu'){throw 'R40 focused direct-WebGPU invariant mismatch'}
+          if($manifest.r40ForbiddenPathInvariant-ne 'R25-disable-direct-composition-absent+R28-staged-webgpu-absent'){throw 'R40 forbidden-path invariant mismatch'}
+
+          Write-Host "R40_RELEASE_PUBLISHED_AND_REVERIFIED_OK sha256=$hash size=$size tagSha=$publishedTagSha prerelease=1 updaterLatestExposure=0 pacing=qualified subtitle=qualified handoffRedraw=qualified r37=qualified r39Topmost=qualified"
