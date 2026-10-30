@@ -67,6 +67,8 @@ jobs:
             'scripts/r40-callback-pacing-runtime-smoke.cjs',
             'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
             'scripts/r40-subtitle-runtime-focus-hardening.cjs',
+            'scripts/r40-subtitle-runtime-coverage-hardening.cjs',
+            'scripts/r40-subtitle-controller-lifecycle-hardening.cjs',
             'scripts/r40-single-dom-subtitle-overlay-fix.cjs',
             'scripts/r40-subtitle-anchor-compat.cjs',
             'scripts/r40-run-electron-gate.cjs',
