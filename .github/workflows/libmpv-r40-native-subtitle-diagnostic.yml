@@ -1,0 +1,73 @@
+name: LilacAnime R40 native subtitle diagnostic
+
+on:
+  push:
+    paths:
+      - .github/workflows/libmpv-r40-native-subtitle-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Electron diagnostic runtime
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund electron@44.9.3
+      - name: Harden current R40 subtitle smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r40-subtitle-runtime-focus-hardening.cjs
+          if($LASTEXITCODE-ne 0){throw 'focus hardening failed'}
+          node scripts/r40-subtitle-runtime-coverage-hardening.cjs
+          if($LASTEXITCODE-ne 0){throw 'coverage hardening failed'}
+          node --check scripts/r40-native-subtitle-overlay-runtime-smoke.cjs
+          if($LASTEXITCODE-ne 0){throw 'hardened subtitle smoke syntax failed'}
+      - name: Extract exact public R39 native runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $url='https://github.com/sdsssdvx2/LilacAnime-desktop/releases/download/libmpv-r2k-v0.5.54-r39/LilacAnime-Libmpv-R39-Setup.exe'
+          $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R39-Setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $sha=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha-ne '304c7010e46b7edd66c662570a15491ce6880743152feff3b2c10fab421a3671'){throw "R39 public installer SHA mismatch $sha"}
+          $outer=Join-Path $env:RUNNER_TEMP 'r39-nsis'
+          & 7z x $installer "-o$outer" -y | Out-Host
+          if($LASTEXITCODE-ne 0){throw 'R39 NSIS extraction failed'}
+          $payload=Get-ChildItem $outer -Recurse -File | Where-Object {$_.Name -match '^app-.*\.7z$'} | Select-Object -First 1
+          if(-not $payload){
+            Write-Host 'R39_NSIS_FILE_LIST_BEGIN'
+            Get-ChildItem $outer -Recurse -File | Select-Object -ExpandProperty FullName | ForEach-Object { Write-Host $_ }
+            Write-Host 'R39_NSIS_FILE_LIST_END'
+            throw 'R39 app payload archive not found'
+          }
+          $app=Join-Path $env:RUNNER_TEMP 'r39-app'
+          & 7z x $payload.FullName "-o$app" -y | Out-Host
+          if($LASTEXITCODE-ne 0){throw 'R39 app payload extraction failed'}
+          $addon=Get-ChildItem $app -Recurse -File -Filter 'lilac-libmpv-player-bridge.node' | Select-Object -First 1
+          $dll=Get-ChildItem $app -Recurse -File -Filter 'libmpv-2.dll' | Select-Object -First 1
+          if(-not $addon -or -not $dll){
+            Write-Host 'R39_APP_NATIVE_FILE_LIST_BEGIN'
+            Get-ChildItem $app -Recurse -File | Where-Object {$_.Extension -in '.node','.dll'} | Select-Object -ExpandProperty FullName | ForEach-Object { Write-Host $_ }
+            Write-Host 'R39_APP_NATIVE_FILE_LIST_END'
+            throw 'R39 native addon/DLL missing after extraction'
+          }
+          "LILAC_LIBMPV_PLAYER_ADDON=$($addon.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "LILAC_LIBMPV_DLL=$($dll.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R40_R39_NATIVE_DIAGNOSTIC_EXTRACT_OK addon=$($addon.FullName) dll=$($dll.FullName)"
+      - name: Run R40 subtitle smoke on public R39 native runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
+          if($LASTEXITCODE-ne 0){throw 'R40 subtitle diagnostic against public R39 native runtime failed'}
+          Write-Host 'R40_R39_NATIVE_SUBTITLE_DIAGNOSTIC_OK publicR39Native=1 currentR40Overlay=1'
