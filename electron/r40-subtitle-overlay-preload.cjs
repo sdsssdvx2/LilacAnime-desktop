@@ -21,30 +21,48 @@ function finite(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 function px(value) { return `${Math.round(finite(value) * 1000) / 1000}px`; }
-function cssUrl(value = '') { return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 
 let ready = false;
 let lastPayload = null;
 let renderGeneration = 0;
+let loadedCustomFontPath = '';
+let loadedCustomFontPromise = null;
 
-async function prepareCustomFont(fontStyle, fontUrl, generation) {
-  if (!/^file:\/\//i.test(fontUrl)) {
-    fontStyle.textContent = '';
+async function prepareCustomFont(fontStyle, fontPath, generation) {
+  fontStyle.textContent = '';
+  if (!fontPath) {
     return { current: generation === renderGeneration, ready: true, custom: false };
   }
 
-  // Do not force a TrueType-only source-format hint: the app accepts TTF/OTF/TTC/WOFF/WOFF2.
-  // Chromium should infer the actual container from the file URL, matching the
-  // focused DOM path that loads the same bytes through FontFace('LilacSubtitle').
-  fontStyle.textContent = `@font-face{font-family:LilacSubtitle;src:url("${cssUrl(fontUrl)}");font-display:block}`; // LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC
-  try {
-    const loaded = await document.fonts.load('16px "LilacSubtitle"', 'R40');
-    if (generation !== renderGeneration) return { current: false, ready: false, custom: true };
-    const fontReady = Array.isArray(loaded) ? loaded.length > 0 : true;
-    return { current: true, ready: fontReady, custom: true };
-  } catch {
-    return { current: generation === renderGeneration, ready: false, custom: true };
+  // LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC
+  // Match the focused DOM's proven font path exactly: main process reads the selected
+  // file through the existing font:default IPC, then Chromium receives the bytes via
+  // FontFace instead of trying to fetch a local file:// URL from this sandboxed overlay.
+  // The promise is cached per selected path so cue mutations never reread/reparse a
+  // multi-megabyte font; a newer path supersedes an older async completion.
+  if (fontPath !== loadedCustomFontPath || !loadedCustomFontPromise) {
+    const requestedPath = fontPath;
+    loadedCustomFontPath = requestedPath;
+    loadedCustomFontPromise = (async () => {
+      const font = await ipcRenderer.invoke('font:default', '기본체', requestedPath);
+      if (loadedCustomFontPath !== requestedPath || !font?.data) return false;
+      const bytes = new Uint8Array(font.data);
+      if (!bytes.byteLength) return false;
+      const face = new FontFace('LilacSubtitle', bytes);
+      await face.load();
+      if (loadedCustomFontPath !== requestedPath) return false;
+      [...document.fonts].filter(item => item.family === 'LilacSubtitle').forEach(item => document.fonts.delete(item));
+      document.fonts.add(face);
+      // Keep an explicit FontFaceSet verification in addition to face.load(); this is
+      // the runtime proof consumed by the hard gate, not a timing delay or fallback.
+      const verified = await document.fonts.load('16px "LilacSubtitle"', 'R40');
+      return !Array.isArray(verified) || verified.length > 0;
+    })().catch(() => false);
   }
+
+  const fontReady = await loadedCustomFontPromise;
+  if (generation !== renderGeneration) return { current: false, ready: false, custom: true };
+  return { current: true, ready: fontReady === true, custom: true };
 }
 
 async function render(payload = {}) {
@@ -92,8 +110,8 @@ async function render(payload = {}) {
   }
   stack.replaceChildren(fragment);
 
-  const fontUrl = String(payload.fontUrl || '');
-  const font = await prepareCustomFont(fontStyle, fontUrl, generation);
+  const fontPath = String(payload.fontPath || '');
+  const font = await prepareCustomFont(fontStyle, fontPath, generation);
   if (!font.current || generation !== renderGeneration) return;
 
   // If a selected custom font is unreadable, remain usable with the exact
