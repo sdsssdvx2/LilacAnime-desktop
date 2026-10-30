@@ -72,6 +72,7 @@ jobs:
             'scripts/r40-subtitle-controller-lifecycle-hardening.cjs',
             'scripts/r40-single-dom-subtitle-overlay-fix.cjs',
             'scripts/r40-subtitle-anchor-compat.cjs',
+            'scripts/r40-r37-e2e-semantic-compat.cjs',
             'scripts/r40-run-electron-gate.cjs',
             'scripts/r40-rebundle-renderer.cjs',
             'scripts/r40-finalize-identity.cjs',
@@ -87,7 +88,19 @@ jobs:
           if($LASTEXITCODE-ne 0){throw 'R40 subtitle transform compat probe failed'}
           node --check $compatProbe
           if($LASTEXITCODE-ne 0){throw 'R40 subtitle compat-probed transform syntax failed'}
-          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction'
+          $r37Target='scripts/r37-explicit-handoff-e2e-smoke.cjs'
+          $r37Backup=Join-Path $env:RUNNER_TEMP 'r37-explicit-handoff-e2e-smoke.pre-r40.cjs'
+          Copy-Item $r37Target $r37Backup -Force
+          try {
+            node scripts/r40-r37-e2e-semantic-compat.cjs
+            if($LASTEXITCODE-ne 0){throw 'R40 R37 E2E semantic compatibility probe failed'}
+            node --check $r37Target
+            if($LASTEXITCODE-ne 0){throw 'R40 R37 E2E semantic compatibility produced invalid syntax'}
+          }
+          finally {
+            Copy-Item $r37Backup $r37Target -Force
+          }
+          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction r37SemanticCompat=executed+syntax-checked'
       - name: Fast sandbox custom-font diagnostic
         shell: powershell
         run: |
