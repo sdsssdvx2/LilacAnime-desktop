@@ -56,11 +56,14 @@ class R40SubtitleOverlayWindowController {
     this.parent = null;
     this.ready = false;
     this.pending = null;
+    this.deferredActivePayload = null; // LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY
     this.visible = false;
     this.updates = 0;
     this.showCount = 0;
     this.hideCount = 0;
     this.syncCount = 0;
+    this.deferredCount = 0;
+    this.deferredReplayCount = 0;
     this.failures = 0;
     this.lastReason = 'init';
     this.lastError = '';
@@ -142,14 +145,34 @@ class R40SubtitleOverlayWindowController {
     }
   }
 
+  _inactivePayload(source = this.pending) {
+    return source ? { ...source, active:false, cues:[] } : { active:false, cues:[] };
+  }
+
   async update(parent, payload = {}) {
     const safe = sanitizePayload(payload);
-    this.pending = safe;
     this.updates += 1;
-    if (!safe.active || !parent || parent.isDestroyed?.() || parent.isFocused?.() || parent.isMinimized?.() || !parent.isVisible?.()) {
-      this.hide('inactive-or-focused');
+    const parentInvalid = !parent || parent.isDestroyed?.() || parent.isMinimized?.() || !parent.isVisible?.();
+    if (!safe.active || parentInvalid) {
+      this.deferredActivePayload = null;
+      this.pending = this._inactivePayload(safe);
+      this.hide('inactive-or-unavailable');
       return { ok: true, visible: false, ...this.snapshot() };
     }
+
+    // Renderer document blur can lead BrowserWindow blur by a small amount. Do not
+    // discard the active cue merely because main-process focus has not caught up.
+    // Keep only the newest active payload and replay it exactly once from owner blur.
+    if (parent.isFocused?.()) {
+      this.deferredActivePayload = safe;
+      this.deferredCount += 1;
+      this.pending = this._inactivePayload(safe);
+      this.hide('deferred-owner-focused', { preserveDeferred:true });
+      return { ok: true, visible: false, deferred: true, ...this.snapshot() };
+    }
+
+    this.deferredActivePayload = null;
+    this.pending = safe;
     const win = await this.ensure(parent);
     if (!win) return { ok: false, visible: false, ...this.snapshot() };
     this.sync(parent, 'payload');
@@ -162,9 +185,26 @@ class R40SubtitleOverlayWindowController {
     return { ok: true, visible: true, ...this.snapshot() };
   }
 
-  hide(reason = 'hide') {
+  async reconcileDeferred(parent = this.parent, reason = 'owner-blur') {
+    const deferred = this.deferredActivePayload;
+    if (!deferred) return { ok:true, replayed:false, ...this.snapshot() };
+    if (!parent || parent.isDestroyed?.() || parent.isMinimized?.() || !parent.isVisible?.()) {
+      this.deferredActivePayload = null;
+      this.hide(`${reason}-unavailable`);
+      return { ok:true, replayed:false, ...this.snapshot() };
+    }
+    if (parent.isFocused?.()) return { ok:true, replayed:false, deferred:true, ...this.snapshot() };
+    this.deferredActivePayload = null;
+    this.deferredReplayCount += 1;
+    const result = await this.update(parent, deferred);
+    this.lastReason = result?.visible ? `${reason}-replayed` : `${reason}-replay-hidden`;
+    return { ...result, replayed:true };
+  }
+
+  hide(reason = 'hide', { preserveDeferred = false } = {}) {
     const win = this.window;
-    this.pending = this.pending ? { ...this.pending, active:false, cues:[] } : { active:false, cues:[] };
+    if (!preserveDeferred) this.deferredActivePayload = null;
+    this.pending = this._inactivePayload(this.pending);
     if (win && !win.isDestroyed()) {
       try { if (this.ready && !win.webContents.isDestroyed()) win.webContents.send('r40-subtitle-overlay:render', this.pending); } catch {}
       if (win.isVisible()) this.hideCount += 1;
@@ -180,6 +220,8 @@ class R40SubtitleOverlayWindowController {
     this.window = null;
     this.ready = false;
     this.parent = null;
+    this.pending = null;
+    this.deferredActivePayload = null;
     try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
   }
 
@@ -191,10 +233,13 @@ class R40SubtitleOverlayWindowController {
       ready: this.ready,
       windowVisible: Boolean(win && !win.isDestroyed() && win.isVisible()),
       alwaysOnTop: Boolean(win && !win.isDestroyed() && win.isAlwaysOnTop?.()),
+      deferredActive: Boolean(this.deferredActivePayload),
       updates: this.updates,
       showCount: this.showCount,
       hideCount: this.hideCount,
       syncCount: this.syncCount,
+      deferredCount: this.deferredCount,
+      deferredReplayCount: this.deferredReplayCount,
       failures: this.failures,
       lastReason: this.lastReason,
       lastError: this.lastError
