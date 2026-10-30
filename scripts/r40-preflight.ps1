@@ -143,7 +143,7 @@ foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','_r40SubtitleComp
 foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','R40SubtitleOverlayWindowController',"player:native-subtitle-overlay","reconcileDeferred(win, 'owner-blur')")){if(-not $main.Contains($marker)){throw "R40 main overlay marker missing: $marker"}}
 foreach($marker in @('setNativeSubtitleOverlay','nativeSubtitleOverlayState')){if(-not $preload.Contains($marker)){throw "R40 preload overlay marker missing: $marker"}}
 foreach($marker in @('LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','deferredActivePayload','deferredReplayCount','async reconcileDeferred(')){if(-not $overlayController.Contains($marker)){throw "R40 overlay controller race marker missing: $marker"}}
-foreach($marker in @('LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC',"ipcRenderer.invoke('font:default'",'new FontFace','new Uint8Array(font.data)','document.fonts.load','renderGeneration','fontReady')){if(-not $overlayPreload.Contains($marker)){throw "R40 overlay font marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC',"ipcRenderer.invoke('font:default'",'const raw = font?.data','new Uint8Array(raw)','new FontFace','document.fonts.load','renderGeneration','fontReady')){if(-not $overlayPreload.Contains($marker)){throw "R40 overlay font marker missing: $marker"}}
 if($overlayPreload.Contains('format("truetype")')){throw 'R40 overlay reintroduced hard-coded truetype font hint'}
 if($native.Contains('std::chrono::milliseconds(6)')){throw 'R40 native 6ms producer polling survived'}
 if($bridge.Contains('focus-staged-gpu-copy')-or$bridge.Contains('copyTextureToTexture')){throw 'R40 resurrected forbidden R28 staged renderer path'}
