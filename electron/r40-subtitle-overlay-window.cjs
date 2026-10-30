@@ -158,6 +158,11 @@ class R40SubtitleOverlayWindowController {
     const parentDestroyed = Boolean(parentPresent && parent.isDestroyed?.());
     const parentFocused = Boolean(parentPresent && !parentDestroyed && parent.isFocused?.());
     const parentMinimized = Boolean(parentPresent && !parentDestroyed && parent.isMinimized?.());
+    // BrowserWindow.isVisible() is telemetry only here. On the R33 native-only
+    // path Electron can report the Chromium owner as not visible while the owned
+    // native presenter is demonstrably visible and presenting. Owner focus,
+    // minimize/hide lifecycle events, destruction, and inactive payloads remain
+    // the authoritative suppression signals for the text-only overlay.
     const parentVisible = Boolean(parentPresent && !parentDestroyed && parent.isVisible?.());
     this.lastPayloadActive = Boolean(safe.active);
     this.lastCueCount = safe.cues.length;
@@ -173,7 +178,6 @@ class R40SubtitleOverlayWindowController {
     else if (parentDestroyed) blockedReason = 'parent-destroyed';
     else if (parentFocused) blockedReason = 'parent-focused';
     else if (parentMinimized) blockedReason = 'parent-minimized';
-    else if (!parentVisible) blockedReason = 'parent-not-visible';
     if (blockedReason) {
       this.hide(blockedReason);
       return { ok: true, visible: false, ...this.snapshot() };
