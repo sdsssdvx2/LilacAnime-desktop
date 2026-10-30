@@ -37,7 +37,8 @@ jobs:
           $ErrorActionPreference='Stop'
           $url='https://github.com/sdsssdvx2/LilacAnime-desktop/releases/download/libmpv-r2k-v0.5.54-r39/LilacAnime-Libmpv-R39-Setup.exe'
           $installer=Join-Path $env:RUNNER_TEMP 'LilacAnime-Libmpv-R39-Setup.exe'
-          Invoke-WebRequest -Uri $url -OutFile $installer
+          & curl.exe -fL --retry 3 --retry-delay 2 -o $installer $url
+          if($LASTEXITCODE-ne 0){throw 'R39 public installer curl download failed'}
           $sha=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           if($sha-ne '304c7010e46b7edd66c662570a15491ce6880743152feff3b2c10fab421a3671'){throw "R39 public installer SHA mismatch $sha"}
           $outer=Join-Path $env:RUNNER_TEMP 'r39-nsis'
