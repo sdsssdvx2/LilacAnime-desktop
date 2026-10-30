@@ -173,10 +173,13 @@ const handoffStart = bridge.indexOf('  function r34BeginFocusHandoff() {');
 const handoffEnd = bridge.indexOf('\n\n  function r34CompleteFocusHandoff(', handoffStart);
 if (handoffStart < 0 || handoffEnd <= handoffStart) throw new Error('R34 begin handoff boundary missing');
 let handoffBlock = bridge.slice(handoffStart, handoffEnd);
+// R36 hardened the R34 arm into an explicit `armed` result before R37 added the
+// epoch. Attach the one-shot request inside that existing success branch so the
+// fail-open timer and all R37 ownership semantics remain unchanged.
 handoffBlock = once(
   handoffBlock,
-  `    try {\n      return addon.setNativePresenterMirrorChromium(playerId, true) === true;\n    } catch (error) {`,
-  `    try {\n      const armed = addon.setNativePresenterMirrorChromium(playerId, true) === true;\n      if (armed && frameProducerStarted && typeof addon.requestFrameProducerRedraw === 'function') {\n        r40HandoffRedrawRequests += 1;\n        try {\n          if (addon.requestFrameProducerRedraw(playerId) === true) r40HandoffRedrawAccepted += 1;\n        } catch (redrawError) {\n          lastError = 'R40 handoff redraw request failed: ' + String(redrawError?.message || redrawError).slice(0, 180);\n        }\n      }\n      return armed;\n    } catch (error) {`,
+  `      if (armed) {\n        r36ArmHandoffFailOpen();\n        return true;\n      }`,
+  `      if (armed) {\n        if (frameProducerStarted && typeof addon.requestFrameProducerRedraw === 'function') {\n          r40HandoffRedrawRequests += 1;\n          try {\n            if (addon.requestFrameProducerRedraw(playerId) === true) r40HandoffRedrawAccepted += 1;\n          } catch (redrawError) {\n            lastError = 'R40 handoff redraw request failed: ' + String(redrawError?.message || redrawError).slice(0, 180);\n          }\n        }\n        r36ArmHandoffFailOpen();\n        return true;\n      }`,
   'request one-shot redraw after handoff mirror arm'
 );
 bridge = bridge.slice(0, handoffStart) + handoffBlock + bridge.slice(handoffEnd);
