@@ -61,6 +61,7 @@ jobs:
           $ErrorActionPreference='Stop'
           foreach($script in @(
             'scripts/r40-callback-pacing-fix.cjs',
+            'scripts/r40-callback-watchdog-authority-correction.cjs',
             'scripts/r40-callback-pacing-runtime-smoke.cjs',
             'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
             'scripts/r40-single-dom-subtitle-overlay-fix.cjs',
