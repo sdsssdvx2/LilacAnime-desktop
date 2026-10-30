@@ -33,7 +33,7 @@ async function prepareCustomFont(fontStyle, fontUrl, generation) {
     return { current: generation === renderGeneration, ready: true, custom: false };
   }
 
-  // Do not force format("truetype"): the app accepts TTF/OTF/TTC/WOFF/WOFF2.
+  // Do not force a TrueType-only source-format hint: the app accepts TTF/OTF/TTC/WOFF/WOFF2.
   // Chromium should infer the actual container from the file URL, matching the
   // focused DOM path that loads the same bytes through FontFace('LilacSubtitle').
   fontStyle.textContent = `@font-face{font-family:LilacSubtitle;src:url("${cssUrl(fontUrl)}");font-display:block}`; // LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC
