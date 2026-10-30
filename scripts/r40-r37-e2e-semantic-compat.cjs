@@ -27,13 +27,13 @@ once(
 
 once(
   `  const blurred = r37State(bridge);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
-  `  const blurred = r37State(bridge);\n  const r40SingleDom = Object.prototype.hasOwnProperty.call(blurred.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n  if (r40SingleDom && blurred.handoff.subtitleVisible !== false) throw new Error(\`${'${label}'} R40 native subtitle unexpectedly visible\`);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
+  `  const blurred = r37State(bridge);\n  const r40SingleDom = Object.prototype.hasOwnProperty.call(blurred.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n  if (r40SingleDom && blurred.handoff.subtitleVisible !== false) throw new Error(\`\${label} R40 native subtitle unexpectedly visible\`);\n  if (Number(blurred.r36.uiHoleRects || 0) !== 0)`,
   'R37 blurred R40 subtitle authority assertion'
 );
 
 once(
-  `    if (Number(final.r37.rendererAckCompletions || 0) !== 3) throw new Error(\`expected 3 R37 ACK completions got ${'${final.r37.rendererAckCompletions}'}\`);`,
-  `    if (Number(final.r37.rendererAckCompletions || 0) !== 3) throw new Error(\`expected 3 R37 ACK completions got ${'${final.r37.rendererAckCompletions}'}\`);\n    const r40SingleDomFinal = Object.prototype.hasOwnProperty.call(final.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n    if (r40SingleDomFinal && Number(final.handoff.r40NativeSubtitleSuppressedRequests || 0) < 3) throw new Error(\`R40 native subtitle suppression was not exercised across all focus cycles count=${'${final.handoff.r40NativeSubtitleSuppressedRequests}'}\`);`,
+  `    if (Number(final.r37.rendererAckCompletions || 0) !== 3) throw new Error(\`expected 3 R37 ACK completions got \${final.r37.rendererAckCompletions}\`);`,
+  `    if (Number(final.r37.rendererAckCompletions || 0) !== 3) throw new Error(\`expected 3 R37 ACK completions got \${final.r37.rendererAckCompletions}\`);\n    const r40SingleDomFinal = Object.prototype.hasOwnProperty.call(final.handoff || {}, 'r40NativeSubtitleSuppressedRequests');\n    if (r40SingleDomFinal && Number(final.handoff.r40NativeSubtitleSuppressedRequests || 0) < 3) throw new Error(\`R40 native subtitle suppression was not exercised across all focus cycles count=\${final.handoff.r40NativeSubtitleSuppressedRequests}\`);`,
   'R37 final R40 subtitle suppression proof'
 );
 
