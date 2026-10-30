@@ -71,6 +71,8 @@ class R40SubtitleOverlayWindowController {
     this.lastParentFocused = false;
     this.lastParentMinimized = false;
     this.lastParentVisible = false;
+    this.ownerLifecycleSuppressed = false;
+    this.ownerLifecycleReason = '';
   }
 
   async ensure(parent) {
@@ -130,6 +132,10 @@ class R40SubtitleOverlayWindowController {
     const win = this.window;
     if (!win || win.isDestroyed() || !parent || parent.isDestroyed?.()) return false;
     try {
+      if (reason === 'owner-show' || reason === 'owner-restore') {
+        this.ownerLifecycleSuppressed = false;
+        this.ownerLifecycleReason = '';
+      }
       const bounds = parent.getContentBounds();
       win.setBounds({ x: bounds.x, y: bounds.y, width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) }, false);
       const topmost = Boolean(parent.isAlwaysOnTop?.());
@@ -160,9 +166,9 @@ class R40SubtitleOverlayWindowController {
     const parentMinimized = Boolean(parentPresent && !parentDestroyed && parent.isMinimized?.());
     // BrowserWindow.isVisible() is telemetry only here. On the R33 native-only
     // path Electron can report the Chromium owner as not visible while the owned
-    // native presenter is demonstrably visible and presenting. Owner focus,
-    // minimize/hide lifecycle events, destruction, and inactive payloads remain
-    // the authoritative suppression signals for the text-only overlay.
+    // native presenter is demonstrably visible and presenting. Explicit hide or
+    // minimize lifecycle events are latched separately so a hidden-to-tray owner
+    // cannot be resurrected by a later subtitle mutation/payload.
     const parentVisible = Boolean(parentPresent && !parentDestroyed && parent.isVisible?.());
     this.lastPayloadActive = Boolean(safe.active);
     this.lastCueCount = safe.cues.length;
@@ -178,6 +184,7 @@ class R40SubtitleOverlayWindowController {
     else if (parentDestroyed) blockedReason = 'parent-destroyed';
     else if (parentFocused) blockedReason = 'parent-focused';
     else if (parentMinimized) blockedReason = 'parent-minimized';
+    else if (this.ownerLifecycleSuppressed) blockedReason = this.ownerLifecycleReason || 'owner-lifecycle-suppressed';
     if (blockedReason) {
       this.hide(blockedReason);
       return { ok: true, visible: false, ...this.snapshot() };
@@ -196,6 +203,10 @@ class R40SubtitleOverlayWindowController {
   }
 
   hide(reason = 'hide') {
+    if (reason === 'owner-hidden' || reason === 'owner-minimized') {
+      this.ownerLifecycleSuppressed = true;
+      this.ownerLifecycleReason = reason;
+    }
     const win = this.window;
     this.pending = this.pending ? { ...this.pending, active:false, cues:[] } : { active:false, cues:[] };
     if (win && !win.isDestroyed()) {
@@ -237,7 +248,9 @@ class R40SubtitleOverlayWindowController {
       lastParentDestroyed: this.lastParentDestroyed,
       lastParentFocused: this.lastParentFocused,
       lastParentMinimized: this.lastParentMinimized,
-      lastParentVisible: this.lastParentVisible
+      lastParentVisible: this.lastParentVisible,
+      ownerLifecycleSuppressed: this.ownerLifecycleSuppressed,
+      ownerLifecycleReason: this.ownerLifecycleReason
     };
   }
 }
