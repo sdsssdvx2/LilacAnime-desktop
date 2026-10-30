@@ -64,6 +64,13 @@ class R40SubtitleOverlayWindowController {
     this.failures = 0;
     this.lastReason = 'init';
     this.lastError = '';
+    this.lastPayloadActive = false;
+    this.lastCueCount = 0;
+    this.lastParentPresent = false;
+    this.lastParentDestroyed = false;
+    this.lastParentFocused = false;
+    this.lastParentMinimized = false;
+    this.lastParentVisible = false;
   }
 
   async ensure(parent) {
@@ -146,10 +153,32 @@ class R40SubtitleOverlayWindowController {
     const safe = sanitizePayload(payload);
     this.pending = safe;
     this.updates += 1;
-    if (!safe.active || !parent || parent.isDestroyed?.() || parent.isFocused?.() || parent.isMinimized?.() || !parent.isVisible?.()) {
-      this.hide('inactive-or-focused');
+
+    const parentPresent = Boolean(parent);
+    const parentDestroyed = Boolean(parentPresent && parent.isDestroyed?.());
+    const parentFocused = Boolean(parentPresent && !parentDestroyed && parent.isFocused?.());
+    const parentMinimized = Boolean(parentPresent && !parentDestroyed && parent.isMinimized?.());
+    const parentVisible = Boolean(parentPresent && !parentDestroyed && parent.isVisible?.());
+    this.lastPayloadActive = Boolean(safe.active);
+    this.lastCueCount = safe.cues.length;
+    this.lastParentPresent = parentPresent;
+    this.lastParentDestroyed = parentDestroyed;
+    this.lastParentFocused = parentFocused;
+    this.lastParentMinimized = parentMinimized;
+    this.lastParentVisible = parentVisible;
+
+    let blockedReason = '';
+    if (!safe.active) blockedReason = 'inactive-payload';
+    else if (!parentPresent) blockedReason = 'parent-missing';
+    else if (parentDestroyed) blockedReason = 'parent-destroyed';
+    else if (parentFocused) blockedReason = 'parent-focused';
+    else if (parentMinimized) blockedReason = 'parent-minimized';
+    else if (!parentVisible) blockedReason = 'parent-not-visible';
+    if (blockedReason) {
+      this.hide(blockedReason);
       return { ok: true, visible: false, ...this.snapshot() };
     }
+
     const win = await this.ensure(parent);
     if (!win) return { ok: false, visible: false, ...this.snapshot() };
     this.sync(parent, 'payload');
@@ -197,7 +226,14 @@ class R40SubtitleOverlayWindowController {
       syncCount: this.syncCount,
       failures: this.failures,
       lastReason: this.lastReason,
-      lastError: this.lastError
+      lastError: this.lastError,
+      lastPayloadActive: this.lastPayloadActive,
+      lastCueCount: this.lastCueCount,
+      lastParentPresent: this.lastParentPresent,
+      lastParentDestroyed: this.lastParentDestroyed,
+      lastParentFocused: this.lastParentFocused,
+      lastParentMinimized: this.lastParentMinimized,
+      lastParentVisible: this.lastParentVisible
     };
   }
 }
