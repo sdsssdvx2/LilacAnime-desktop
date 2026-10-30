@@ -63,6 +63,7 @@ jobs:
             'scripts/r40-callback-pacing-fix.cjs',
             'scripts/r40-callback-watchdog-authority-correction.cjs',
             'scripts/r40-release-pump-authority-correction.cjs',
+            'scripts/r40-handoff-force-redraw.cjs',
             'scripts/r40-schedule-callsite-audit.cjs',
             'scripts/r40-callback-pacing-runtime-smoke.cjs',
             'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs',
@@ -100,7 +101,7 @@ jobs:
           finally {
             Copy-Item $r37Backup $r37Target -Force
           }
-          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction r37SemanticCompat=executed+syntax-checked'
+          Write-Host 'R40_SUPPORT_SYNTAX_OK all-new-support=checked compatProbe=executed-before-r39-reconstruction r37SemanticCompat=executed+syntax-checked handoffRedraw=syntax-checked'
       - name: Fast sandbox custom-font diagnostic
         shell: powershell
         run: |
