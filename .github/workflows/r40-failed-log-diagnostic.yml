@@ -1,0 +1,51 @@
+name: R40 Failed Run Log Diagnostic
+
+on:
+  push:
+    branches:
+      - r40-ci-log-diagnostic-temp
+    paths:
+      - .github/workflows/r40-failed-log-diagnostic.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract compact failure context from R40 preflight 62
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run view 41060975500 --repo "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/r40-failed.log"
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          p = Path(os.environ['RUNNER_TEMP']) / 'r40-failed.log'
+          lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+          pat = re.compile(r'(R40_|R37_|R39_|Error:|error:|failed|regressed|timeout|ELECTRON_GATE|PREFLIGHT)', re.I)
+          hits = [i for i, line in enumerate(lines) if pat.search(line)]
+          print(f'R40_DIAG_SOURCE_LINES={len(lines)} MATCHES={len(hits)}')
+          if not hits:
+              print('R40_DIAG_NO_MATCHES')
+              raise SystemExit(2)
+          # Print compact merged context around the last 80 relevant hits. The actual
+          # R40 failure is near the end of the failed step, while historical R39
+          # qualification emits many earlier markers.
+          ranges = []
+          for i in hits[-80:]:
+              a, b = max(0, i-2), min(len(lines), i+3)
+              if ranges and a <= ranges[-1][1]:
+                  ranges[-1] = (ranges[-1][0], max(ranges[-1][1], b))
+              else:
+                  ranges.append((a, b))
+          for a, b in ranges:
+              print(f'--- R40_DIAG_CONTEXT {a+1}-{b} ---')
+              for line in lines[a:b]:
+                  print(line)
+          PY
