@@ -10,7 +10,7 @@ function Require-Marker([string]$text, [string]$marker, [string]$label) {
   if (-not $text.Contains($marker)) { throw "$label missing marker: $marker" }
 }
 
-foreach ($name in @('R40_RELEASE_TAG','R40_INSTALLER_NAME','R40_MANIFEST_NAME','R40_APP_VERSION','ELECTRON_VERSION','QUALIFIED_SOURCE_SHA','QUALIFIED_DLL_SHA256')) {
+foreach ($name in @('R40_RELEASE_TAG','R40_INSTALLER_NAME','R40_MANIFEST_NAME','R40_APP_VERSION','ELECTRON_VERSION','QUALIFIED_SOURCE_SHA','QUALIFIED_DLL_SHA256','STABLE_APP_ID','STABLE_PRODUCT_NAME','STABLE_EXE_BASE')) {
   if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "R40 release environment missing: $name" }
 }
 
@@ -21,7 +21,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
 if ($pkg.version -ne $env:R40_APP_VERSION -or $pkg.lilacCustomTag -ne $env:R40_RELEASE_TAG) { throw 'R40 release source identity mismatch' }
-if ($pkg.build.appId -ne $env:STABLE_APP_ID -or $pkg.build.productName -ne $env:STABLE_PRODUCT_NAME) { throw 'R40 stable install identity drifted' }
+if ($pkg.build.appId -ne $env:STABLE_APP_ID -or $pkg.build.productName -ne $env:STABLE_PRODUCT_NAME -or $pkg.build.win.executableName -ne $env:STABLE_EXE_BASE) { throw 'R40 stable install identity drifted' }
 if ($pkg.build.win.artifactName -ne 'LilacAnime-Libmpv-R40-Setup.${ext}') { throw 'R40 installer artifactName drifted' }
 
 $updaterSha = Sha256 'electron/updater.cjs'
@@ -48,7 +48,7 @@ foreach ($marker in @('LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC',"ipcRenderer.invok
 if ($overlayPreload.Contains('format("truetype")')) { throw 'R40 release reintroduced hard-coded truetype font hint' }
 if ((Get-Content 'electron/libmpv-shared-preload.cjs' -Raw).Contains('focus-staged-gpu-copy')) { throw 'R40 release resurrected forbidden R28 staged presenter' }
 
-Write-Host "R40_RELEASE_SOURCE_OK version=$($pkg.version) updater=$updaterSha focusedPreload=$focusedPreloadSha focusedBundle=$focusedBundleSha addon=$addonSha dll=$dllSha"
+Write-Host "R40_RELEASE_SOURCE_OK version=$($pkg.version) installIdentity=$($pkg.build.appId)+$($pkg.build.productName)+$($pkg.build.win.executableName) updater=$updaterSha focusedPreload=$focusedPreloadSha focusedBundle=$focusedBundleSha addon=$addonSha dll=$dllSha"
 
 # Package only the already-qualified R40 workspace. r40-preflight.ps1 has just
 # reconstructed exact R39 final6, applied all R40 transforms, compiled the native
@@ -59,6 +59,8 @@ Assert-Exit 'R40 release package'
 
 $installer = Join-Path 'dist' $env:R40_INSTALLER_NAME
 if (-not (Test-Path $installer)) { throw "R40 installer missing: $installer" }
+$packedExe = Join-Path 'dist/win-unpacked' ($env:STABLE_EXE_BASE + '.exe')
+if (-not (Test-Path $packedExe)) { throw "R40 packaged stable executable missing: $packedExe" }
 $asar = 'dist/win-unpacked/resources/app.asar'
 if (-not (Test-Path $asar)) { throw 'R40 packaged app.asar missing' }
 
@@ -70,9 +72,12 @@ New-Item -ItemType Directory -Force -Path $asarCheck | Out-Null
 & $asarCli extract $asar $asarCheck
 Assert-Exit 'R40 packaged app.asar extract'
 
+# electron-builder intentionally strips build-only metadata from the packaged
+# app.asar package.json. Validate stable install identity at the build input above
+# and at the actual packaged executable path here; keep runtime version/tag inside
+# app.asar as the packaged application identity check (same pattern as R39 final6).
 $shipPkg = Get-Content (Join-Path $asarCheck 'package.json') -Raw | ConvertFrom-Json
 if ($shipPkg.version -ne $env:R40_APP_VERSION -or $shipPkg.lilacCustomTag -ne $env:R40_RELEASE_TAG) { throw 'R40 packaged identity mismatch' }
-if ($shipPkg.build.appId -ne $env:STABLE_APP_ID -or $shipPkg.build.productName -ne $env:STABLE_PRODUCT_NAME) { throw 'R40 packaged stable identity mismatch' }
 
 $shipBridge = Get-Content (Join-Path $asarCheck 'electron/libmpv-shared-main.cjs') -Raw
 $shipEntry = Get-Content (Join-Path $asarCheck 'src/libmpv-shared-entry.js') -Raw
@@ -141,4 +146,4 @@ foreach ($flag in @('r40PreflightQualified','r40CallbackPacingRuntimeQualified',
   if ($finalManifest.$flag -ne $true) { throw "R40 finalized manifest qualification flag missing: $flag" }
 }
 
-Write-Host "R40_RELEASE_PACKAGE_OK sha256=$hash size=$size addon=$addonSha dll=$dllSha updater=R38-byte-identical focused=direct-webgpu-byte-identical r37=E2E-repassed r39Topmost=repassed pacing=hard-gated subtitle=single-DOM+font+geometry-hard-gated handoffRedraw=runtime-proved"
+Write-Host "R40_RELEASE_PACKAGE_OK sha256=$hash size=$size exe=$packedExe addon=$addonSha dll=$dllSha updater=R38-byte-identical focused=direct-webgpu-byte-identical r37=E2E-repassed r39Topmost=repassed pacing=hard-gated subtitle=single-DOM+font+geometry-hard-gated handoffRedraw=runtime-proved installIdentity=source-config+packed-exe"
