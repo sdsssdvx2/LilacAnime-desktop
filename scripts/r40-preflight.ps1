@@ -12,6 +12,7 @@ $scriptSupport=@(
   'r40-callback-pacing-fix.cjs',
   'r40-callback-watchdog-authority-correction.cjs',
   'r40-release-pump-authority-correction.cjs',
+  'r40-handoff-force-redraw.cjs',
   'r40-schedule-callsite-audit.cjs',
   'r40-callback-pacing-runtime-smoke.cjs',
   'r40-native-subtitle-overlay-runtime-smoke.cjs',
@@ -42,7 +43,7 @@ foreach($name in $electronSupport){
   Copy-Item $src (Join-Path $stash $name) -Force
 }
 
-Write-Host 'R40_PREFLIGHT_BEGIN baseline=exact-R39-final6 candidate=callback-pacing+single-dom-subtitle-overlay'
+Write-Host 'R40_PREFLIGHT_BEGIN baseline=exact-R39-final6 candidate=callback-pacing+single-dom-subtitle-overlay+handoff-force-redraw'
 
 # Same sanitizers and exact qualification entrypoint as authoritative R39 final6.
 node scripts/r32-transform-source-sanitize.cjs
@@ -100,10 +101,12 @@ node scripts/r40-release-pump-authority-correction.cjs
 Assert-Exit 'R40 release-time immediate pump authority correction'
 node scripts/r40-single-dom-subtitle-overlay-fix.cjs
 Assert-Exit 'R40 single DOM subtitle transform'
+node scripts/r40-handoff-force-redraw.cjs
+Assert-Exit 'R40 R37 handoff one-shot current-frame redraw transform'
 node scripts/r40-subtitle-controller-lifecycle-hardening.cjs
 Assert-Exit 'R40 subtitle owner-blur deferred replay lifecycle hardening'
 node scripts/r40-r37-e2e-semantic-compat.cjs
-Assert-Exit 'R40 protected R37 E2E single-DOM subtitle semantic compatibility'
+Assert-Exit 'R40 protected R37 E2E single-DOM subtitle/redraw semantic compatibility'
 node scripts/r40-rebundle-renderer.cjs
 Assert-Exit 'R40 renderer rebundle'
 node scripts/r40-finalize-identity.cjs
@@ -138,8 +141,8 @@ $main=Get-Content 'electron/main.cjs' -Raw
 $preload=Get-Content 'electron/preload.cjs' -Raw
 $overlayController=Get-Content 'electron/r40-subtitle-overlay-window.cjs' -Raw
 $overlayPreload=Get-Content 'electron/r40-subtitle-overlay-preload.cjs' -Raw
-foreach($marker in @('LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER','producerWaitingForSlot','producerSignalWakeups','producerWatchdogWakeups','producerReleaseWakeups')){if(-not $native.Contains($marker)){throw "R40 native marker missing: $marker"}}
-foreach($marker in @('LILAC_R40_FRESH_FRAME_WAKE_GATING','LILAC_R40_PRODUCER_CALLBACK_AUTHORITY','LILAC_R40_RELEASE_CALLBACK_AUTHORITY','r40FreshFrameSignals','r40StaleFrameSignals','r40NoFrameTimerTicks','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')){if(-not $bridge.Contains($marker)){throw "R40 bridge marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER','producerWaitingForSlot','producerSignalWakeups','producerWatchdogWakeups','producerReleaseWakeups','LILAC_R40_HANDOFF_FORCE_REDRAW','producerForceRedrawPending','producerForcedRedrawRequests','producerForcedRedrawFrames','requestFrameProducerRedraw')){if(-not $native.Contains($marker)){throw "R40 native marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_FRESH_FRAME_WAKE_GATING','LILAC_R40_PRODUCER_CALLBACK_AUTHORITY','LILAC_R40_RELEASE_CALLBACK_AUTHORITY','LILAC_R40_HANDOFF_FORCE_REDRAW','r40FreshFrameSignals','r40StaleFrameSignals','r40NoFrameTimerTicks','r40HandoffRedrawRequests','r40HandoffRedrawAccepted','requestFrameProducerRedraw','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')){if(-not $bridge.Contains($marker)){throw "R40 bridge marker missing: $marker"}}
 # Source-only comments prove the transform ran; bundled output is checked against
 # executable symbols/strings because esbuild may strip comments by design.
 foreach($marker in @('LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync')){if(-not $entry.Contains($marker)){throw "R40 renderer source marker missing: $marker"}}
@@ -185,4 +188,4 @@ finally{
 
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
-Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority subtitle=single-DOM+multiline+custom-font-byte-IPC+FontFace-ready+focus-race-replayed+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed+r40-subtitle-semantics r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority handoffRedraw=producer-thread-one-shot+paused-no-subtitle-proved subtitle=single-DOM+multiline+custom-font-byte-IPC+FontFace-ready+focus-race-replayed+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed+r40-subtitle-semantics r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
