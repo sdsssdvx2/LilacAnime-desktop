@@ -20,6 +20,7 @@ $scriptSupport=@(
   'r40-subtitle-controller-lifecycle-hardening.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
   'r40-subtitle-anchor-compat.cjs',
+  'r40-r37-e2e-semantic-compat.cjs',
   'r40-run-electron-gate.cjs',
   'r40-rebundle-renderer.cjs',
   'r40-finalize-identity.cjs',
@@ -101,6 +102,8 @@ node scripts/r40-single-dom-subtitle-overlay-fix.cjs
 Assert-Exit 'R40 single DOM subtitle transform'
 node scripts/r40-subtitle-controller-lifecycle-hardening.cjs
 Assert-Exit 'R40 subtitle owner-blur deferred replay lifecycle hardening'
+node scripts/r40-r37-e2e-semantic-compat.cjs
+Assert-Exit 'R40 protected R37 E2E single-DOM subtitle semantic compatibility'
 node scripts/r40-rebundle-renderer.cjs
 Assert-Exit 'R40 renderer rebundle'
 node scripts/r40-finalize-identity.cjs
@@ -119,6 +122,7 @@ foreach($script in @(
   'electron/libmpv-shared-main.cjs',
   'src/libmpv-shared-entry.js',
   'src/libmpv-shared.generated.js',
+  'scripts/r37-explicit-handoff-e2e-smoke.cjs',
   'electron/r40-subtitle-overlay-preload.cjs',
   'electron/r40-subtitle-overlay-window.cjs'
 )){
@@ -181,4 +185,4 @@ finally{
 
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
-Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority subtitle=single-DOM+multiline+custom-font-byte-IPC+FontFace-ready+focus-race-replayed+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority subtitle=single-DOM+multiline+custom-font-byte-IPC+FontFace-ready+focus-race-replayed+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed+r40-subtitle-semantics r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
