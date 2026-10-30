@@ -16,6 +16,8 @@ $scriptSupport=@(
   'r40-callback-pacing-runtime-smoke.cjs',
   'r40-native-subtitle-overlay-runtime-smoke.cjs',
   'r40-subtitle-runtime-focus-hardening.cjs',
+  'r40-subtitle-runtime-coverage-hardening.cjs',
+  'r40-subtitle-controller-lifecycle-hardening.cjs',
   'r40-single-dom-subtitle-overlay-fix.cjs',
   'r40-subtitle-anchor-compat.cjs',
   'r40-run-electron-gate.cjs',
@@ -72,13 +74,15 @@ foreach($script in @('electron/r40-subtitle-overlay-preload.cjs','electron/r40-s
   Assert-Exit "R40 syntax $script"
 }
 
-# Harden the hosted Windows subtitle runtime proof without changing product code.
-# The native presenter must already be visible and a real rival BrowserWindow must
-# still own focus at the exact instant the unfocused overlay is activated.
+# Harden hosted-Windows subtitle proof. First require a genuine rival focus after
+# the R33 presenter is already visible, then add deliberate focus-order race,
+# custom-font readiness, nested markup and natural multiline geometry coverage.
 node scripts/r40-subtitle-runtime-focus-hardening.cjs
 Assert-Exit 'R40 subtitle runtime post-presenter focus hardening'
+node scripts/r40-subtitle-runtime-coverage-hardening.cjs
+Assert-Exit 'R40 subtitle runtime race/font/multiline coverage hardening'
 node --check scripts/r40-native-subtitle-overlay-runtime-smoke.cjs
-Assert-Exit 'R40 hardened subtitle runtime smoke syntax'
+Assert-Exit 'R40 fully hardened subtitle runtime smoke syntax'
 
 # Normalize only the R40 transform script itself against exact final-R39 formatting.
 # Product files are still fail-closed and are not modified by this compatibility pass.
@@ -95,6 +99,8 @@ node scripts/r40-release-pump-authority-correction.cjs
 Assert-Exit 'R40 release-time immediate pump authority correction'
 node scripts/r40-single-dom-subtitle-overlay-fix.cjs
 Assert-Exit 'R40 single DOM subtitle transform'
+node scripts/r40-subtitle-controller-lifecycle-hardening.cjs
+Assert-Exit 'R40 subtitle owner-blur deferred replay lifecycle hardening'
 node scripts/r40-rebundle-renderer.cjs
 Assert-Exit 'R40 renderer rebundle'
 node scripts/r40-finalize-identity.cjs
@@ -126,14 +132,19 @@ $entry=Get-Content 'src/libmpv-shared-entry.js' -Raw
 $renderer=Get-Content 'src/libmpv-shared.generated.js' -Raw
 $main=Get-Content 'electron/main.cjs' -Raw
 $preload=Get-Content 'electron/preload.cjs' -Raw
+$overlayController=Get-Content 'electron/r40-subtitle-overlay-window.cjs' -Raw
+$overlayPreload=Get-Content 'electron/r40-subtitle-overlay-preload.cjs' -Raw
 foreach($marker in @('LILAC_R40_CALLBACK_AUTHORITATIVE_PRODUCER','producerWaitingForSlot','producerSignalWakeups','producerWatchdogWakeups','producerReleaseWakeups')){if(-not $native.Contains($marker)){throw "R40 native marker missing: $marker"}}
 foreach($marker in @('LILAC_R40_FRESH_FRAME_WAKE_GATING','LILAC_R40_PRODUCER_CALLBACK_AUTHORITY','LILAC_R40_RELEASE_CALLBACK_AUTHORITY','r40FreshFrameSignals','r40StaleFrameSignals','r40NoFrameTimerTicks','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK')){if(-not $bridge.Contains($marker)){throw "R40 bridge marker missing: $marker"}}
 # Source-only comments prove the transform ran; bundled output is checked against
 # executable symbols/strings because esbuild may strip comments by design.
 foreach($marker in @('LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync')){if(-not $entry.Contains($marker)){throw "R40 renderer source marker missing: $marker"}}
 foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','_r40SubtitleComputedStyle','_r40SubtitlePayload','_r40QueueSubtitleOverlaySync','setNativeSubtitleOverlay','getBoundingClientRect')){if(-not $renderer.Contains($marker)){throw "R40 renderer bundle semantic marker missing: $marker"}}
-foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','R40SubtitleOverlayWindowController',"player:native-subtitle-overlay")){if(-not $main.Contains($marker)){throw "R40 main overlay marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','R40SubtitleOverlayWindowController',"player:native-subtitle-overlay","reconcileDeferred(win, 'owner-blur')")){if(-not $main.Contains($marker)){throw "R40 main overlay marker missing: $marker"}}
 foreach($marker in @('setNativeSubtitleOverlay','nativeSubtitleOverlayState')){if(-not $preload.Contains($marker)){throw "R40 preload overlay marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','deferredActivePayload','deferredReplayCount','async reconcileDeferred(')){if(-not $overlayController.Contains($marker)){throw "R40 overlay controller race marker missing: $marker"}}
+foreach($marker in @('LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC','document.fonts.load','renderGeneration','fontReady')){if(-not $overlayPreload.Contains($marker)){throw "R40 overlay font marker missing: $marker"}}
+if($overlayPreload.Contains('format("truetype")')){throw 'R40 overlay reintroduced hard-coded truetype font hint'}
 if($native.Contains('std::chrono::milliseconds(6)')){throw 'R40 native 6ms producer polling survived'}
 if($bridge.Contains('focus-staged-gpu-copy')-or$bridge.Contains('copyTextureToTexture')){throw 'R40 resurrected forbidden R28 staged renderer path'}
 if($native.Contains('--disable-direct-composition')){throw 'R40 resurrected forbidden R25 Direct Composition disable'}
@@ -157,7 +168,7 @@ try{
   node scripts/r40-run-electron-gate.cjs scripts/r40-callback-pacing-runtime-smoke.cjs R40_CALLBACK_PACING_RUNTIME_OK 180000
   Assert-Exit 'R40 callback pacing runtime hard gate'
   node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
-  Assert-Exit 'R40 native subtitle overlay raw-HWND pixel hard gate'
+  Assert-Exit 'R40 native subtitle overlay race/font/multiline/raw-HWND pixel hard gate'
   node scripts/r37-run-e2e-with-timeout.cjs scripts/r37-explicit-handoff-e2e-smoke.cjs 180000
   Assert-Exit 'R40 protected R37 raw shared-texture E2E'
   node scripts/r40-run-electron-gate.cjs scripts/r39-miniplayer-native-topmost-runtime-smoke.cjs R39_MINIPLAYER_NATIVE_TOPMOST_RUNTIME_OK 150000
@@ -170,4 +181,4 @@ finally{
 
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc20'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r40'){throw 'R40 candidate identity mismatch'}
-Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority subtitle=single-DOM-computed-style+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R40_PREFLIGHT_OK version=$($pkg.version) electron=$env:ELECTRON_VERSION callbackProducer=compiled+pacing-runtime-hard-gated releaseWake=backpressure-only releasePump=legacy-only jsWake=frameId-gated+producer-authority subtitle=single-DOM+multiline+custom-font-ready+focus-race-replayed+raw-HWND-pixel-gated overlay=transparent-owned-window r33=preserved r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=real-native-topmost-repassed focused=direct-webgpu-byte-identical addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
