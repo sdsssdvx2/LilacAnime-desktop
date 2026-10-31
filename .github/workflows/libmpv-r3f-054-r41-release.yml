@@ -2,6 +2,10 @@ name: LilacAnime Libmpv R41 qualified prerelease
 
 on:
   workflow_dispatch:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/r41-release-trigger
 
 concurrency:
   group: lilac-libmpv-r41-qualified-release
