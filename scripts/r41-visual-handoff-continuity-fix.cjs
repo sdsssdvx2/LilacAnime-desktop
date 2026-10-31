@@ -14,18 +14,24 @@ function once(source, needle, replacement, label) {
   return source.replace(needle, replacement);
 }
 function replaceR37FreezeWithLiveNative(source) {
-  const marker = '// LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF:';
-  const markerCount = source.split(marker).length - 1;
-  if (markerCount !== 1) throw new Error(`R41 live native presentation marker: expected exactly one R37 freeze marker, found ${markerCount}`);
-  const markerIndex = source.indexOf(marker);
+  // Locate the generated R37 freeze by executable semantics, not by its comment.
+  // R40/R41 compatibility transforms may preserve the condition while moving or
+  // rewriting comments, so a marker-only anchor is intentionally forbidden here.
+  const conditionNeedle = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire) &&\n            !player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)) {`;
+  const conditionCount = source.split(conditionNeedle).length - 1;
+  if (conditionCount !== 1) {
+    throw new Error(`R41 live native presentation semantic condition: expected exactly one R37 freeze condition, found ${conditionCount}`);
+  }
+  const ifIndex = source.indexOf(conditionNeedle);
   const presentNeedle = 'R32PresentNativeFrame(player, slot, renderWidth, renderHeight);';
-  const presentIndex = source.indexOf(presentNeedle, markerIndex);
-  if (presentIndex < 0) throw new Error('R41 live native presentation: R32PresentNativeFrame missing after R37 freeze marker');
-  const ifIndex = source.lastIndexOf('        if (', markerIndex);
+  const presentIndex = source.indexOf(presentNeedle, ifIndex + conditionNeedle.length);
+  if (presentIndex < 0 || presentIndex - ifIndex > 900) {
+    throw new Error('R41 live native presentation: nearby R32PresentNativeFrame missing after semantic R37 freeze condition');
+  }
   const closeNeedle = '\n        }';
   const closeIndex = source.indexOf(closeNeedle, presentIndex + presentNeedle.length);
-  if (ifIndex < 0 || closeIndex < 0 || markerIndex - ifIndex > 700 || closeIndex - markerIndex > 700) {
-    throw new Error('R41 live native presentation: R37 freeze block structural boundary missing');
+  if (closeIndex < 0 || closeIndex - ifIndex > 1100) {
+    throw new Error('R41 live native presentation: semantic R37 freeze block boundary missing');
   }
   const endIndex = closeIndex + closeNeedle.length;
   const block = source.slice(ifIndex, endIndex);
@@ -33,13 +39,10 @@ function replaceR37FreezeWithLiveNative(source) {
     'rc >= 0',
     'producerStop.load(std::memory_order_acquire)',
     'r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',
-    marker,
     presentNeedle
   ]) {
     if (!block.includes(required)) throw new Error(`R41 live native presentation: freeze block missing semantic anchor ${required}`);
   }
-  const duplicatePresent = source.indexOf(presentNeedle, presentIndex + presentNeedle.length);
-  if (duplicatePresent >= 0 && duplicatePresent < endIndex) throw new Error('R41 live native presentation: ambiguous native present call inside freeze block');
   const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
   return source.slice(0, ifIndex) + replacement + source.slice(endIndex);
 }
