@@ -1,0 +1,76 @@
+name: LilacAnime Libmpv R41 visual handoff qualification
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r41-preflight.yml
+      - scripts/r41-visual-handoff-continuity-fix.cjs
+      - scripts/r41-live-handoff-native-smoke.cjs
+      - scripts/r41-preflight.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r41-visual-handoff
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r39
+  INSTALLER_NAME: LilacAnime-Libmpv-R39-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r39-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc19
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+  R40_RELEASE_TAG: libmpv-r2k-v0.5.54-r40
+  R40_INSTALLER_NAME: LilacAnime-Libmpv-R40-Setup.exe
+  R40_MANIFEST_NAME: lilacanime-libmpv-r40-manifest.json
+  R40_APP_VERSION: 0.5.54-libmpv-r3f.rc20
+
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install qualification helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+
+      - name: Parse R41 PowerShell
+        shell: powershell
+        run: |
+          $tokens=$null; $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/r41-preflight.ps1'),[ref]$tokens,[ref]$errors)
+          if($errors.Count){$errors|ForEach-Object{Write-Error $_};throw 'R41 PowerShell parse failed'}
+          Write-Host 'R41_PREFLIGHT_SCRIPT_PARSE_OK'
+
+      - name: Reconstruct R40 and run R41 hard gates
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/r41-preflight.ps1
