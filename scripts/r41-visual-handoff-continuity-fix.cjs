@@ -13,6 +13,36 @@ function once(source, needle, replacement, label) {
   if (count !== 1) throw new Error(`${label}: expected exactly one anchor, found ${count}`);
   return source.replace(needle, replacement);
 }
+function replaceR37FreezeWithLiveNative(source) {
+  const marker = '// LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF:';
+  const markerCount = source.split(marker).length - 1;
+  if (markerCount !== 1) throw new Error(`R41 live native presentation marker: expected exactly one R37 freeze marker, found ${markerCount}`);
+  const markerIndex = source.indexOf(marker);
+  const presentNeedle = 'R32PresentNativeFrame(player, slot, renderWidth, renderHeight);';
+  const presentIndex = source.indexOf(presentNeedle, markerIndex);
+  if (presentIndex < 0) throw new Error('R41 live native presentation: R32PresentNativeFrame missing after R37 freeze marker');
+  const ifIndex = source.lastIndexOf('        if (', markerIndex);
+  const closeNeedle = '\n        }';
+  const closeIndex = source.indexOf(closeNeedle, presentIndex + presentNeedle.length);
+  if (ifIndex < 0 || closeIndex < 0 || markerIndex - ifIndex > 700 || closeIndex - markerIndex > 700) {
+    throw new Error('R41 live native presentation: R37 freeze block structural boundary missing');
+  }
+  const endIndex = closeIndex + closeNeedle.length;
+  const block = source.slice(ifIndex, endIndex);
+  for (const required of [
+    'rc >= 0',
+    'producerStop.load(std::memory_order_acquire)',
+    'r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',
+    marker,
+    presentNeedle
+  ]) {
+    if (!block.includes(required)) throw new Error(`R41 live native presentation: freeze block missing semantic anchor ${required}`);
+  }
+  const duplicatePresent = source.indexOf(presentNeedle, presentIndex + presentNeedle.length);
+  if (duplicatePresent >= 0 && duplicatePresent < endIndex) throw new Error('R41 live native presentation: ambiguous native present call inside freeze block');
+  const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
+  return source.slice(0, ifIndex) + replacement + source.slice(endIndex);
+}
 
 let native = read('native/libmpv-d3d11-bridge/player_addon.cc');
 let bridge = read('electron/libmpv-shared-main.cjs');
@@ -46,12 +76,7 @@ for (const forbidden of ['copyTextureToTexture', 'focus-staged-gpu-copy', '--dis
 // longer exists. Keep the owned popup presenting current VIDEO while the same
 // frames are mirrored into Chromium. It remains the visual safety surface until
 // the renderer proves a sustained direct-WebGPU cadence.
-native = once(
-  native,
-  `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire) &&\n            !player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)) {\n          // LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF: preserve the last visible\n          // native frame while the redraw is mirrored to Chromium.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`,
-  `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`,
-  'R41 live native presentation during mirror handoff'
-);
+native = replaceR37FreezeWithLiveNative(native);
 
 // Tell the renderer whether this epoch needs sustained moving-video proof. The
 // cached playback state is sufficient here; pause/speed commands invalidate that
