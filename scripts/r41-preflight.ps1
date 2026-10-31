@@ -49,7 +49,9 @@ $bundle=Get-Content 'electron/preload-libmpv-shared.generated.cjs' -Raw
 foreach($marker in @('LILAC_R41_LIVE_NATIVE_HANDOFF')){if(-not $native.Contains($marker)){throw "R41 native marker missing: $marker"}}
 foreach($marker in @('r41HandoffPlaying','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','LILAC_R40_HANDOFF_FORCE_REDRAW')){if(-not $bridge.Contains($marker)){throw "R41 bridge marker missing: $marker"}}
 foreach($marker in @('LILAC_R41_VISUAL_HANDOFF_COMMIT','r41ScheduleVisualHandoffAck','r41HandoffStableStartedAt','r41HandoffStableResets','requestAnimationFrame(() => requestAnimationFrame(commit))',"presentationMode = 'direct-receive-webgpu-copy'",'copyExternalImageToTexture')){if(-not $preload.Contains($marker)){throw "R41 preload marker missing: $marker"}}
-foreach($marker in @('LILAC_R41_VISUAL_HANDOFF_COMMIT','r41ScheduleVisualHandoffAck',"presentationMode = 'direct-receive-webgpu-copy'")){if(-not $bundle.Contains($marker)){throw "R41 bundled preload marker missing: $marker"}}
+# esbuild rewrites whitespace/assignment formatting, so packaged semantics are
+# gated by stable behavior tokens rather than source-format text.
+foreach($marker in @('LILAC_R41_VISUAL_HANDOFF_COMMIT','r41ScheduleVisualHandoffAck','direct-receive-webgpu-copy','copyExternalImageToTexture')){if(-not $bundle.Contains($marker)){throw "R41 bundled preload marker missing: $marker"}}
 if($native.Contains('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF')){throw 'R41 retained obsolete R37 native handoff freeze'}
 foreach($forbidden in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){if($native.Contains($forbidden)-or$bridge.Contains($forbidden)-or$preload.Contains($forbidden)){throw "R41 forbidden path present: $forbidden"}}
 if((Sha256 'electron/updater.cjs')-ne $updaterBefore){throw 'R41 changed protected R38 updater'}
