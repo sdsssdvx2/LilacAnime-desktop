@@ -21,7 +21,6 @@ function replaceR37FreezeWithLiveNative(source) {
   }
   const ifIndex = source.indexOf(conditionNeedle);
   const presentNeedle = 'R32PresentNativeFrame(player, slot, renderWidth, renderHeight);';
-  const ownershipNeedle = `r33NativeOwnsFrame = ${presentNeedle}`;
   const presentIndex = source.indexOf(presentNeedle, ifIndex + conditionNeedle.length);
   if (presentIndex < 0 || presentIndex - ifIndex > 900) throw new Error('R41 live native presentation: nearby R32PresentNativeFrame missing after semantic R37 freeze condition');
   const closeNeedle = '\n        }';
@@ -29,7 +28,7 @@ function replaceR37FreezeWithLiveNative(source) {
   if (closeIndex < 0 || closeIndex - ifIndex > 1100) throw new Error('R41 live native presentation: semantic R37 freeze block boundary missing');
   const endIndex = closeIndex + closeNeedle.length;
   const block = source.slice(ifIndex, endIndex);
-  for (const required of ['rc >= 0','producerStop.load(std::memory_order_acquire)','r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',ownershipNeedle]) {
+  for (const required of ['rc >= 0','producerStop.load(std::memory_order_acquire)','r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',presentNeedle]) {
     if (!block.includes(required)) throw new Error(`R41 live native presentation: freeze block missing semantic anchor ${required}`);
   }
   const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering. Preserve\n          // R33's S_OK-qualified ownership result so native-only still suppresses\n          // duplicate Chromium delivery; R34 mirror=true explicitly bypasses that\n          // suppression during the handoff.\n          r33NativeOwnsFrame = R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
