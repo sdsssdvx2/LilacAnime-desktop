@@ -193,7 +193,7 @@ const paintHelpers = String.raw`function r42PaintSnapshot(stage, payload, genera
       cueOpacities:cueNodes.map(node => String(getComputedStyle(node).opacity || '')),
       cueTransitions:cueNodes.map(node => {
         const style = getComputedStyle(node);
-        return `${style.transitionProperty || ''}|${style.transitionDuration || ''}|${style.transitionDelay || ''}|${style.animationName || ''}|${style.animationDuration || ''}`;
+        return String(style.transitionProperty || '') + '|' + String(style.transitionDuration || '') + '|' + String(style.transitionDelay || '') + '|' + String(style.animationName || '') + '|' + String(style.animationDuration || '');
       })
     });
   } catch {}
@@ -207,7 +207,7 @@ function r42SchedulePaintSnapshots(payload, generation) {
     });
   }
   for (const delay of [50, 100, 200, 300]) {
-    setTimeout(() => r42PaintSnapshot(`t+${delay}ms`, payload, generation), delay);
+    setTimeout(() => r42PaintSnapshot('t+' + delay + 'ms', payload, generation), delay);
   }
 }
 
