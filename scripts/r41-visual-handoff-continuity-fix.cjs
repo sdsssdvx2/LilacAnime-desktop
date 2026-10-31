@@ -46,6 +46,82 @@ function replaceR37FreezeWithLiveNative(source) {
   const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
   return source.slice(0, ifIndex) + replacement + source.slice(endIndex);
 }
+function replaceR37RendererAckWithVisualCommit(source) {
+  // Locate the R37 ACK by the unique IPC send and its enclosing copied-frame
+  // guard. R40 may alter whitespace/comments around release bookkeeping, so the
+  // exact multiline source is deliberately not an anchor.
+  const sendNeedle = "ipcRenderer.send('libmpv-shared:r37-handoff-presented'";
+  const sendCount = source.split(sendNeedle).length - 1;
+  if (sendCount !== 1) {
+    throw new Error(`R41 renderer ACK semantic send: expected exactly one R37 handoff send, found ${sendCount}`);
+  }
+  const sendIndex = source.indexOf(sendNeedle);
+  const guardNeedle = 'if (r37HandoffCopied';
+  const guardCount = source.split(guardNeedle).length - 1;
+  if (guardCount !== 1) {
+    throw new Error(`R41 renderer ACK semantic guard: expected exactly one copied-frame guard, found ${guardCount}`);
+  }
+  const ifIndex = source.lastIndexOf(guardNeedle, sendIndex);
+  if (ifIndex < 0 || sendIndex - ifIndex > 900) {
+    throw new Error('R41 renderer ACK semantic guard missing near R37 handoff send');
+  }
+  const openIndex = source.indexOf('{', ifIndex);
+  if (openIndex < 0 || openIndex > sendIndex) throw new Error('R41 renderer ACK opening brace missing');
+
+  // This generated block has nested object/catch braces. Match the enclosing
+  // guard structurally while ignoring braces inside quoted strings/comments.
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  let closeIndex = -1;
+  for (let i = openIndex; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1] || '';
+    if (lineComment) {
+      if (ch === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; i += 1; }
+      continue;
+    }
+    if (quote) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; i += 1; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; i += 1; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) { closeIndex = i; break; }
+    }
+  }
+  if (closeIndex < 0 || closeIndex - ifIndex > 1400) {
+    throw new Error('R41 renderer ACK semantic block boundary missing');
+  }
+  const block = source.slice(ifIndex, closeIndex + 1);
+  for (const required of [
+    'r37HandoffCopied',
+    'r37HandoffEpoch',
+    sendNeedle,
+    'playerId',
+    'generation',
+    'frameId'
+  ]) {
+    if (!block.includes(required)) throw new Error(`R41 renderer ACK block missing semantic anchor ${required}`);
+  }
+  const lineStart = source.lastIndexOf('\n', ifIndex) + 1;
+  const indent = source.slice(lineStart, ifIndex);
+  if (!/^\s*$/.test(indent)) throw new Error('R41 renderer ACK indentation boundary invalid');
+  const replacement = `${indent}if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {\n${indent}  r41ScheduleVisualHandoffAck(metadata);\n${indent}}`;
+  return source.slice(0, lineStart) + replacement + source.slice(closeIndex + 1);
+}
 
 let native = read('native/libmpv-d3d11-bridge/player_addon.cc');
 let bridge = read('electron/libmpv-shared-main.cjs');
@@ -160,14 +236,7 @@ function r41ScheduleVisualHandoffAck(metadata) {
 const sendStatsIndex = preload.indexOf('function sendStats(');
 if (sendStatsIndex < 0) throw new Error('R41 sendStats insertion boundary missing');
 preload = preload.slice(0, sendStatsIndex) + ackHelper + preload.slice(sendStatsIndex);
-
-const oldAck = `      if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {\n        try {\n          ipcRenderer.send('libmpv-shared:r37-handoff-presented', {\n            epoch: Number(metadata.r37HandoffEpoch),\n            playerId: Number(metadata.playerId) || 0,\n            generation: Number(metadata.generation) || 0,\n            frameId: Number(metadata.frameId) || 0\n          });\n        } catch {}\n      }`;
-preload = once(
-  preload,
-  oldAck,
-  `      if (r37HandoffCopied && Number(metadata?.r37HandoffEpoch) > 0) {\n        r41ScheduleVisualHandoffAck(metadata);\n      }`,
-  'R41 defer R37 ACK until sustained visual commit'
-);
+preload = replaceR37RendererAckWithVisualCommit(preload);
 
 if (pkg.version !== '0.5.54-libmpv-r3f.rc20' || pkg.lilacCustomTag !== 'libmpv-r2k-v0.5.54-r40') {
   throw new Error(`R41 expected R40 identity, got ${pkg.version} ${pkg.lilacCustomTag}`);
