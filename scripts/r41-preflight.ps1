@@ -18,7 +18,7 @@ foreach($name in $r41Support){
   Copy-Item $src (Join-Path $stash $name) -Force
 }
 
-Write-Host 'R41_PREFLIGHT_BEGIN baseline=exact-R40 candidate=blur-first-present-latch+display-diagnostics'
+Write-Host 'R41_PREFLIGHT_BEGIN baseline=exact-R40 candidate=blur-2x2-warmup-first-present-before-full-exposure'
 & ./scripts/r40-preflight.ps1
 Assert-Exit 'R41 exact R40 reconstruction/qualification'
 
@@ -36,16 +36,16 @@ $dllBefore=Sha256 'electron/libmpv-2.dll'
 if($dllBefore-ne $env:QUALIFIED_DLL_SHA256){throw 'R41 exact R40 DLL baseline mismatch'}
 
 node scripts/r41-first-present-latch.cjs
-Assert-Exit 'R41 blur first-present latch transform'
+Assert-Exit 'R41 blur 2x2 warmup/full-exposure latch transform'
 node scripts/r41-finalize-identity.cjs
 Assert-Exit 'R41 identity'
 
 $native=Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
 $bridge=Get-Content 'electron/libmpv-shared-main.cjs' -Raw
-foreach($marker in @('LILAC_R41_FIRST_PRESENT_BEFORE_SHOW','r41FirstPresentReady','r41VisibilityPrematureShowCount','LILAC_R33_OWNED_POPUP_FOCUS_SURFACE','LILAC_R39_TOPMOST_BIDIRECTIONAL','LILAC_R40_HANDOFF_FORCE_REDRAW')){if(-not $native.Contains($marker)-and-not $bridge.Contains($marker)){throw "R41 required marker missing: $marker"}}
+foreach($marker in @('LILAC_R41_FIRST_PRESENT_BEFORE_FULL_EXPOSURE','r41FirstPresentReady','r41WarmupPending','r41FullExposureCommitted','r41PrematureFullExposureCount','LILAC_R33_OWNED_POPUP_FOCUS_SURFACE','LILAC_R39_TOPMOST_BIDIRECTIONAL','LILAC_R40_HANDOFF_FORCE_REDRAW')){if(-not $native.Contains($marker)-and-not $bridge.Contains($marker)){throw "R41 required marker missing: $marker"}}
 foreach($marker in @('LILAC_R41_BLUR_FIRST_PRESENT_COMMIT','r41ArmBlurFirstPresentCommit','r41BlurForcedRedrawAccepted','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','LILAC_R40_FRESH_FRAME_WAKE_GATING')){if(-not $bridge.Contains($marker)){throw "R41 bridge marker missing: $marker"}}
 
-$presentStart=$native.IndexOf('void R32PresentNativeFrame(')
+$presentStart=$native.IndexOf('bool R32PresentNativeFrame(')
 $presentEnd=$native.IndexOf('bool SetOption(Player* player, const char* key, const char* value, std::string* error) {',$presentStart)
 if($presentStart-lt 0-or$presentEnd-le$presentStart){throw 'R41 native present boundary missing'}
 $presentBody=$native.Substring($presentStart,$presentEnd-$presentStart)
@@ -67,7 +67,7 @@ $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridg
 $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
 try{
   node scripts/r40-run-electron-gate.cjs scripts/r41-first-present-runtime-smoke.cjs R41_FIRST_PRESENT_RUNTIME_OK 150000
-  Assert-Exit 'R41 first-present DWM/runtime hard gate'
+  Assert-Exit 'R41 2x2 warmup/full-exposure DWM runtime hard gate'
   node scripts/r40-run-electron-gate.cjs scripts/r40-callback-pacing-runtime-smoke.cjs R40_CALLBACK_PACING_RUNTIME_OK 180000
   Assert-Exit 'R41 protected R40 callback pacing hard gate'
   node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
@@ -84,4 +84,4 @@ finally{
 
 $pkg=Get-Content 'package.json' -Raw|ConvertFrom-Json
 if($pkg.version-ne '0.5.54-libmpv-r3f.rc21'-or$pkg.lilacCustomTag-ne 'libmpv-r2k-v0.5.54-r41'){throw 'R41 candidate identity mismatch'}
-Write-Host "R41_PREFLIGHT_OK version=$($pkg.version) firstPresent=arm+forced-redraw+present-before-show+main-thread-commit prematureShow=hard-zero r40Pacing=repassed r40Subtitle=repassed r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=topmost-repassed focused=direct-webgpu-byte-identical forbiddenR25R28=absent addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
+Write-Host "R41_PREFLIGHT_OK version=$($pkg.version) firstPresent=2x2-visible-warmup+forced-redraw+S_OK-before-full-exposure+main-thread-commit prematureFullExposure=hard-zero r33ShowBeforeArm=preserved r40Pacing=repassed r40Subtitle=repassed r37=raw-e2e-repassed r38Updater=byte-identical r39PiP=topmost-repassed focused=direct-webgpu-byte-identical forbiddenR25R28=absent addonSha=$(Sha256 'electron/lilac-libmpv-player-bridge.node') dll=$dllBefore"
