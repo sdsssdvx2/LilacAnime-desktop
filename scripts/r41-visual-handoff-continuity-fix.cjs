@@ -21,6 +21,7 @@ function replaceR37FreezeWithLiveNative(source) {
   }
   const ifIndex = source.indexOf(conditionNeedle);
   const presentNeedle = 'R32PresentNativeFrame(player, slot, renderWidth, renderHeight);';
+  const ownershipNeedle = `r33NativeOwnsFrame = ${presentNeedle}`;
   const presentIndex = source.indexOf(presentNeedle, ifIndex + conditionNeedle.length);
   if (presentIndex < 0 || presentIndex - ifIndex > 900) throw new Error('R41 live native presentation: nearby R32PresentNativeFrame missing after semantic R37 freeze condition');
   const closeNeedle = '\n        }';
@@ -28,10 +29,10 @@ function replaceR37FreezeWithLiveNative(source) {
   if (closeIndex < 0 || closeIndex - ifIndex > 1100) throw new Error('R41 live native presentation: semantic R37 freeze block boundary missing');
   const endIndex = closeIndex + closeNeedle.length;
   const block = source.slice(ifIndex, endIndex);
-  for (const required of ['rc >= 0','producerStop.load(std::memory_order_acquire)','r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',presentNeedle]) {
+  for (const required of ['rc >= 0','producerStop.load(std::memory_order_acquire)','r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire)',ownershipNeedle]) {
     if (!block.includes(required)) throw new Error(`R41 live native presentation: freeze block missing semantic anchor ${required}`);
   }
-  const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering.\n          R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
+  const replacement = `        if (rc >= 0 && !player->producerStop.load(std::memory_order_acquire)) {\n          // LILAC_R41_LIVE_NATIVE_HANDOFF: R40 has a separate transparent subtitle\n          // overlay and keeps libmpv sub-visibility=no, so the owned popup can keep\n          // presenting current video while Chromium is mirrored/recovering. Preserve\n          // R33's S_OK-qualified ownership result so native-only still suppresses\n          // duplicate Chromium delivery; R34 mirror=true explicitly bypasses that\n          // suppression during the handoff.\n          r33NativeOwnsFrame = R32PresentNativeFrame(player, slot, renderWidth, renderHeight);\n        }`;
   return source.slice(0, ifIndex) + replacement + source.slice(endIndex);
 }
 function replaceR37RendererAckWithVisualCommit(source) {
@@ -186,6 +187,8 @@ const finalBridge = read('electron/libmpv-shared-main.cjs');
 const finalPreload = read('electron/libmpv-shared-preload.cjs');
 const finalBundle = read('electron/preload-libmpv-shared.generated.cjs');
 if (!finalNative.includes('LILAC_R41_LIVE_NATIVE_HANDOFF')) throw new Error('R41 native marker missing LILAC_R41_LIVE_NATIVE_HANDOFF');
+if (!finalNative.includes('r33NativeOwnsFrame = R32PresentNativeFrame(player, slot, renderWidth, renderHeight);')) throw new Error('R41 lost R33 S_OK native ownership assignment');
+if (!finalNative.includes('if (r33NativeOwnsFrame && !player->r34MirrorChromiumDuringHandoff.load(std::memory_order_acquire))')) throw new Error('R41 lost R33 native-only Chromium suppression / R34 mirror bypass');
 if (!finalBridge.includes('r41HandoffPlaying')) throw new Error('R41 bridge marker missing r41HandoffPlaying');
 for (const marker of ['LILAC_R41_VISUAL_HANDOFF_COMMIT','r41ScheduleVisualHandoffAck','r41HandoffStableStartedAt','requestAnimationFrame(() => requestAnimationFrame(commit))']) if (!finalPreload.includes(marker)) throw new Error(`R41 preload marker missing ${marker}`);
 for (const marker of ['LILAC_R41_VISUAL_HANDOFF_COMMIT','r41ScheduleVisualHandoffAck']) if (!finalBundle.includes(marker)) throw new Error(`R41 bundled preload marker missing ${marker}`);
@@ -193,4 +196,4 @@ if (finalNative.includes('LILAC_R37_FREEZE_NATIVE_DURING_HANDOFF')) throw new Er
 for (const forbidden of ['copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition']) {
   if (finalNative.includes(forbidden) || finalBridge.includes(forbidden) || finalPreload.includes(forbidden)) throw new Error(`R41 introduced forbidden path ${forbidden}`);
 }
-console.log('R41_VISUAL_HANDOFF_CONTINUITY_OK native=live-during-mirror focused=direct-webgpu ack=sustained-250ms+double-raf paused=single-frame+double-raf r25=absent r28=absent');
+console.log('R41_VISUAL_HANDOFF_CONTINUITY_OK native=live-during-mirror+s-ok-ownership focused=direct-webgpu nativeOnlyChromiumSuppressed=1 mirrorChromiumEnabled=1 ack=sustained-250ms+double-raf paused=single-frame+double-raf r25=absent r28=absent');
