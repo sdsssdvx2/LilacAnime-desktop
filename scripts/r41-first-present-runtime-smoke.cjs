@@ -49,26 +49,39 @@ const nativeStats=s=>s?.r32NativePresenter||{}; const focusStats=s=>s?.r33FocusS
     if(await main.webContents.executeJavaScript(`window.__start(${JSON.stringify(media)})`)!==true)throw new Error('R41 product start failed');
     await waitUntil(()=>{const s=bridge.state();return s?.fileLoaded===true&&String(s?.receiver?.presentationMode||'')==='direct-receive-webgpu-copy'&&Number(s?.receiver?.presentedFrames||0)>=20?s:null},20000,'R41 direct WebGPU baseline');
     const baseline=bridge.state();
-    if(nativeStats(baseline)?.r41FirstPresentMarker!=='LILAC_R41_FIRST_PRESENT_BEFORE_SHOW')throw new Error('R41 native first-present diagnostics missing');
-    if(commitStats(baseline)?.marker!=='LILAC_R41_BLUR_FIRST_PRESENT_COMMIT')throw new Error('R41 bridge first-present diagnostics missing');
+    if(nativeStats(baseline)?.r41FirstPresentMarker!=='LILAC_R41_FIRST_PRESENT_BEFORE_FULL_EXPOSURE')throw new Error('R41 native warmup diagnostics missing');
+    if(commitStats(baseline)?.marker!=='LILAC_R41_BLUR_FIRST_PRESENT_COMMIT')throw new Error('R41 bridge warmup diagnostics missing');
 
     const cycles=[];
     for(let i=1;i<=5;i++){
-      const before=bridge.state(),ns0=nativeStats(before),cs0=commitStats(before); const arm0=Number(ns0.r41VisibilityArmCount||0),defer0=Number(ns0.r41VisibilityDeferredCount||0),commit0=Number(ns0.r41VisibilityCommitCount||0),forced0=Number(cs0.forcedRedrawAccepted||0),bridgeCommit0=Number(cs0.commits||0),start=Date.now();
-      rival.show();rival.focus(); await waitUntil(()=>!main.isFocused()&&rival.isFocused(),3000,`R41 cycle${i} real blur`); await waitUntil(()=>focusStats(bridge.state()).active===true,1000,`R41 cycle${i} native ownership arm`);
-      const armed=await waitUntil(()=>{const s=bridge.state(),ns=nativeStats(s);return Number(ns.r41VisibilityArmCount||0)>arm0?s:null},1000,`R41 cycle${i} visibility arm`,2),armedNs=nativeStats(armed);
-      if(armedNs.windowVisible===true&&armedNs.r41FirstPresentReady!==true)throw new Error(`R41 cycle${i} popup visible before first Present ${JSON.stringify(armedNs)}`);
-      const committed=await waitUntil(()=>{const s=bridge.state(),ns=nativeStats(s),cs=commitStats(s);return ns.r41FirstPresentReady===true&&ns.windowVisible===true&&Number(ns.r41VisibilityCommitCount||0)>commit0&&Number(cs.commits||0)>bridgeCommit0?s:null},500,`R41 cycle${i} first-present commit`,2);
+      const before=bridge.state(),ns0=nativeStats(before),cs0=commitStats(before);
+      const arm0=Number(ns0.r41WarmupArmCount||0),warmShow0=Number(ns0.r41WarmupShowCount||0),commit0=Number(ns0.r41FullExposureCommitCount||0),forced0=Number(cs0.forcedRedrawAccepted||0),bridgeCommit0=Number(cs0.commits||0),start=Date.now();
+      rival.show();rival.focus();
+      await waitUntil(()=>!main.isFocused()&&rival.isFocused(),3000,`R41 cycle${i} real blur`);
+      await waitUntil(()=>focusStats(bridge.state()).active===true,1000,`R41 cycle${i} native ownership arm`);
+      await waitUntil(()=>{const s=bridge.state(),ns=nativeStats(s);return Number(ns.r41WarmupArmCount||0)>arm0&&Number(ns.r41WarmupShowCount||0)>warmShow0?s:null},1000,`R41 cycle${i} 2x2 warmup show`,2);
+      const committed=await waitUntil(()=>{const s=bridge.state(),ns=nativeStats(s),cs=commitStats(s);return ns.r41FirstPresentReady===true&&ns.windowVisible===true&&ns.r41WarmupPending===false&&ns.r41FullExposureCommitted===true&&Number(ns.r41FullExposureCommitCount||0)>commit0&&Number(cs.commits||0)>bridgeCommit0?s:null},500,`R41 cycle${i} first-present full-exposure commit`,2);
       const elapsed=Date.now()-start,ns1=nativeStats(committed),cs1=commitStats(committed);
-      if(Number(ns1.r41VisibilityDeferredCount||0)<=defer0)throw new Error(`R41 cycle${i} first show was not deferred`);
+      if(Number(ns1.r41WarmupMaxWidth||0)>2||Number(ns1.r41WarmupMaxHeight||0)>2)throw new Error(`R41 cycle${i} warmup exceeded 2x2 ${JSON.stringify({w:ns1.r41WarmupMaxWidth,h:ns1.r41WarmupMaxHeight})}`);
+      if(Number(ns1.r41PrematureFullExposureCount||0)!==0)throw new Error(`R41 cycle${i} premature full popup exposure detected`);
       if(Number(cs1.forcedRedrawAccepted||0)<=forced0)throw new Error(`R41 cycle${i} blur forced redraw not accepted`);
-      if(Number(ns1.r41VisibilityPrematureShowCount||0)!==0)throw new Error(`R41 cycle${i} premature popup show detected`);
-      if(Number(cs1.timeouts||0)!==0)throw new Error(`R41 cycle${i} first-present commit timeout`);
-      if(elapsed>250)throw new Error(`R41 cycle${i} first-present commit too slow ${elapsed}ms`);
-      const means=sampleCenter(await capturePrimary(),ns1); if(!(means.r>110&&means.r>means.g+45&&means.r>means.b+45))throw new Error(`R41 cycle${i} committed native DWM sample not red / possible black frame ${JSON.stringify(means)}`);
-      await sleep(250); main.show();main.focus(); await waitUntil(()=>main.isFocused(),3000,`R41 cycle${i} refocus`); await waitUntil(()=>nativeStats(bridge.state()).windowVisible===false,1000,`R41 cycle${i} popup hide`); await waitUntil(()=>String(bridge.state()?.receiver?.presentationMode||'')==='direct-receive-webgpu-copy',1000,`R41 cycle${i} focused direct WebGPU`); cycles.push(elapsed); await sleep(150);
+      if(Number(cs1.timeouts||0)!==0)throw new Error(`R41 cycle${i} warmup commit timeout`);
+      if(elapsed>250)throw new Error(`R41 cycle${i} full exposure commit too slow ${elapsed}ms`);
+      const means=sampleCenter(await capturePrimary(),ns1); if(!(means.r>110&&means.r>means.g+45&&means.r>means.b+45))throw new Error(`R41 cycle${i} committed native DWM sample not red / possible black exposure ${JSON.stringify(means)}`);
+      await sleep(250); main.show();main.focus();
+      await waitUntil(()=>main.isFocused(),3000,`R41 cycle${i} refocus`);
+      await waitUntil(()=>{const ns=nativeStats(bridge.state());return ns.windowVisible===false&&ns.r41WarmupPending===false&&ns.r41FullExposureCommitted===false},1000,`R41 cycle${i} popup hide`);
+      await waitUntil(()=>String(bridge.state()?.receiver?.presentationMode||'')==='direct-receive-webgpu-copy',1000,`R41 cycle${i} focused direct WebGPU`);
+      cycles.push(elapsed); await sleep(150);
     }
-    const final=bridge.state(),ns=nativeStats(final),cs=commitStats(final); if(Number(ns.r41VisibilityPrematureShowCount||0)!==0)throw new Error('R41 final premature show count nonzero'); if(Number(cs.timeouts||0)!==0)throw new Error('R41 final commit timeout count nonzero'); if(Number(cs.forcedRedrawAccepted||0)<5)throw new Error(`R41 forced redraw accepts too small ${cs.forcedRedrawAccepted}`); if(Number(cs.commits||0)<5)throw new Error(`R41 bridge commits too small ${cs.commits}`); if(String(final?.receiver?.presentationMode||'')!=='direct-receive-webgpu-copy')throw new Error('R41 final focused direct WebGPU lost');
-    console.log(`R41_FIRST_PRESENT_RUNTIME_OK cycles=5 maxCommitMs=${Math.max(...cycles)} nativeArms=${ns.r41VisibilityArmCount} nativeDeferred=${ns.r41VisibilityDeferredCount} nativeCommits=${ns.r41VisibilityCommitCount} prematureShows=${ns.r41VisibilityPrematureShowCount} blurRedrawAccepted=${cs.forcedRedrawAccepted} bridgeCommits=${cs.commits} timeouts=${cs.timeouts} dwmCommittedRed=5 focusRecovery=direct-webgpu`);
+    const final=bridge.state(),ns=nativeStats(final),cs=commitStats(final);
+    if(Number(ns.r41PrematureFullExposureCount||0)!==0)throw new Error('R41 final premature full exposure count nonzero');
+    if(Number(ns.r41WarmupMaxWidth||0)>2||Number(ns.r41WarmupMaxHeight||0)>2)throw new Error('R41 final warmup size exceeded 2x2');
+    if(Number(ns.r41WarmupArmCount||0)<5||Number(ns.r41WarmupShowCount||0)<5||Number(ns.r41FullExposureCommitCount||0)<5)throw new Error(`R41 native warmup lifecycle counts too small ${JSON.stringify(ns)}`);
+    if(Number(cs.timeouts||0)!==0)throw new Error('R41 final commit timeout count nonzero');
+    if(Number(cs.forcedRedrawAccepted||0)<5)throw new Error(`R41 forced redraw accepts too small ${cs.forcedRedrawAccepted}`);
+    if(Number(cs.commits||0)<5)throw new Error(`R41 bridge commits too small ${cs.commits}`);
+    if(String(final?.receiver?.presentationMode||'')!=='direct-receive-webgpu-copy')throw new Error('R41 final focused direct WebGPU lost');
+    console.log(`R41_FIRST_PRESENT_RUNTIME_OK cycles=5 maxCommitMs=${Math.max(...cycles)} nativeArms=${ns.r41WarmupArmCount} warmupShows=${ns.r41WarmupShowCount} nativeCommits=${ns.r41FullExposureCommitCount} warmupMax=${ns.r41WarmupMaxWidth}x${ns.r41WarmupMaxHeight} prematureFullExposure=${ns.r41PrematureFullExposureCount} blurRedrawAccepted=${cs.forcedRedrawAccepted} bridgeCommits=${cs.commits} timeouts=${cs.timeouts} dwmCommittedRed=5 focusRecovery=direct-webgpu`);
   }finally{clearTimeout(deadline);try{await bridge?.close?.()}catch{}try{await bridge?.dispose?.()}catch{}try{rival?.destroy()}catch{}try{main?.destroy()}catch{}try{fs.rmSync(dir,{recursive:true,force:true})}catch{}delete process.env.LILAC_LIBMPV_TEST_AO_NULL;app.quit()}
 })().catch(error=>{clearTimeout(deadline);console.error(error?.stack||error);process.exitCode=1;try{app.quit()}catch{}});
