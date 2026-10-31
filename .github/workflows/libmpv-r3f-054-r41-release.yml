@@ -1,0 +1,155 @@
+name: LilacAnime Libmpv R41 first-present qualified prerelease
+
+on:
+  push:
+    branches: [libmpv-r3f-054-r41-first-present-display-diagnostics]
+    paths:
+      - .github/workflows/libmpv-r3f-054-r41-release.yml
+      - scripts/r41-first-present-latch.cjs
+      - scripts/r41-first-present-runtime-smoke.cjs
+      - scripts/r41-finalize-identity.cjs
+      - scripts/r41-preflight.ps1
+      - scripts/r41-postqualify-release.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: lilac-libmpv-r41-qualified-prerelease
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  QUALIFIED_SOURCE_SHA: 60a7e18bd29a7aedee1b8c43f6a0efa9737c7bcc
+  ELECTRON_VERSION: 44.9.3
+  BASE_RELEASE_TAG: libmpv-r2k-v0.5.54-r23
+  BASE_INSTALLER_NAME: LilacAnime-Libmpv-R23-Setup.exe
+  BASE_INSTALLER_SHA256: 778846895dd18d62e96175222468f56334a61e4caf7fec46e87eaa027a2f39fd
+  QUALIFIED_ADDON_SHA256: 17f0cba38b68082c1730a3d5dcd8f063a189ecbd10c66a5f15459772dcce0bc8
+  QUALIFIED_DLL_SHA256: 04e4d27dc385dc18ddd93fbe69c75e635b864f3c6ec53a9122df54c2f7842f4a
+  LIBMPV_SDK_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z
+  LIBMPV_SDK_SHA256: efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633
+  RELEASE_TAG: libmpv-r2k-v0.5.54-r39
+  INSTALLER_NAME: LilacAnime-Libmpv-R39-Setup.exe
+  MANIFEST_NAME: lilacanime-libmpv-r39-manifest.json
+  APP_VERSION: 0.5.54-libmpv-r3f.rc19
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+  R41_RELEASE_TAG: libmpv-r2k-v0.5.54-r41
+  R41_INSTALLER_NAME: LilacAnime-Libmpv-R41-Setup.exe
+  R41_MANIFEST_NAME: lilacanime-libmpv-r41-manifest.json
+  R41_APP_VERSION: 0.5.54-libmpv-r3f.rc21
+
+jobs:
+  qualify-package-publish:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install qualification and packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+      - name: Parse R41 PowerShell before qualification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($path in @('scripts/r41-preflight.ps1','scripts/r41-postqualify-release.ps1')){
+            $tokens=$null;$errors=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)
+            if($errors.Count){$errors|ForEach-Object{Write-Error $_};throw "R41 PowerShell parse failed: $path"}
+          }
+          Write-Host 'R41_POWERSHELL_PARSE_OK'
+      - name: Reconstruct exact R40 then apply and hard-gate R41
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $releaseBackup=Join-Path $env:RUNNER_TEMP 'r41-postqualify-release.ps1'
+          Copy-Item 'scripts/r41-postqualify-release.ps1' $releaseBackup -Force
+          try { ./scripts/r41-preflight.ps1 }
+          finally {
+            New-Item -ItemType Directory -Force -Path 'scripts' | Out-Null
+            Copy-Item $releaseBackup 'scripts/r41-postqualify-release.ps1' -Force
+          }
+          if(-not(Test-Path 'scripts/r41-postqualify-release.ps1')){throw 'R41 release script restore failed'}
+          Write-Host 'R41_RELEASE_SCRIPT_RESTORED_AFTER_PREFLIGHT'
+      - name: Package and postqualify exact R41 workspace
+        shell: powershell
+        run: ./scripts/r41-postqualify-release.ps1
+      - name: Upload qualified R41 installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r41-qualified-prerelease
+          path: |
+            dist/LilacAnime-Libmpv-R41-Setup.exe
+            dist/lilacanime-libmpv-r41-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish prerelease and reverify updater exposure
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $saved=$ErrorActionPreference
+          try {
+            $ErrorActionPreference='Continue'
+            $existingRaw=gh release view $env:R41_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish 2>$null
+            $existingExit=$LASTEXITCODE
+          }
+          finally { $ErrorActionPreference=$saved }
+          if($existingExit-eq 0){
+            $existing=$existingRaw|ConvertFrom-Json
+            if($existing.isDraft-ne$false-or$existing.isPrerelease-ne$true-or$existing.targetCommitish-ne$env:GITHUB_SHA){throw "Refusing to replace incompatible R41 release draft=$($existing.isDraft) prerelease=$($existing.isPrerelease) target=$($existing.targetCommitish) expected=$env:GITHUB_SHA"}
+          }
+          elseif($existingExit-eq 1){
+            gh release create $env:R41_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r41 first-present blur latch' --notes 'R41 is the updater-visible qualified test build after real-user R40 evidence. It preserves focused direct WebGPU, R33 owned native-only unfocused presentation, R37 explicit refocus ACK/no-region-churn, R38 updater, R39 PiP/topmost, and all R40 callback/subtitle behavior. The only product behavior change is the focus-to-unfocus ownership transition: native ownership is armed, the existing R40 producer-thread one-shot current-frame redraw is requested, and the owned popup remains hidden until a successful native Present is observed. The main thread then commits popup visibility. This restores first-present-before-show ordering without reintroducing worker-thread HWND mutation. Five real BrowserWindow blur/refocus cycles, DWM red-pixel capture after commit, premature-show=0, R40 pacing/subtitle, R37 raw shared-texture E2E, and R39 native topmost are hard gates. R25 disable-direct-composition and R28 staged/private WebGPU remain forbidden. This release is intentionally a prerelease, not a draft, so the existing R2K updater can exercise the real automatic update path.'
+            if($LASTEXITCODE-ne 0){throw 'R41 prerelease create failed'}
+          }
+          else { throw "R41 release existence probe failed with exit $existingExit" }
+          gh release upload $env:R41_RELEASE_TAG "dist/$env:R41_INSTALLER_NAME" "dist/$env:R41_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY --clobber
+          if($LASTEXITCODE-ne 0){throw 'R41 prerelease asset upload failed'}
+          $releaseRaw=gh release view $env:R41_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish
+          if($LASTEXITCODE-ne 0){throw 'R41 prerelease metadata lookup failed'}
+          $release=$releaseRaw|ConvertFrom-Json
+          if($release.tagName-ne$env:R41_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true-or$release.targetCommitish-ne$env:GITHUB_SHA){throw 'R41 prerelease publication state mismatch'}
+          git fetch --tags --force
+          $tagSha=(git rev-list -n 1 $env:R41_RELEASE_TAG).Trim()
+          if($LASTEXITCODE-ne 0-or$tagSha-ne$env:GITHUB_SHA){throw "R41 tag target mismatch $tagSha != $env:GITHUB_SHA"}
+          $verify=Join-Path $env:RUNNER_TEMP 'r41-prerelease-reverify'
+          Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:R41_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:R41_INSTALLER_NAME --pattern $env:R41_MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R41 prerelease asset redownload failed'}
+          $exe=Join-Path $verify $env:R41_INSTALLER_NAME
+          $manifestPath=Join-Path $verify $env:R41_MANIFEST_NAME
+          if(-not(Test-Path $exe)-or-not(Test-Path $manifestPath)){throw 'R41 redownloaded assets missing'}
+          $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          if($manifest.version-ne$env:R41_APP_VERSION-or$manifest.tag-ne$env:R41_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$env:GITHUB_SHA-or$manifest.qualifiedSourceSha-ne$env:QUALIFIED_SOURCE_SHA-or$manifest.installer-ne$env:R41_INSTALLER_NAME-or$manifest.installerSha256-ne$hash-or[long]$manifest.installerSize-ne$size-or$manifest.electron-ne$env:ELECTRON_VERSION-or$manifest.nativeDll-ne$env:QUALIFIED_DLL_SHA256){throw 'R41 redownloaded identity/hash mismatch'}
+          foreach($flag in @('r41PreflightQualified','r41FirstPresentRuntimeQualified','r41R40PacingRequalified','r41R40SubtitleRequalified','r41R37ProtectedE2EQualified','r41R39TopmostRuntimeRequalified')){if($manifest.$flag-ne$true){throw "R41 qualification flag missing: $flag"}}
+          if($manifest.r41UpdaterInvariant-ne'R38-updater-byte-identical'){throw 'R41 updater invariant mismatch'}
+          if($manifest.r41FocusedPresenterInvariant-ne'R40-focused-direct-webgpu-byte-identical'){throw 'R41 focused presenter invariant mismatch'}
+          if($manifest.r41ForbiddenPathInvariant-ne'R25-disable-direct-composition-absent+R28-staged-webgpu-absent'){throw 'R41 forbidden path invariant mismatch'}
+          $channelRaw=gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+          if($LASTEXITCODE-ne 0){throw 'R41 updater exposure API lookup failed'}
+          $channel=@($channelRaw|ConvertFrom-Json)
+          $customTagRe='^libmpv-r2k-v\d+\.\d+\.\d+-r\d+$'
+          $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
+          $r41Visible=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R41_RELEASE_TAG})
+          if($r41Visible.Count-ne 1){throw "R41 updater exposure count mismatch $($r41Visible.Count)"}
+          $selectedCustomTag=if($customCandidates.Count){[string]$customCandidates[0].tag_name}else{'none'}
+          if($selectedCustomTag-ne$env:R41_RELEASE_TAG){throw "R41 is visible but not selected by existing updater: selected=$selectedCustomTag"}
+          Write-Host "R41_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size tagSha=$tagSha draft=0 prerelease=1 customUpdaterExposure=1 selectedCustomTag=$selectedCustomTag firstPresent=qualified pacing=R40-repassed subtitle=R40-repassed r37=qualified r39Topmost=qualified"
