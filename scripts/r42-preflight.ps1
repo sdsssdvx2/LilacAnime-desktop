@@ -1,6 +1,7 @@
 $ErrorActionPreference='Stop'
 function Assert-Exit([string]$label){ if($LASTEXITCODE-ne 0){ throw "$label failed with exit code $LASTEXITCODE" } }
 function Sha256([string]$path){ (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Assert-Contains([string]$text,[string]$marker,[string]$label){ if(-not $text.Contains($marker)){ throw "$label missing $marker" } }
 
 # R41/R40 qualification reconstructs historical worktrees. Preserve every R42
 # support file outside the repository and restore it after exact R41 qualification.
@@ -69,18 +70,14 @@ $main=Get-Content 'electron/main.cjs' -Raw
 $bridge=Get-Content 'electron/libmpv-shared-main.cjs' -Raw
 $controller=Get-Content 'electron/r40-subtitle-overlay-window.cjs' -Raw
 $overlayPreload=Get-Content 'electron/r40-subtitle-overlay-preload.cjs' -Raw
-foreach($pair in @(
-  @($entry,'_r42SubtitleStyleDiagnostic'),
-  @($renderer,'_r42SubtitleStyleDiagnostic'),
-  @($main,'__lilacR42SubtitleOverlayDiagnostics'),
-  @($bridge,'r42SubtitleOverlay'),
-  @($controller,'diagnosticTrace'),
-  @($overlayPreload,'r42SchedulePaintSnapshots')
-)){
-  if(-not([string]$pair[0]).Contains([string]$pair[1])){throw "R42 diagnostic marker missing $($pair[1])"}
-}
+Assert-Contains $entry '_r42SubtitleStyleDiagnostic' 'R42 source renderer'
+Assert-Contains $renderer '_r42SubtitleStyleDiagnostic' 'R42 bundled renderer'
+Assert-Contains $main '__lilacR42SubtitleOverlayDiagnostics' 'R42 main getter'
+Assert-Contains $bridge 'r42SubtitleOverlay' 'R42 bridge diagnostics'
+Assert-Contains $controller 'diagnosticTrace' 'R42 controller trace'
+Assert-Contains $overlayPreload 'r42SchedulePaintSnapshots' 'R42 overlay paint sampler'
 foreach($text in @($entry,$renderer,$main,$bridge,$controller,$overlayPreload)){
-  if(-not $text.Contains('LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC')){throw 'R42 common diagnostic marker missing'}
+  Assert-Contains $text 'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC' 'R42 common diagnostic marker'
 }
 foreach($forbidden in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){
   if($bridge.Contains($forbidden)-or$entry.Contains($forbidden)){throw "R42 introduced forbidden path $forbidden"}
