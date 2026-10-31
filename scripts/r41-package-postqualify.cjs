@@ -46,9 +46,7 @@ if(sourceHashes.dll!==env('QUALIFIED_DLL_SHA256')) throw new Error('R41 source D
 fs.rmSync(path.join(root,'dist'),{recursive:true,force:true});
 const builder=path.join(root,'node_modules','.bin',process.platform==='win32'?'electron-builder.cmd':'electron-builder');
 const builderArgs=['--win','nsis','--x64','--publish','never'];
-const build=process.platform==='win32'
-  ? spawnSync(process.env.ComSpec || 'cmd.exe',['/d','/s','/c',`"${builder}" ${builderArgs.join(' ')}`],{cwd:root,stdio:'inherit',windowsHide:true})
-  : spawnSync(builder,builderArgs,{cwd:root,stdio:'inherit'});
+const build=spawnSync(builder,builderArgs,{cwd:root,stdio:'inherit',windowsHide:true,shell:process.platform==='win32'});
 if(build.error) throw new Error(`R41 electron-builder spawn failed: ${build.error.message}`);
 if(build.status!==0) throw new Error(`R41 electron-builder failed ${build.status}`);
 
