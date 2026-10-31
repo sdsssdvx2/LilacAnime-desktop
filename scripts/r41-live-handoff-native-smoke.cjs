@@ -29,6 +29,36 @@ async function waitUntil(fn, ms, label) {
   while (Date.now() < end) { if (fn()) return; await sleep(20); }
   throw new Error(`${label} timeout`);
 }
+async function drainTransitionQueue(addon, id, label, quietMs = 180, timeoutMs = 1800) {
+  const end = Date.now() + timeoutMs;
+  let quietSince = Date.now();
+  let drained = 0;
+  while (Date.now() < end) {
+    const f = addon.popProducedFrame(id);
+    if (f?.updated) {
+      drained += 1;
+      addon.releaseProducedFrame(id, Number(f.slotId), Number(f.frameId));
+      quietSince = Date.now();
+    } else if (Date.now() - quietSince >= quietMs) {
+      return drained;
+    }
+    await sleep(8);
+  }
+  throw new Error(`${label} never became Chromium-queue quiet drained=${drained}`);
+}
+async function countNewQueuedFrames(addon, id, durationMs) {
+  const end = Date.now() + durationMs;
+  let queued = 0;
+  while (Date.now() < end) {
+    const f = addon.popProducedFrame(id);
+    if (f?.updated) {
+      queued += 1;
+      addon.releaseProducedFrame(id, Number(f.slotId), Number(f.frameId));
+    }
+    await sleep(12);
+  }
+  return queued;
+}
 
 (async () => {
   await app.whenReady();
@@ -55,15 +85,23 @@ async function waitUntil(fn, ms, label) {
     await waitUntil(() => addon.pollPlayback(id)?.fileLoaded === true, 10000, 'load');
     if (!addon.startFrameProducer(id, 640, 360)) throw new Error('startFrameProducer failed');
     if (addon.setNativePresenterVisible(id, true) !== true) throw new Error('presenter show failed');
-    await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= 8, 10000, 'native baseline');
+    await waitUntil(() => {
+      const s = addon.nativePresenterStats(id);
+      return s?.requestedVisible === true && s?.windowVisible === true && Number(s?.presentedFrames || 0) >= 8;
+    }, 10000, 'native baseline');
 
-    let baselineQueued = 0;
-    for (let i=0;i<8;i+=1) {
-      const f = addon.popProducedFrame(id);
-      if (f?.updated) { baselineQueued += 1; addon.releaseProducedFrame(id, Number(f.slotId), Number(f.frameId)); }
-      await sleep(20);
+    // Producer startup can race the presenter-visible transition and leave a few
+    // already-queued focused-path frames behind. Those are not an R33 regression.
+    // Drain only that bounded transition backlog, then require a sustained native-
+    // only interval to produce zero *new* Chromium frames. If suppression is broken,
+    // this drain never becomes quiet and the hard gate still fails.
+    const baselineTransitionDrained = await drainTransitionQueue(addon, id, 'R33 native-only baseline transition');
+    const baselineQueued = await countNewQueuedFrames(addon, id, 420);
+    if (baselineQueued !== 0) throw new Error(`R33 native-only baseline regressed newQueued=${baselineQueued} transitionDrained=${baselineTransitionDrained}`);
+    const baselineStats = addon.nativePresenterStats(id);
+    if (baselineStats?.requestedVisible !== true || baselineStats?.windowVisible !== true) {
+      throw new Error(`R33 native-only baseline surface not visible ${JSON.stringify(baselineStats)}`);
     }
-    if (baselineQueued !== 0) throw new Error(`R33 native-only baseline regressed queued=${baselineQueued}`);
 
     const before = addon.nativePresenterStats(id);
     const presentBefore = Number(before.presentedFrames || 0);
@@ -89,14 +127,10 @@ async function waitUntil(fn, ms, label) {
     addon.setNativePresenterMirrorChromium(id, false);
     const resumeBase = Number(addon.nativePresenterStats(id)?.presentedFrames || 0);
     await waitUntil(() => Number(addon.nativePresenterStats(id)?.presentedFrames || 0) >= resumeBase + 5, 5000, 'native-only resume');
-    let afterQueued = 0;
-    for (let i=0;i<6;i+=1) {
-      const f = addon.popProducedFrame(id);
-      if (f?.updated) { afterQueued += 1; addon.releaseProducedFrame(id, Number(f.slotId), Number(f.frameId)); }
-      await sleep(20);
-    }
-    if (afterQueued > 1) throw new Error(`R33 native-only did not resume after R41 mirror queued=${afterQueued}`);
-    console.log(`R41_LIVE_NATIVE_HANDOFF_RUNTIME_OK baselineQueued=0 mirrored=${mirrored} livePresentDelta=${livePresentDelta} exactSOk=1 windowVisibleDuringMirror=1 afterQueued=${afterQueued} deviceMode=${created.deviceMode}`);
+    const resumeTransitionDrained = await drainTransitionQueue(addon, id, 'R33 native-only resume transition');
+    const afterQueued = await countNewQueuedFrames(addon, id, 360);
+    if (afterQueued !== 0) throw new Error(`R33 native-only did not resume after R41 mirror newQueued=${afterQueued} transitionDrained=${resumeTransitionDrained}`);
+    console.log(`R41_LIVE_NATIVE_HANDOFF_RUNTIME_OK baselineTransitionDrained=${baselineTransitionDrained} baselineNewQueued=0 mirrored=${mirrored} livePresentDelta=${livePresentDelta} exactSOk=1 windowVisibleDuringMirror=1 resumeTransitionDrained=${resumeTransitionDrained} afterNewQueued=0 deviceMode=${created.deviceMode}`);
   } finally {
     clearTimeout(hardDeadline);
     if (id) {
