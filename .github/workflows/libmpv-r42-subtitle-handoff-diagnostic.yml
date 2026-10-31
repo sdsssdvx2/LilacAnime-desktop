@@ -77,6 +77,14 @@ jobs:
 
       - name: Qualify exact R41 then apply observation-only R42 diagnostics
         shell: powershell
+        env:
+          # R41's own qualified release workflow supplies GH_TOKEN during the
+          # historical baseline reconstruction. electron-builder 26 detects CI
+          # and otherwise aborts its legacy implicit publishing path before the
+          # R41 baseline can finish. Keep this environment byte-for-byte aligned
+          # with the already-qualified R41 workflow; R42 itself is not applied
+          # until r41-preflight.ps1 returns green.
+          GH_TOKEN: ${{ github.token }}
         run: ./scripts/r42-preflight.ps1
 
       - name: Build and independently postqualify diagnostic installer
