@@ -28,7 +28,7 @@ $native=Get-Content 'native/libmpv-d3d11-bridge/player_addon.cc' -Raw
 $bridge=Get-Content 'electron/libmpv-shared-main.cjs' -Raw
 $main=Get-Content 'electron/main.cjs' -Raw
 $renderer=Get-Content 'src/libmpv-shared.generated.js' -Raw
-foreach($marker in @('LILAC_R41_FIRST_PRESENT_BEFORE_SHOW','r41FirstPresentReady','r41VisibilityPrematureShowCount','LILAC_R33_OWNED_POPUP_FOCUS_SURFACE','LILAC_R39_TOPMOST_BIDIRECTIONAL','LILAC_R40_HANDOFF_FORCE_REDRAW')){if(-not$native.Contains($marker)-and-not$bridge.Contains($marker)){throw "R41 source marker missing: $marker"}}
+foreach($marker in @('LILAC_R41_FIRST_PRESENT_BEFORE_FULL_EXPOSURE','r41FirstPresentReady','r41WarmupPending','r41FullExposureCommitted','r41PrematureFullExposureCount','LILAC_R33_OWNED_POPUP_FOCUS_SURFACE','LILAC_R39_TOPMOST_BIDIRECTIONAL','LILAC_R40_HANDOFF_FORCE_REDRAW')){if(-not$native.Contains($marker)-and-not$bridge.Contains($marker)){throw "R41 source marker missing: $marker"}}
 foreach($marker in @('LILAC_R41_BLUR_FIRST_PRESENT_COMMIT','r41ArmBlurFirstPresentCommit','r41BlurForcedRedrawAccepted','LILAC_R37_EXPLICIT_RENDERER_HANDOFF_ACK','LILAC_R40_FRESH_FRAME_WAKE_GATING')){Require-Marker $bridge $marker 'R41 source bridge'}
 foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY','LILAC_R38_UPDATE_ACTIVITY_CHECK','LILAC_R39_MINIPLAYER_TOPMOST')){Require-Marker $main $marker 'R41 protected main'}
 foreach($marker in @('LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY','setNativeSubtitleOverlay','getBoundingClientRect')){Require-Marker $renderer $marker 'R41 protected renderer'}
@@ -81,7 +81,8 @@ $manifest|Add-Member -NotePropertyName tag -NotePropertyValue $env:R41_RELEASE_T
 $manifest|Add-Member -NotePropertyName releaseWorkflowSourceSha -NotePropertyValue $env:GITHUB_SHA -Force
 $manifest|Add-Member -NotePropertyName r41PreflightQualified -NotePropertyValue $true -Force
 $manifest|Add-Member -NotePropertyName r41FirstPresentRuntimeQualified -NotePropertyValue $true -Force
-$manifest|Add-Member -NotePropertyName r41FirstPresentInvariant -NotePropertyValue 'blur-arm+R40-one-shot-redraw+successful-native-present-before-popup-show+main-thread-commit+premature-show-zero' -Force
+$manifest|Add-Member -NotePropertyName r41FirstPresentInvariant -NotePropertyValue 'blur-arm+2x2-visible-warmup+R40-one-shot-redraw+S_OK-native-present-before-full-popup-exposure+main-thread-full-exposure-commit+premature-full-exposure-zero' -Force
+$manifest|Add-Member -NotePropertyName r41R33ShowBeforeArmInvariant -NotePropertyValue 'preserved-via-2x2-visible-warmup' -Force
 $manifest|Add-Member -NotePropertyName r41R40PacingRequalified -NotePropertyValue $true -Force
 $manifest|Add-Member -NotePropertyName r41R40SubtitleRequalified -NotePropertyValue $true -Force
 $manifest|Add-Member -NotePropertyName r41R37ProtectedE2EQualified -NotePropertyValue $true -Force
@@ -89,10 +90,11 @@ $manifest|Add-Member -NotePropertyName r41R39TopmostRuntimeRequalified -NoteProp
 $manifest|Add-Member -NotePropertyName r41UpdaterInvariant -NotePropertyValue 'R38-updater-byte-identical' -Force
 $manifest|Add-Member -NotePropertyName r41FocusedPresenterInvariant -NotePropertyValue 'R40-focused-direct-webgpu-byte-identical' -Force
 $manifest|Add-Member -NotePropertyName r41ForbiddenPathInvariant -NotePropertyValue 'R25-disable-direct-composition-absent+R28-staged-webgpu-absent' -Force
-$manifest|Add-Member -NotePropertyName r41UserEvidence -NotePropertyValue 'R40-user-reported-unfocused-black-flash; recent-focused-dispatch-mean-41.71ms-at-23.976fps-so-pacing-left-unchanged' -Force
+$manifest|Add-Member -NotePropertyName r41UserEvidence -NotePropertyValue 'R40-user-reported-unfocused-black-flash; recent-focused-dispatch-mean-41.71ms-at-23.976fps-so-callback-pacing-left-unchanged' -Force
 $manifestPath=Join-Path 'dist' $env:R41_MANIFEST_NAME
 [System.IO.File]::WriteAllText($manifestPath,(($manifest|ConvertTo-Json -Depth 30)+[Environment]::NewLine),$utf8NoBom)
 $final=Get-Content $manifestPath -Raw|ConvertFrom-Json
 if($final.version-ne$env:R41_APP_VERSION-or$final.tag-ne$env:R41_RELEASE_TAG-or$final.installerSha256-ne$hash-or[long]$final.installerSize-ne$size){throw 'R41 finalized manifest identity mismatch'}
 foreach($flag in @('r41PreflightQualified','r41FirstPresentRuntimeQualified','r41R40PacingRequalified','r41R40SubtitleRequalified','r41R37ProtectedE2EQualified','r41R39TopmostRuntimeRequalified')){if($final.$flag-ne$true){throw "R41 finalized qualification flag missing: $flag"}}
-Write-Host "R41_RELEASE_PACKAGE_OK sha256=$hash size=$size addon=$addonSha dll=$dllSha updater=R38-byte-identical focused=direct-webgpu-byte-identical firstPresent=hard-gated pacing=R40-repassed subtitle=R40-repassed r37=E2E-repassed r39Topmost=repassed"
+if($final.r41R33ShowBeforeArmInvariant-ne'preserved-via-2x2-visible-warmup'){throw 'R41 R33 show-before-arm manifest invariant mismatch'}
+Write-Host "R41_RELEASE_PACKAGE_OK sha256=$hash size=$size addon=$addonSha dll=$dllSha updater=R38-byte-identical focused=direct-webgpu-byte-identical firstPresent=2x2-warmup-S_OK-before-full-exposure-hard-gated r33ShowBeforeArm=preserved pacing=R40-repassed subtitle=R40-repassed r37=E2E-repassed r39Topmost=repassed"
