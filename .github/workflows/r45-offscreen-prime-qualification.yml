@@ -1,4 +1,4 @@
-name: LilacAnime R45 offscreen first-Present qualification
+name: LilacAnime R45 tiny-surface first-Present qualification
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
       - scripts/r45-reconstruct-r44-release.cjs
 
 concurrency:
-  group: lilac-r45-offscreen-prime-qualification
+  group: lilac-r45-tiny-prime-qualification
   cancel-in-progress: false
 
 permissions:
@@ -92,16 +92,16 @@ jobs:
           foreach($f in $files){$map[$f]=(Get-FileHash $f -Algorithm SHA256).Hash.ToLowerInvariant()}
           $map|ConvertTo-Json|Set-Content (Join-Path $env:RUNNER_TEMP 'r45-protected-r44.json') -Encoding UTF8
 
-      - name: Apply R45 blur first-Present gate, redraw wake, and ordering proof guard
+      - name: Apply R45 tiny first-Present gate, redraw wake, and geometry proof guard
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           node scripts/r45-native-offscreen-first-present-prime.cjs
-          if($LASTEXITCODE-ne 0){throw 'R45 first-Present transform failed'}
+          if($LASTEXITCODE-ne 0){throw 'R45 tiny first-Present transform failed'}
           node scripts/r45-prime-force-redraw-wake.cjs
           if($LASTEXITCODE-ne 0){throw 'R45 redraw-wake transform failed'}
           node scripts/r45-prime-order-proof-guard.cjs
-          if($LASTEXITCODE-ne 0){throw 'R45 first-Present proof guard transform failed'}
+          if($LASTEXITCODE-ne 0){throw 'R45 tiny first-Present proof guard transform failed'}
           node --check electron/libmpv-shared-main.cjs
           if($LASTEXITCODE-ne 0){throw 'R45 transformed bridge syntax failed'}
 
@@ -115,18 +115,18 @@ jobs:
             if($after-ne[string]$prop.Value){throw "protected byte drift $($prop.Name) before=$($prop.Value) after=$after"}
           }
           $bridge=Get-Content electron/libmpv-shared-main.cjs -Raw
-          foreach($m in @('LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF','LILAC_R40_HANDOFF_FORCE_REDRAW','requestFrameProducerRedraw','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing bridge marker $m"}}
-          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
-          Write-Host 'R45_PROTECTED_R44_BYTES_OK bridgeOnlyChange=1 proofGuard=1 packageIdentity=stable-reconstructed r40RedrawApi=reused r41FocusedPath=protected r44Overlay=protected nativeAddon=protected dll=protected updater=protected'
+          foreach($m in @('LILAC_R45_NATIVE_TINY_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_TINY_PROOF','LILAC_R40_HANDOFF_FORCE_REDRAW','requestFrameProducerRedraw','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing bridge marker $m"}}
+          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition','-32000')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
+          Write-Host 'R45_PROTECTED_R44_BYTES_OK bridgeOnlyChange=1 prime=2x2 proofGuard=geometry+Present packageIdentity=stable-reconstructed r40RedrawApi=reused r41FocusedPath=protected r44Overlay=protected nativeAddon=protected dll=protected updater=protected'
 
-      - name: Qualify offscreen first-Present ordering across repeated focus cycles
+      - name: Qualify tiny-surface first-Present ordering across repeated focus cycles
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
           $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
-          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_OFFSCREEN_FIRST_PRESENT_RUNTIME_OK 180000
-          if($LASTEXITCODE-ne 0){throw "R45 prime runtime smoke exited $LASTEXITCODE"}
+          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_TINY_FIRST_PRESENT_RUNTIME_OK 180000
+          if($LASTEXITCODE-ne 0){throw "R45 tiny-prime runtime smoke exited $LASTEXITCODE"}
 
       - name: Requalify R41 focused visual-commit handoff
         shell: powershell
@@ -139,4 +139,4 @@ jobs:
 
       - name: Qualification summary
         shell: powershell
-        run: Write-Host 'R45_OFFSCREEN_PRIME_QUALIFIED_OK base=immutable-R44 packageIdentity=stable-reconstructed subtitleFirstCue=R44-preserved blurExpose=forced-current-frame-then-first-Present-gated proofGuard=in-product refocus=R41-visual-commit nativeBytes=unchanged'
+        run: Write-Host 'R45_TINY_PRIME_QUALIFIED_OK base=immutable-R44 packageIdentity=stable-reconstructed subtitleFirstCue=R44-preserved blurPrime=2x2-current-frame-first-Present-gated fullExposeAfterProof=1 refocus=R41-visual-commit nativeBytes=unchanged'
