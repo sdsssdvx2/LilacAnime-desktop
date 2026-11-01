@@ -1,0 +1,210 @@
+name: LilacAnime R45 first-Present black-flash release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/workflows/r45-first-present-black-flash-release.yml
+      - scripts/r45-reconstruct-r44-release.cjs
+      - scripts/r45-native-offscreen-first-present-prime.cjs
+      - scripts/r45-prime-force-redraw-wake.cjs
+      - scripts/r45-prime-order-proof-guard.cjs
+      - scripts/r45-offscreen-prime-runtime-smoke.cjs
+      - scripts/r45-package-postqualify.cjs
+
+concurrency:
+  group: lilac-r45-first-present-black-flash-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_VERSION: 44.9.3
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+  R44_RELEASE_TAG: libmpv-r2k-v0.5.54-r44
+  R44_APP_VERSION: 0.5.54-libmpv-r3f.rc23
+  R44_INSTALLER_NAME: LilacAnime-Libmpv-R44-Setup.exe
+  R44_INSTALLER_SHA256: 5b71017d1a93450ae803c174dfc184f8f0797d2263df0745b97347182f8bcaf8
+  R44_INSTALLER_SIZE: 185779681
+  R44_MANIFEST_NAME: lilacanime-libmpv-r44-manifest.json
+  R44_MANIFEST_SHA256: 96f79cd0c80c49a2b3acee0a909e11277e16a8dd19eaa27e174d8ae3e31efb7a
+  R44_MANIFEST_SIZE: 2307
+  R45_RELEASE_TAG: libmpv-r2k-v0.5.54-r45
+  R45_APP_VERSION: 0.5.54-libmpv-r3f.rc24
+  R45_INSTALLER_NAME: LilacAnime-Libmpv-R45-Setup.exe
+  R45_MANIFEST_NAME: lilacanime-libmpv-r45-manifest.json
+
+jobs:
+  qualify-package-publish:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install pinned runtime and packaging helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund electron@44.9.3 @electron/asar@3.2.18 electron-builder@26.0.12 ffmpeg-static@5.3.0
+
+      - name: Syntax-check R45 release support
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($file in @(
+            'scripts/r45-reconstruct-r44-release.cjs',
+            'scripts/r45-native-offscreen-first-present-prime.cjs',
+            'scripts/r45-prime-force-redraw-wake.cjs',
+            'scripts/r45-prime-order-proof-guard.cjs',
+            'scripts/r45-offscreen-prime-runtime-smoke.cjs',
+            'scripts/r45-package-postqualify.cjs',
+            'scripts/r41-live-handoff-native-smoke.cjs'
+          )){
+            node --check $file
+            if($LASTEXITCODE-ne 0){throw "syntax failed $file"}
+          }
+
+      - name: Reconstruct immutable public R44 installer baseline
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/r45-reconstruct-r44-release.cjs
+
+      - name: Capture immutable R44 protected byte baseline
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(
+            'electron/libmpv-shared-preload.cjs',
+            'electron/preload-libmpv-shared.generated.cjs',
+            'electron/r40-subtitle-overlay-window.cjs',
+            'electron/r40-subtitle-overlay-preload.cjs',
+            'electron/lilac-libmpv-player-bridge.node',
+            'electron/libmpv-2.dll',
+            'electron/updater.cjs',
+            'electron/main.cjs',
+            'src/libmpv-shared.generated.js'
+          )
+          $map=@{}
+          foreach($f in $files){$map[$f]=(Get-FileHash $f -Algorithm SHA256).Hash.ToLowerInvariant()}
+          $baselinePath=Join-Path $env:RUNNER_TEMP 'r45-protected-r44.json'
+          $map|ConvertTo-Json|Set-Content $baselinePath -Encoding UTF8
+          "R45_PROTECTED_BASELINE_JSON=$baselinePath"|Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "R45_R44_PROTECTED_BASELINE_CAPTURED_OK files=$($files.Count)"
+
+      - name: Apply only the R45 blur first-Present transforms
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r45-native-offscreen-first-present-prime.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 first-Present transform failed'}
+          node scripts/r45-prime-force-redraw-wake.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 forced-redraw transform failed'}
+          node scripts/r45-prime-order-proof-guard.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 ordering-proof transform failed'}
+          node --check electron/libmpv-shared-main.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 transformed bridge syntax failed'}
+
+      - name: Prove protected R44 product bytes are unchanged
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $before=Get-Content $env:R45_PROTECTED_BASELINE_JSON -Raw|ConvertFrom-Json
+          foreach($prop in $before.PSObject.Properties){
+            $after=(Get-FileHash $prop.Name -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($after-ne[string]$prop.Value){throw "protected byte drift $($prop.Name) before=$($prop.Value) after=$after"}
+          }
+          $bridge=Get-Content electron/libmpv-shared-main.cjs -Raw
+          foreach($m in @('LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF','LILAC_R40_HANDOFF_FORCE_REDRAW','requestFrameProducerRedraw','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing R45 bridge marker $m"}}
+          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
+          Write-Host 'R45_RELEASE_PROTECTED_BYTES_OK changed=electron/libmpv-shared-main.cjs-only r44Subtitle=byte-identical focusedWebGPU=byte-identical addon=byte-identical dll=byte-identical updater=byte-identical'
+
+      - name: Qualify eight first-Present-before-expose focus cycles
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
+          $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
+          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_OFFSCREEN_FIRST_PRESENT_RUNTIME_OK 180000
+          if($LASTEXITCODE-ne 0){throw "R45 first-Present runtime qualification exited $LASTEXITCODE"}
+
+      - name: Requalify protected R41 focused visual-commit handoff
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
+          $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
+          node scripts/r40-run-electron-gate.cjs scripts/r41-live-handoff-native-smoke.cjs R41_LIVE_NATIVE_HANDOFF_RUNTIME_OK 150000
+          if($LASTEXITCODE-ne 0){throw "R41 live handoff requalification exited $LASTEXITCODE"}
+
+      - name: Package and independently postqualify R45 installer
+        shell: powershell
+        run: node scripts/r45-package-postqualify.cjs
+
+      - name: Upload qualified R45 retention artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lilacanime-libmpv-r45-qualified-prerelease
+          path: |
+            dist/LilacAnime-Libmpv-R45-Setup.exe
+            dist/lilacanime-libmpv-r45-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish and reverify updater-visible R45 prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $saved=$ErrorActionPreference
+          try {
+            $ErrorActionPreference='Continue'
+            gh release view $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+            $existingExit=$LASTEXITCODE
+          } finally { $ErrorActionPreference=$saved }
+          if($existingExit-eq 0){throw 'R45 release already exists; refusing qualified asset replacement'}
+          if($existingExit-ne 1){throw "R45 release existence probe failed exit=$existingExit"}
+
+          gh release create $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r45 first-Present black-flash guard' --notes 'R45 targets the remaining focus-to-blur black flash without changing steady playback cadence. The shipped R44 installer is reconstructed and pinned byte-for-byte, then only the shared main bridge is transformed. On blur the R33 owned native popup is moved offscreen, the existing R40 one-shot current-frame redraw is requested, and the popup remains offscreen until native presentedFrames proves a real Present occurred. A geometry guard keeps every pending-prime resync offscreen; an on-screen-before-Present observation is a hard hide/cancel violation. After the proof, the same already-presented HWND is moved to the video bounds. Refocus preserves the R41 live visual-commit handoff. CI requires eight repeated cycles with eight offscreen first-Present proofs, zero pre-Present exposure violations, zero timeouts/failures, accepted forced redraws, and then re-runs the protected R41 handoff. R44 subtitle prewarm/persistent HWND, focused direct WebGPU, native addon, libmpv DLL, R38 updater, and renderer bundle remain byte-identical. The separate subtle 23.976fps-on-144Hz display-phase judder investigation is intentionally not changed by R45.'
+          if($LASTEXITCODE-ne 0){throw 'R45 prerelease create failed'}
+          gh release upload $env:R45_RELEASE_TAG "dist/$env:R45_INSTALLER_NAME" "dist/$env:R45_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY
+          if($LASTEXITCODE-ne 0){throw 'R45 prerelease upload failed'}
+
+          $release=(gh release view $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish|ConvertFrom-Json)
+          if($release.tagName-ne$env:R45_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true-or[string]$release.targetCommitish-ne$env:GITHUB_SHA){throw 'R45 release state mismatch'}
+          $verify=Join-Path $env:RUNNER_TEMP 'r45-release-reverify'
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:R45_INSTALLER_NAME --pattern $env:R45_MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R45 release asset redownload failed'}
+          $exe=Join-Path $verify $env:R45_INSTALLER_NAME
+          $manifestPath=Join-Path $verify $env:R45_MANIFEST_NAME
+          $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item $exe).Length
+          if($manifest.version-ne$env:R45_APP_VERSION-or$manifest.tag-ne$env:R45_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$env:GITHUB_SHA-or$manifest.installerSha256-ne$hash-or[long]$manifest.installerSize-ne$size){throw 'R45 redownload identity/hash mismatch'}
+          foreach($flag in @('r45OffscreenFirstPresentQualified','r45FirstPresentProofQualified','r45NoPrePresentExposureViolations','r45ForcedRedrawQualified','r45R41LiveHandoffRequalified','r45R44SubtitleOverlayPreserved','r45ProtectedVideoPipelineBytesQualified')){if($manifest.$flag-ne$true){throw "R45 qualification flag missing $flag"}}
+          if($manifest.baseReleaseTag-ne$env:R44_RELEASE_TAG-or$manifest.baseInstallerSha256-ne$env:R44_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R44_MANIFEST_SHA256){throw 'R45 pinned R44 baseline mismatch'}
+
+          $rawTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
+          if($LASTEXITCODE-ne 0){throw 'R45 updater release collection query failed'}
+          $tags=@($rawTags|ForEach-Object{([string]$_).Trim()}|Where-Object{$_})
+          $customTagRe='^libmpv-r2k-v[0-9]+[.][0-9]+[.][0-9]+-r[0-9]+$'
+          $custom=@($tags|Where-Object{$_-match$customTagRe})
+          $r45=@($custom|Where-Object{$_-eq$env:R45_RELEASE_TAG})
+          if($r45.Count-ne 1){throw "R45 updater exposure mismatch count=$($r45.Count) candidates=$($custom -join ',')"}
+          if([string]$custom[0]-ne$env:R45_RELEASE_TAG){throw "R45 updater ordering mismatch selected=$($custom[0])"}
+          Write-Host "R45_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size selectedCustomTag=$($custom[0]) source=$env:GITHUB_SHA"
