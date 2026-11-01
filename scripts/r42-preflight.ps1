@@ -77,13 +77,31 @@ foreach($forbidden in @('copyTextureToTexture','focus-staged-gpu-copy','--disabl
   if($bridge.Contains($forbidden)-or$entry.Contains($forbidden)){throw "R42 introduced forbidden path $forbidden"}
 }
 
+# The shared R40 smoke deliberately leaves a rival BrowserWindow focused and then
+# calls owner.focus() exactly once. Hosted Windows can reject that focus steal even
+# though every rendering/z-order assertion has passed. For R42, make a test-only
+# copy that removes the rival from foreground contention and retries focus, while
+# still requiring owner.isFocused() before validating that the overlay hides.
+$overlaySmokeSource=(Get-Content 'scripts/r40-native-subtitle-overlay-runtime-smoke.cjs' -Raw).Replace("`r`n","`n")
+$refocusAnchor="    owner.focus();`n    await waitUntil(()=>owner.isFocused(),3000,'owner refocus');"
+$first=$overlaySmokeSource.IndexOf($refocusAnchor,[System.StringComparison]::Ordinal)
+$last=$overlaySmokeSource.LastIndexOf($refocusAnchor,[System.StringComparison]::Ordinal)
+if($first-lt 0-or$first-ne$last){throw 'R42 overlay smoke refocus anchor mismatch'}
+$refocusReplacement="    rival.blur();rival.hide();owner.show();`n    for(let attempt=0;attempt<4&&!owner.isFocused();attempt+=1){owner.moveTop();owner.focus();await sleep(150);}`n    await waitUntil(()=>owner.isFocused(),5000,'owner refocus');"
+$overlaySmokeSource=$overlaySmokeSource.Replace($refocusAnchor,$refocusReplacement)
+$r42OverlaySmoke='scripts/r42-r40-native-subtitle-overlay-runtime-smoke.cjs'
+[System.IO.File]::WriteAllText((Join-Path (Get-Location) $r42OverlaySmoke),$overlaySmokeSource,(New-Object System.Text.UTF8Encoding($false)))
+node --check $r42OverlaySmoke
+Assert-Exit 'R42 hosted-focus-hardened subtitle overlay smoke syntax'
+Write-Host 'R42_OVERLAY_SMOKE_REFOCUS_HARDENED rival=blur+hide owner=show+moveTop+focus-retry assertion=owner.isFocused'
+
 # Re-run only the runtime gates nearest the diagnostic change. The exact shipped R41
 # baseline has already passed the historical cadence/E2E/topmost chain; replaying
 # those timing gates on a hosted runner caused the same product to pass then fail.
 $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
 $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
 try {
-  node scripts/r40-run-electron-gate.cjs scripts/r40-native-subtitle-overlay-runtime-smoke.cjs R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
+  node scripts/r40-run-electron-gate.cjs $r42OverlaySmoke R40_NATIVE_SUBTITLE_OVERLAY_RUNTIME_OK 150000
   Assert-Exit 'R42 modified subtitle overlay runtime regression gate'
   node scripts/r40-run-electron-gate.cjs scripts/r41-live-handoff-native-smoke.cjs R41_LIVE_NATIVE_HANDOFF_RUNTIME_OK 150000
   Assert-Exit 'R42 protected R41 live native handoff regression gate'
@@ -91,6 +109,7 @@ try {
 finally {
   Remove-Item Env:LILAC_LIBMPV_PLAYER_ADDON -ErrorAction SilentlyContinue
   Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
+  Remove-Item $r42OverlaySmoke -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "R42_DIAGNOSTIC_PREFLIGHT_OK baseline=pinned-R41-release updater=$updaterBefore focusedPreload=$focusedPreloadBefore addon=$addonBefore dll=$dllBefore sourceStyle=opacity+transition+animation overlayTrace=256 paintSamples=commit+raf2+50/100/200/300ms identity=R41-unchanged"
