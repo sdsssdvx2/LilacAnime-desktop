@@ -20,7 +20,7 @@ const installerName = env('R45_INSTALLER_NAME');
 const manifestName = env('R45_MANIFEST_NAME');
 const baselinePath = env('R45_PROTECTED_BASELINE_JSON');
 if (!fs.existsSync(baselinePath)) throw new Error(`missing R45 protected baseline JSON ${baselinePath}`);
-const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
+const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8').replace(/^\uFEFF/, ''));
 
 const expectedPaths = [
   'electron/libmpv-shared-preload.cjs',
