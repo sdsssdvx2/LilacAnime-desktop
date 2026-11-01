@@ -63,17 +63,25 @@ jobs:
             if($manifest.$flag-ne$true){throw "R43 manifest qualification flag missing $flag"}
           }
 
-          # Let gh/jq flatten the API array. This avoids Windows PowerShell 5.1's
-          # ConvertFrom-Json array pipeline semantics entirely.
-          $nonDraftTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
+          # Let gh/jq flatten the API array, then normalize each line. This avoids
+          # Windows PowerShell 5.1 ConvertFrom-Json array and newer Join-String semantics.
+          $rawNonDraftTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
           if($LASTEXITCODE-ne 0){throw 'R43 updater release collection query failed'}
+          $nonDraftTags=@($rawNonDraftTags|ForEach-Object{([string]$_).Trim()}|Where-Object{$_})
           if($nonDraftTags.Count-eq 0){throw 'R43 updater release collection unexpectedly empty'}
-          Write-Host "R43_CHANNEL_NON_DRAFT_HEAD=$($nonDraftTags|Select-Object -First 8|Join-String -Separator ',')"
+          $head=@($nonDraftTags|Select-Object -First 8)
+          Write-Host "R43_CHANNEL_NON_DRAFT_HEAD=$($head -join ',')"
 
+          # First prove the exact R43 tag is present independently of regex parsing.
+          $r43CollectionMatches=@($nonDraftTags|Where-Object{$_-eq$env:R43_RELEASE_TAG})
+          if($r43CollectionMatches.Count-ne 1){throw "R43 collection exposure mismatch count=$($r43CollectionMatches.Count) head=$($head -join ',')"}
+
+          # Then model the custom updater's R2K tag family and assert GitHub ordering
+          # selects R43 before every older R2K release.
           $customTagRe='^libmpv-r2k-v[0-9]+[.][0-9]+[.][0-9]+-r[0-9]+$'
-          $customCandidates=@($nonDraftTags|Where-Object{([string]$_)-match$customTagRe})
+          $customCandidates=@($nonDraftTags|Where-Object{$_-match$customTagRe})
           if($customCandidates.Count-eq 0){throw 'R43 custom updater candidate set unexpectedly empty'}
-          $r43Matches=@($customCandidates|Where-Object{[string]$_-eq$env:R43_RELEASE_TAG})
+          $r43Matches=@($customCandidates|Where-Object{$_-eq$env:R43_RELEASE_TAG})
           if($r43Matches.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43Matches.Count) candidates=$($customCandidates -join ',')"}
           $selected=[string]$customCandidates[0]
           if($selected-ne$env:R43_RELEASE_TAG){throw "R43 updater ordering mismatch selected=$selected candidates=$($customCandidates -join ',')"}
