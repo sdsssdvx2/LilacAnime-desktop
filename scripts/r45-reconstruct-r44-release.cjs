@@ -108,7 +108,12 @@ for (const required of [
 ]) if (!fs.existsSync(path.join(root, required))) throw new Error(`R44 reconstructed runtime missing ${required}`);
 
 const overlay = fs.readFileSync(path.join(root,'electron','r40-subtitle-overlay-window.cjs'),'utf8');
-for (const marker of ['LILAC_R43_PERSISTENT_SUBTITLE_HWND','LILAC_R44_OVERLAY_PREWARM','LILAC_R44_FIRST_ACTIVE_ZORDER_GUARD']) {
+for (const marker of [
+  'LILAC_R43_PERSISTENT_SUBTITLE_OVERLAY_HWND',
+  'LILAC_R44_PREWARMED_SUBTITLE_OVERLAY',
+  'reveal-visible-reanchored',
+  'first-active-session-reanchor-opacity-zero'
+]) {
   if (!overlay.includes(marker)) throw new Error(`R44 reconstructed overlay missing ${marker}`);
 }
 const preload = fs.readFileSync(path.join(root,'electron','libmpv-shared-preload.cjs'),'utf8');
