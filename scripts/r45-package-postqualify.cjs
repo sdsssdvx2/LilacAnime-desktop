@@ -45,14 +45,14 @@ const bridgePath = path.join(root, 'electron/libmpv-shared-main.cjs');
 if (!fs.existsSync(bridgePath)) throw new Error('R45 transformed bridge missing');
 const bridge = read('electron/libmpv-shared-main.cjs');
 for (const marker of [
-  'LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME',
+  'LILAC_R45_NATIVE_TINY_FIRST_PRESENT_PRIME',
   'LILAC_R45_PRIME_FORCE_REDRAW_WAKE',
-  'LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF',
+  'LILAC_R45_FIRST_PRESENT_TINY_PROOF',
   'LILAC_R40_HANDOFF_FORCE_REDRAW',
   'requestFrameProducerRedraw',
   'r41HandoffPlaying'
 ]) need(bridge, marker, 'R45 transformed bridge');
-for (const bad of ['copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition']) forbid(bridge, bad, 'R45 transformed bridge');
+for (const bad of ['copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition','-32000','LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF']) forbid(bridge, bad, 'R45 transformed bridge');
 const transformedBridgeSha = sha(bridgePath);
 
 const overlay = read('electron/r40-subtitle-overlay-window.cjs');
@@ -94,7 +94,8 @@ try {
   const packedBridgePath = path.join(temp, 'electron/libmpv-shared-main.cjs');
   if (!fs.existsSync(packedBridgePath) || sha(packedBridgePath) !== transformedBridgeSha) throw new Error('R45 packaged transformed bridge drifted');
   const packedBridge = fs.readFileSync(packedBridgePath, 'utf8');
-  for (const marker of ['LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF']) need(packedBridge, marker, 'R45 packaged bridge');
+  for (const marker of ['LILAC_R45_NATIVE_TINY_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_TINY_PROOF']) need(packedBridge, marker, 'R45 packaged bridge');
+  for (const bad of ['-32000','LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF']) forbid(packedBridge, bad, 'R45 packaged bridge');
 
   for (const relative of [
     'electron/libmpv-shared-preload.cjs',
@@ -150,29 +151,31 @@ const manifest = {
   subtitleControllerSha256: String(baseline['electron/r40-subtitle-overlay-window.cjs']).toLowerCase(),
   subtitleOverlayPreloadSha256: String(baseline['electron/r40-subtitle-overlay-preload.cjs']).toLowerCase(),
   rendererBundleSha256: String(baseline['src/libmpv-shared.generated.js']).toLowerCase(),
-  r45OffscreenFirstPresentQualified: true,
+  r45TinyFirstPresentQualified: true,
   r45FirstPresentProofQualified: true,
-  r45NoPrePresentExposureViolations: true,
+  r45NoPrePresentFullExposureViolations: true,
   r45ForcedRedrawQualified: true,
   r45R41LiveHandoffRequalified: true,
   r45R44SubtitleOverlayPreserved: true,
   r45ProtectedVideoPipelineBytesQualified: true,
   r45QualificationCycles: 8,
-  r45BlurInvariant: 'native-owned-popup-offscreen+forced-current-redraw+first-Present-proof-before-onscreen-bounds',
-  r45GeometryInvariant: 'pending-prime-forces-offscreen-bounds+pre-present-onscreen-violation-hides-and-cancels',
+  r45PrimeSize: '2x2',
+  r45BlurInvariant: 'native-owned-popup-2x2-bottom-right+forced-current-redraw+first-Present-proof-before-full-bounds',
+  r45GeometryInvariant: 'pending-prime-forces-exact-2x2-bounds+pre-present-full-exposure-hides-and-cancels',
+  r45DwmInvariant: 'prime-remains-onscreen-to-avoid-offdesktop-occlusion-present-suppression',
   r45FocusInvariant: 'R41-visual-commit-handoff-preserved',
   r45SubtitleInvariant: 'R44-prewarmed-persistent-overlay-byte-identical',
   r45FocusedPresenterInvariant: 'R41-direct-receive-webgpu-copy-byte-identical',
   r45NativeInvariant: 'R33-owned-popup-addon-and-libmpv-byte-identical',
   r45UpdaterInvariant: 'R38-updater-byte-identical',
-  r45ForbiddenPathInvariant: 'R25-disable-direct-composition-absent+R28-staged-webgpu-absent',
+  r45ForbiddenPathInvariant: 'R25-disable-direct-composition-absent+R28-staged-webgpu-absent+offdesktop-prime-absent',
   r45MicroStutterScope: 'not-addressed-steady-23.976fps-supply-cadence-remains-separate-display-phase-investigation'
 };
 const manifestPath = path.join(root, 'dist', manifestName);
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 const roundtrip = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-for (const flag of ['r45OffscreenFirstPresentQualified','r45FirstPresentProofQualified','r45NoPrePresentExposureViolations','r45ForcedRedrawQualified','r45R41LiveHandoffRequalified','r45R44SubtitleOverlayPreserved','r45ProtectedVideoPipelineBytesQualified']) {
+for (const flag of ['r45TinyFirstPresentQualified','r45FirstPresentProofQualified','r45NoPrePresentFullExposureViolations','r45ForcedRedrawQualified','r45R41LiveHandoffRequalified','r45R44SubtitleOverlayPreserved','r45ProtectedVideoPipelineBytesQualified']) {
   if (roundtrip[flag] !== true) throw new Error(`R45 manifest flag missing ${flag}`);
 }
 if (roundtrip.installerSha256 !== installerSha256 || Number(roundtrip.installerSize) !== installerSize) throw new Error('R45 manifest installer identity mismatch');
-console.log(`R45_RELEASE_PACKAGE_OK installer=${installerName} sha256=${installerSha256} size=${installerSize} bridge=${transformedBridgeSha} cycles=8 prePresentExposureViolations=0 r41Handoff=requalified r44Subtitle=byte-identical addon=byte-identical dll=byte-identical updater=byte-identical`);
+console.log(`R45_RELEASE_PACKAGE_OK installer=${installerName} sha256=${installerSha256} size=${installerSize} bridge=${transformedBridgeSha} cycles=8 prime=2x2 fullExposureViolations=0 r41Handoff=requalified r44Subtitle=byte-identical addon=byte-identical dll=byte-identical updater=byte-identical`);
