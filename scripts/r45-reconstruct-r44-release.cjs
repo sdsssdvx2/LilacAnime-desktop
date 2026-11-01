@@ -14,6 +14,7 @@ const env = name => {
   return value;
 };
 const sha256 = target => crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+const norm = value => String(value || '').replace(/\\/g, '/');
 const run = (command, args, label) => {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', windowsHide: true, shell: false });
   if (result.error) throw new Error(`${label}: ${result.error.message}`);
@@ -41,7 +42,9 @@ const installerSize = Number(env('R44_INSTALLER_SIZE'));
 const manifestSha = env('R44_MANIFEST_SHA256').toLowerCase();
 const manifestSize = Number(env('R44_MANIFEST_SIZE'));
 const version = env('R44_APP_VERSION');
+const electronVersion = env('ELECTRON_VERSION');
 const repo = env('GITHUB_REPOSITORY');
+const checkoutPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r45-r44-release-'));
 const download = path.join(work, 'download');
@@ -64,6 +67,7 @@ eq(manifest.tag, tag, 'R44 manifest tag');
 eq(manifest.version, version, 'R44 manifest version');
 eq(String(manifest.installerSha256 || '').toLowerCase(), installerSha, 'R44 manifest installer SHA256');
 eq(Number(manifest.installerSize), installerSize, 'R44 manifest installer size');
+eq(manifest.electron, electronVersion, 'R44 manifest Electron version');
 for (const flag of ['r44PreflightQualified','r44ConcurrentEnsureQualified','r44PrewarmedFirstCueRuntimeQualified','r44R41LiveHandoffRequalified','r44ProtectedVideoPipelineBytesQualified']) {
   if (manifest[flag] !== true) throw new Error(`R44 manifest missing qualification flag ${flag}`);
 }
@@ -97,6 +101,45 @@ fs.rmSync(path.join(root,'src'), { recursive:true, force:true });
 copyTree(path.join(extracted,'electron'), path.join(root,'electron'));
 copyTree(path.join(extracted,'src'), path.join(root,'src'));
 copyTree(unpacked, root);
+const unpackedFiles = walk(unpacked).map(file => norm(path.relative(unpacked, file))).sort();
+
+// electron-builder strips build metadata from the packaged app package.json. Rebuild
+// only packaging metadata from the checked-in build template, but preserve the exact
+// shipped R44 product identity/content and every app.asar.unpacked path. This makes
+// the same reconstruction usable for qualification and a later R45 NSIS build.
+const build = JSON.parse(JSON.stringify(checkoutPkg.build || {}));
+build.appId = env('STABLE_APP_ID');
+build.productName = env('STABLE_PRODUCT_NAME');
+build.electronVersion = electronVersion;
+build.directories = { ...(build.directories || {}), output: 'dist' };
+build.files = Array.isArray(build.files) && build.files.length
+  ? build.files
+  : ['electron/**/*','src/**/*','build/icon.png','build/icon.ico','package.json'];
+build.win = {
+  ...(build.win || {}),
+  target: 'nsis',
+  icon: (build.win && build.win.icon) || 'build/icon.ico',
+  executableName: env('STABLE_EXE_BASE'),
+  artifactName: 'LilacAnime-Libmpv-R44-Setup.${ext}'
+};
+build.nsis = {
+  ...(build.nsis || {}),
+  shortcutName: env('STABLE_SHORTCUT_NAME'),
+  uninstallDisplayName: env('STABLE_SHORTCUT_NAME'),
+  deleteAppDataOnUninstall: false
+};
+const unpackPatterns = new Set(Array.isArray(build.asarUnpack) ? build.asarUnpack.map(norm) : []);
+for (const relative of unpackedFiles) unpackPatterns.add(relative);
+build.asarUnpack = [...unpackPatterns].sort();
+
+const reconstructedPkg = {
+  ...shippedPkg,
+  scripts: checkoutPkg.scripts || shippedPkg.scripts,
+  dependencies: checkoutPkg.dependencies || shippedPkg.dependencies,
+  devDependencies: checkoutPkg.devDependencies || shippedPkg.devDependencies,
+  build
+};
+fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(reconstructedPkg, null, 2) + '\n', 'utf8');
 
 for (const required of [
   'electron/libmpv-shared-main.cjs',
@@ -123,4 +166,12 @@ for (const bad of ['copyTextureToTexture','focus-staged-gpu-copy','--disable-dir
   if (preload.includes(bad) || bridge.includes(bad)) throw new Error(`R44 reconstructed baseline contains forbidden path ${bad}`);
 }
 
-console.log(`R45_R44_RELEASE_BASELINE_OK tag=${tag} version=${version} installerSha256=${installerSha} manifestSha256=${manifestSha} unpackedFiles=${walk(unpacked).length}`);
+const finalPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+eq(finalPkg.version, version, 'R44 reconstructed package version');
+eq(finalPkg.lilacCustomTag, tag, 'R44 reconstructed package tag');
+eq(finalPkg.build.appId, env('STABLE_APP_ID'), 'R44 reconstructed appId');
+eq(finalPkg.build.productName, env('STABLE_PRODUCT_NAME'), 'R44 reconstructed productName');
+eq(finalPkg.build.win.executableName, env('STABLE_EXE_BASE'), 'R44 reconstructed executableName');
+eq(finalPkg.build.nsis.shortcutName, env('STABLE_SHORTCUT_NAME'), 'R44 reconstructed shortcutName');
+
+console.log(`R45_R44_RELEASE_BASELINE_OK tag=${tag} version=${version} installerSha256=${installerSha} manifestSha256=${manifestSha} unpackedFiles=${unpackedFiles.length} packageIdentity=stable-reconstructed`);
