@@ -45,19 +45,48 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect already-published qualified R43
+        id: r43_release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $result='false'
+          $saved=$ErrorActionPreference
+          try {
+            $ErrorActionPreference='Continue'
+            $raw=gh release view $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish 2>$null
+            $exit=$LASTEXITCODE
+          }
+          finally { $ErrorActionPreference=$saved }
+          if($exit-eq 0){
+            $release=$raw|ConvertFrom-Json
+            if($release.tagName-ne$env:R43_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true){throw 'Existing R43 release state mismatch'}
+            if([string]$release.targetCommitish-ne$env:R43_FIRST_QUALIFIED_SHA){throw "Existing R43 is not the originally qualified release: $($release.targetCommitish)"}
+            $result='true'
+            Write-Host "R43_QUALIFIED_RELEASE_ALREADY_EXISTS target=$($release.targetCommitish); skipping redundant product rebuild"
+          }
+          elseif($exit-ne 1){throw "R43 release probe failed exit=$exit"}
+          "exists=$result"|Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - uses: actions/setup-node@v4
+        if: steps.r43_release.outputs.exists != 'true'
         with:
           node-version: 22
 
       - uses: ilammy/msvc-dev-cmd@v1
+        if: steps.r43_release.outputs.exists != 'true'
         with:
           arch: x64
 
       - name: Install pinned runtime, qualification and packaging helpers
+        if: steps.r43_release.outputs.exists != 'true'
         shell: powershell
         run: npm install --no-save --no-audit --no-fund electron@44.9.3 @electron/asar@3.2.18 electron-builder@26.0.12
 
       - name: Syntax-check R43 support before shipped-R41 reconstruction
+        if: steps.r43_release.outputs.exists != 'true'
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -69,16 +98,19 @@ jobs:
           if($LASTEXITCODE-ne 0){throw 'R43 package verifier syntax failed'}
 
       - name: Reconstruct pinned shipped R41 and qualify persistent subtitle HWND fix
+        if: steps.r43_release.outputs.exists != 'true'
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/r43-preflight.ps1
 
       - name: Package and independently postqualify R43 installer
+        if: steps.r43_release.outputs.exists != 'true'
         shell: powershell
         run: node scripts/r43-package-postqualify.cjs
 
       - name: Upload qualified R43 installer artifact
+        if: steps.r43_release.outputs.exists != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: lilacanime-libmpv-r43-qualified-prerelease
@@ -140,21 +172,13 @@ jobs:
           }
           if($manifest.baseInstallerSha256-ne$env:R41_BASE_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R41_BASE_MANIFEST_SHA256){throw 'R43 pinned R41 baseline evidence drifted'}
 
-          # GitHub can briefly serve the just-created release through /tags while the
-          # collection endpoint still has an older snapshot. Poll that exact endpoint
-          # because it is what the R38 custom updater consumes.
-          $customTagRe='^libmpv-r2k-v\d+\.\d+\.\d+-r\d+$'
-          $r43=@()
-          $customCandidates=@()
-          for($attempt=1;$attempt-le 12;$attempt+=1){
-            $channel=@((gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100")|ConvertFrom-Json)
-            $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
-            $r43=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R43_RELEASE_TAG})
-            if($r43.Count-eq 1){break}
-            Write-Host "R43 updater collection propagation pending attempt=$attempt count=$($r43.Count)"
-            Start-Sleep -Seconds 3
-          }
-          if($r43.Count-ne 1){throw "R43 updater exposure mismatch after polling count=$($r43.Count)"}
+          # Use a regex with no backslash escapes so PowerShell, YAML and the generated
+          # runner script all evaluate exactly the same tag grammar as intended.
+          $customTagRe='^libmpv-r2k-v[0-9]+[.][0-9]+[.][0-9]+-r[0-9]+$'
+          $channel=@((gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100")|ConvertFrom-Json)
+          $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
+          $r43=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R43_RELEASE_TAG})
+          if($r43.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43.Count)"}
           $selected=if($customCandidates.Count){[string]$customCandidates[0].tag_name}else{'none'}
           if($selected-ne$env:R43_RELEASE_TAG){throw "R43 is exposed but not selected by updater ordering selected=$selected"}
           Write-Host "R43_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size draft=0 prerelease=1 customUpdaterExposure=1 selectedCustomTag=$selected reusedExisting=$([int]$releaseAlreadyExists) source=$expectedSourceSha"
