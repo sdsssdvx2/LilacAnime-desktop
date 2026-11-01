@@ -73,16 +73,21 @@ try {
 }
 
 const installer = path.join(root, 'dist', installerName);
+const packedExe = path.join(root, 'dist', 'win-unpacked', `${env('STABLE_EXE_BASE')}.exe`);
 const appAsar = path.join(root, 'dist', 'win-unpacked', 'resources', 'app.asar');
-if (!fs.existsSync(installer)) throw new Error(`R42 installer missing ${installer}`);
-if (!fs.existsSync(appAsar)) throw new Error('R42 packaged app.asar missing');
+for (const output of [installer, packedExe, appAsar]) {
+  if (!fs.existsSync(output)) throw new Error(`R42 packaged output missing ${output}`);
+}
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'lilac-r42-d3-asar-'));
 try {
   asar.extractAll(appAsar, temp);
   const shippedPkg = JSON.parse(fs.readFileSync(path.join(temp, 'package.json'), 'utf8'));
+  // electron-builder strips build configuration from the packaged package.json.
+  // Match the already-qualified R41 postqualifier: prove app/update identity from
+  // shipped metadata and prove stable install identity independently from the
+  // source build config plus the actual unpacked executable basename above.
   if (shippedPkg.version !== expectedVersion || shippedPkg.lilacCustomTag !== expectedCustomTag) throw new Error('R42 packaged R41 update identity drifted');
-  if (shippedPkg.build.appId !== env('STABLE_APP_ID') || shippedPkg.build.productName !== env('STABLE_PRODUCT_NAME') || shippedPkg.build.win.executableName !== env('STABLE_EXE_BASE')) throw new Error('R42 packaged stable install identity drifted');
   for (const [relative, markers] of [
     ['src/libmpv-shared.generated.js', ['LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC','_r42SubtitleStyleDiagnostic']],
     ['electron/main.cjs', ['LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC','__lilacR42SubtitleOverlayDiagnostics']],
