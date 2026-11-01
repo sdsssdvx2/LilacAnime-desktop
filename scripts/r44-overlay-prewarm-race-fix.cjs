@@ -33,8 +33,8 @@ if (controller.includes(marker) || main.includes(marker)) throw new Error('R44 t
 
 controller = once(
   controller,
-  "    this.r43Marker = 'LILAC_R43_PERSISTENT_SUBTITLE_OVERLAY_HWND';\n    this.updates = 0;",
-  "    this.r43Marker = 'LILAC_R43_PERSISTENT_SUBTITLE_OVERLAY_HWND';\n    this.r44Marker = 'LILAC_R44_PREWARMED_SUBTITLE_OVERLAY';\n    this.ensurePromise = null;\n    this.revealPending = false;\n    this.prewarmRequests = 0;\n    this.prewarmShows = 0;\n    this.prewarmReveals = 0;\n    this.firstShowSafeReveals = 0;\n    this.zOrderReanchors = 0;\n    this.transitionTrace = [];\n    this.updates = 0;",
+  "    this.r43Marker = 'LILAC_R43_PERSISTENT_SUBTITLE_OVERLAY_HWND';",
+  "    this.r43Marker = 'LILAC_R43_PERSISTENT_SUBTITLE_OVERLAY_HWND';\n    this.r44Marker = 'LILAC_R44_PREWARMED_SUBTITLE_OVERLAY';\n    this.ensurePromise = null;\n    this.revealPending = false;\n    this.prewarmRequests = 0;\n    this.prewarmShows = 0;\n    this.prewarmReveals = 0;\n    this.firstShowSafeReveals = 0;\n    this.zOrderReanchors = 0;\n    this.transitionTrace = [];",
   'constructor R44 state'
 );
 
