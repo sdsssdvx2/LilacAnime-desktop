@@ -34,6 +34,7 @@ env:
   R43_INSTALLER_NAME: LilacAnime-Libmpv-R43-Setup.exe
   R43_MANIFEST_NAME: lilacanime-libmpv-r43-manifest.json
   R43_APP_VERSION: 0.5.54-libmpv-r3f.rc22
+  R43_FIRST_QUALIFIED_SHA: 754b0e023d182685cc3c90a695c4d69adb3f1930
 
 jobs:
   qualify-package-publish:
@@ -87,12 +88,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish R43 updater-visible prerelease and reverify
+      - name: Publish or reverify R43 updater-visible prerelease
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
+          $releaseAlreadyExists=$false
+          $expectedSourceSha=$env:GITHUB_SHA
           $saved=$ErrorActionPreference
           try {
             $ErrorActionPreference='Continue'
@@ -100,19 +103,26 @@ jobs:
             $existingExit=$LASTEXITCODE
           }
           finally { $ErrorActionPreference=$saved }
+
           if($existingExit-eq 0){
             $existing=$existingRaw|ConvertFrom-Json
-            throw "Refusing to replace existing R43 release: draft=$($existing.isDraft) prerelease=$($existing.isPrerelease) target=$($existing.targetCommitish)"
+            if($existing.tagName-ne$env:R43_RELEASE_TAG-or$existing.isDraft-ne$false-or$existing.isPrerelease-ne$true){throw 'Existing R43 release state mismatch'}
+            $target=[string]$existing.targetCommitish
+            if($target-ne$env:R43_FIRST_QUALIFIED_SHA-and$target-ne$env:GITHUB_SHA){throw "Existing R43 target is not an accepted qualified source: $target"}
+            $expectedSourceSha=$target
+            $releaseAlreadyExists=$true
+            Write-Host "R43_EXISTING_QUALIFIED_RELEASE_REUSE target=$target"
           }
-          elseif($existingExit-ne 1){throw "R43 release existence probe failed exit=$existingExit"}
-
-          gh release create $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r43 persistent subtitle overlay HWND' --notes 'R42 real-user diagnostics isolated the unfocused subtitle soft-reveal: source and overlay DOM were fully opaque from the first committed frame (opacity 1, transition 0s, animation none), while every subtitle cue gap physically hid the transparent owned overlay BrowserWindow and every next cue called showInactive again. R43 fixes only that diagnosed lifecycle. During a genuine unfocused playback session, cue gaps now clear the subtitle DOM while keeping the transparent owned overlay HWND alive; the next cue reuses that HWND without another showInactive. Refocus, hide, minimize, destroy and lifecycle suppression still hard-hide it. CI exercises four inactive-to-active cue gaps with a rival focused, proves the HWND remains visible while subtitle pixels clear, proves show/hide counters do not change, proves pixels return without a re-show, and then proves real refocus hard-hides the HWND. The shipped R41 focused direct-WebGPU preload/bundle, R41 main/bridge handoff path, R33 native presenter, R38 updater, R39 behavior, R40 overlay DOM preload, native addon and libmpv DLL are protected byte-for-byte. R25 disable-direct-composition and R28 staged/private WebGPU remain forbidden.'
-          if($LASTEXITCODE-ne 0){throw 'R43 prerelease create failed'}
-          gh release upload $env:R43_RELEASE_TAG "dist/$env:R43_INSTALLER_NAME" "dist/$env:R43_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY
-          if($LASTEXITCODE-ne 0){throw 'R43 prerelease upload failed'}
+          elseif($existingExit-eq 1){
+            gh release create $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r43 persistent subtitle overlay HWND' --notes 'R42 real-user diagnostics isolated the unfocused subtitle soft-reveal: source and overlay DOM were fully opaque from the first committed frame (opacity 1, transition 0s, animation none), while every subtitle cue gap physically hid the transparent owned overlay BrowserWindow and every next cue called showInactive again. R43 fixes only that diagnosed lifecycle. During a genuine unfocused playback session, cue gaps now clear the subtitle DOM while keeping the transparent owned overlay HWND alive; the next cue reuses that HWND without another showInactive. Refocus, hide, minimize, destroy and lifecycle suppression still hard-hide it. CI exercises four inactive-to-active cue gaps with a rival focused, proves the HWND remains visible while subtitle pixels clear, proves show/hide counters do not change, proves pixels return without a re-show, and then proves real refocus hard-hides the HWND. The shipped R41 focused direct-WebGPU preload/bundle, R41 main/bridge handoff path, R33 native presenter, R38 updater, R39 behavior, R40 overlay DOM preload, native addon and libmpv DLL are protected byte-for-byte. R25 disable-direct-composition and R28 staged/private WebGPU remain forbidden.'
+            if($LASTEXITCODE-ne 0){throw 'R43 prerelease create failed'}
+            gh release upload $env:R43_RELEASE_TAG "dist/$env:R43_INSTALLER_NAME" "dist/$env:R43_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY
+            if($LASTEXITCODE-ne 0){throw 'R43 prerelease upload failed'}
+          }
+          else { throw "R43 release existence probe failed exit=$existingExit" }
 
           $release=(gh release view $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish | ConvertFrom-Json)
-          if($release.tagName-ne$env:R43_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true-or$release.targetCommitish-ne$env:GITHUB_SHA){throw 'R43 prerelease state mismatch'}
+          if($release.tagName-ne$env:R43_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true-or[string]$release.targetCommitish-ne$expectedSourceSha){throw 'R43 prerelease state mismatch'}
 
           $verify=Join-Path $env:RUNNER_TEMP 'r43-release-reverify'
           Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
@@ -124,19 +134,27 @@ jobs:
           $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $size=(Get-Item $exe).Length
-          if($manifest.version-ne$env:R43_APP_VERSION-or$manifest.tag-ne$env:R43_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$env:GITHUB_SHA-or$manifest.installerSha256-ne$hash-or[long]$manifest.installerSize-ne$size){throw 'R43 redownload identity/hash mismatch'}
+          if($manifest.version-ne$env:R43_APP_VERSION-or$manifest.tag-ne$env:R43_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$expectedSourceSha-or$manifest.installerSha256-ne$hash-or[long]$manifest.installerSize-ne$size){throw 'R43 redownload identity/hash mismatch'}
           foreach($flag in @('r43PreflightQualified','r43PersistentSubtitleHwndRuntimeQualified','r43R41LiveHandoffRequalified','r43ProtectedR41BytesQualified')){
             if($manifest.$flag-ne$true){throw "R43 qualification flag missing $flag"}
           }
           if($manifest.baseInstallerSha256-ne$env:R41_BASE_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R41_BASE_MANIFEST_SHA256){throw 'R43 pinned R41 baseline evidence drifted'}
 
-          # Match the R38 custom updater rule: drafts excluded, prereleases accepted,
-          # R2K tags visible. The newly-created R43 must be the selected candidate.
-          $channel=@((gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100")|ConvertFrom-Json)
+          # GitHub can briefly serve the just-created release through /tags while the
+          # collection endpoint still has an older snapshot. Poll that exact endpoint
+          # because it is what the R38 custom updater consumes.
           $customTagRe='^libmpv-r2k-v\d+\.\d+\.\d+-r\d+$'
-          $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
-          $r43=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R43_RELEASE_TAG})
-          if($r43.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43.Count)"}
+          $r43=@()
+          $customCandidates=@()
+          for($attempt=1;$attempt-le 12;$attempt+=1){
+            $channel=@((gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100")|ConvertFrom-Json)
+            $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
+            $r43=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R43_RELEASE_TAG})
+            if($r43.Count-eq 1){break}
+            Write-Host "R43 updater collection propagation pending attempt=$attempt count=$($r43.Count)"
+            Start-Sleep -Seconds 3
+          }
+          if($r43.Count-ne 1){throw "R43 updater exposure mismatch after polling count=$($r43.Count)"}
           $selected=if($customCandidates.Count){[string]$customCandidates[0].tag_name}else{'none'}
-          if($selected-ne$env:R43_RELEASE_TAG){throw "R43 is exposed but not selected by updater selected=$selected"}
-          Write-Host "R43_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size draft=0 prerelease=1 customUpdaterExposure=1 selectedCustomTag=$selected"
+          if($selected-ne$env:R43_RELEASE_TAG){throw "R43 is exposed but not selected by updater ordering selected=$selected"}
+          Write-Host "R43_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size draft=0 prerelease=1 customUpdaterExposure=1 selectedCustomTag=$selected reusedExisting=$([int]$releaseAlreadyExists) source=$expectedSourceSha"
