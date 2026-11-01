@@ -22,13 +22,15 @@ let controller = read('electron/r40-subtitle-overlay-window.cjs');
 let overlayPreload = read('electron/r40-subtitle-overlay-preload.cjs');
 let main = read('electron/main.cjs');
 let bridge = read('electron/libmpv-shared-main.cjs');
+const sharedPreload = read('electron/libmpv-shared-preload.cjs');
 
 for (const marker of ['LILAC_R40_EXTERNAL_SUBTITLE_OVERLAY', '_r40SubtitlePayload', '_r40QueueSubtitleOverlaySync']) requireMarker(entry, marker, 'R42 renderer baseline');
 for (const marker of ['LILAC_R40_SUBTITLE_FOCUS_RACE_REPLAY', 'reconcileDeferred(', 'snapshot()']) requireMarker(controller, marker, 'R42 controller baseline');
 for (const marker of ['LILAC_R40_CUSTOM_FONT_FORMAT_AGNOSTIC', "r40-subtitle-overlay:render"]) requireMarker(overlayPreload, marker, 'R42 overlay preload baseline');
 for (const marker of ['LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY', "player:native-subtitle-overlay-state"]) requireMarker(main, marker, 'R42 main baseline');
-for (const marker of ['LILAC_R41_VISUAL_HANDOFF_COMMIT', 'r26BoundaryTrace']) requireMarker(bridge, marker, 'R42 bridge baseline');
-for (const text of [entry, controller, overlayPreload, main, bridge]) {
+for (const marker of ['r41HandoffPlaying', 'r26BoundaryTrace']) requireMarker(bridge, marker, 'R42 bridge baseline');
+requireMarker(sharedPreload, 'LILAC_R41_VISUAL_HANDOFF_COMMIT', 'R42 focused preload R41 baseline');
+for (const text of [entry, controller, overlayPreload, main, bridge, sharedPreload]) {
   if (text.includes('LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC')) throw new Error('R42 diagnostic already applied');
 }
 
@@ -63,8 +65,16 @@ entry = once(
 );
 entry = once(
   entry,
-  `      fontPath:String(localStorage.getItem('subtitleFontPath') || ''),\n      cues:cueNodes.map(node => ({ html:node.innerHTML, style:this._r40SubtitleComputedStyle(node) }))`,
-  `      fontPath:String(localStorage.getItem('subtitleFontPath') || ''),\n      diagnostic:{\n        marker:'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',\n        documentHasFocus:document.hasFocus(),\n        stack:this._r42SubtitleStyleDiagnostic(stack),\n        cues:cueNodes.map((node, index) => ({ index, ...this._r42SubtitleStyleDiagnostic(node) }))\n      },\n      cues:cueNodes.map(node => ({ html:node.innerHTML, style:this._r40SubtitleComputedStyle(node) }))`,
+  `      fontPath:String(localStorage.getItem('subtitleFontPath') || ''),
+      cues:cueNodes.map(node => ({ html:node.innerHTML, style:this._r40SubtitleComputedStyle(node) }))`,
+  `      fontPath:String(localStorage.getItem('subtitleFontPath') || ''),
+      diagnostic:{
+        marker:'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',
+        documentHasFocus:document.hasFocus(),
+        stack:this._r42SubtitleStyleDiagnostic(stack),
+        cues:cueNodes.map((node, index) => ({ index, ...this._r42SubtitleStyleDiagnostic(node) }))
+      },
+      cues:cueNodes.map(node => ({ html:node.innerHTML, style:this._r40SubtitleComputedStyle(node) }))`,
   'R42 attach source style diagnostic to active subtitle payload'
 );
 
@@ -98,14 +108,25 @@ controller = once(
 );
 controller = once(
   controller,
-  `    fontPath: fontUrl ? fontPath : '',\n    fontUrl,\n    cues`,
-  `    fontPath: fontUrl ? fontPath : '',\n    fontUrl,\n    diagnostic: cleanDiagnostic(payload.diagnostic),\n    cues`,
+  `    fontPath: fontUrl ? fontPath : '',
+    fontUrl,
+    cues`,
+  `    fontPath: fontUrl ? fontPath : '',
+    fontUrl,
+    diagnostic: cleanDiagnostic(payload.diagnostic),
+    cues`,
   'R42 preserve source diagnostic through sanitizer'
 );
 controller = once(
   controller,
-  `    this.ownerLifecycleReason = '';\n  }`,
-  `    this.ownerLifecycleReason = '';\n    this.r42Trace = new Array(256); // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC\n    this.r42TraceNext = 0;\n    this.r42TraceCount = 0;\n    this.r42LastPaint = null;\n  }`,
+  `    this.ownerLifecycleReason = '';
+  }`,
+  `    this.ownerLifecycleReason = '';
+    this.r42Trace = new Array(256); // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC
+    this.r42TraceNext = 0;
+    this.r42TraceCount = 0;
+    this.r42LastPaint = null;
+  }`,
   'R42 controller trace state'
 );
 const traceMethods = String.raw`  _r42PushTrace(kind, details = {}) {
@@ -128,44 +149,100 @@ controller = once(controller, '  async ensure(parent) {', traceMethods + '  asyn
 controller = once(
   controller,
   `    win.webContents.on('render-process-gone', (_event, details) => {`,
-  `    win.webContents.on('ipc-message', (_event, channel, ...args) => {\n      if (channel !== 'r42-subtitle-overlay:paint') return;\n      const payload = args[0] && typeof args[0] === 'object' ? args[0] : {};\n      const paint = {\n        marker:'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',\n        stage:String(payload.stage || '').slice(0,64),\n        revision:Math.max(0, Math.floor(finite(payload.revision))),\n        generation:Math.max(0, Math.floor(finite(payload.generation))),\n        rootDisplay:String(payload.rootDisplay || '').slice(0,64),\n        rootOpacity:String(payload.rootOpacity || '').slice(0,64),\n        rootVisibility:String(payload.rootVisibility || '').slice(0,64),\n        stackOpacity:String(payload.stackOpacity || '').slice(0,64),\n        cueOpacities:Array.isArray(payload.cueOpacities) ? payload.cueOpacities.slice(0,MAX_CUES).map(value => String(value).slice(0,64)) : [],\n        cueTransitions:Array.isArray(payload.cueTransitions) ? payload.cueTransitions.slice(0,MAX_CUES).map(value => String(value).slice(0,128)) : []\n      };\n      this.r42LastPaint = paint;\n      this._r42PushTrace('paint', paint);\n    });\n    win.webContents.on('render-process-gone', (_event, details) => {`,
+  `    win.webContents.on('ipc-message', (_event, channel, ...args) => {
+      if (channel !== 'r42-subtitle-overlay:paint') return;
+      const payload = args[0] && typeof args[0] === 'object' ? args[0] : {};
+      const paint = {
+        marker:'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',
+        stage:String(payload.stage || '').slice(0,64),
+        revision:Math.max(0, Math.floor(finite(payload.revision))),
+        generation:Math.max(0, Math.floor(finite(payload.generation))),
+        rootDisplay:String(payload.rootDisplay || '').slice(0,64),
+        rootOpacity:String(payload.rootOpacity || '').slice(0,64),
+        rootVisibility:String(payload.rootVisibility || '').slice(0,64),
+        stackOpacity:String(payload.stackOpacity || '').slice(0,64),
+        cueOpacities:Array.isArray(payload.cueOpacities) ? payload.cueOpacities.slice(0,MAX_CUES).map(value => String(value).slice(0,64)) : [],
+        cueTransitions:Array.isArray(payload.cueTransitions) ? payload.cueTransitions.slice(0,MAX_CUES).map(value => String(value).slice(0,128)) : []
+      };
+      this.r42LastPaint = paint;
+      this._r42PushTrace('paint', paint);
+    });
+    win.webContents.on('render-process-gone', (_event, details) => {`,
   'R42 overlay paint IPC listener'
 );
 controller = once(
   controller,
-  `    const state = this._recordParent(parent, safe);\n\n    let blockedReason = '';`,
-  `    const state = this._recordParent(parent, safe);\n    this._r42PushTrace('update', {\n      revision:safe.revision, active:safe.active, cueCount:safe.cues.length,\n      parentFocused:state.parentFocused, parentMinimized:state.parentMinimized,\n      windowVisible:Boolean(this.window && !this.window.isDestroyed() && this.window.isVisible()),\n      source:safe.diagnostic\n    });\n\n    let blockedReason = '';`,
+  `    const state = this._recordParent(parent, safe);
+
+    let blockedReason = '';`,
+  `    const state = this._recordParent(parent, safe);
+    this._r42PushTrace('update', {
+      revision:safe.revision, active:safe.active, cueCount:safe.cues.length,
+      parentFocused:state.parentFocused, parentMinimized:state.parentMinimized,
+      windowVisible:Boolean(this.window && !this.window.isDestroyed() && this.window.isVisible()),
+      source:safe.diagnostic
+    });
+
+    let blockedReason = '';`,
   'R42 controller update trace'
 );
 controller = once(
   controller,
-  `      this.hide('deferred-owner-focused', { preserveDeferred:true });\n      return { ok: true, visible: false, deferred: true, ...this.snapshot() };`,
-  `      this.hide('deferred-owner-focused', { preserveDeferred:true });\n      this._r42PushTrace('defer-owner-focused', { revision:safe.revision, cueCount:safe.cues.length });\n      return { ok: true, visible: false, deferred: true, ...this.snapshot() };`,
+  `      this.hide('deferred-owner-focused', { preserveDeferred:true });
+      return { ok: true, visible: false, deferred: true, ...this.snapshot() };`,
+  `      this.hide('deferred-owner-focused', { preserveDeferred:true });
+      this._r42PushTrace('defer-owner-focused', { revision:safe.revision, cueCount:safe.cues.length });
+      return { ok: true, visible: false, deferred: true, ...this.snapshot() };`,
   'R42 deferred focus-race trace'
 );
 controller = once(
   controller,
-  `    win.showInactive();\n    win.moveTop?.();\n    this.lastReason = 'payload-active';`,
-  `    win.showInactive();\n    win.moveTop?.();\n    this._r42PushTrace('show-inactive', { revision:safe.revision, cueCount:safe.cues.length, windowVisible:Boolean(win.isVisible()) });\n    this.lastReason = 'payload-active';`,
+  `    win.showInactive();
+    win.moveTop?.();
+    this.lastReason = 'payload-active';`,
+  `    win.showInactive();
+    win.moveTop?.();
+    this._r42PushTrace('show-inactive', { revision:safe.revision, cueCount:safe.cues.length, windowVisible:Boolean(win.isVisible()) });
+    this.lastReason = 'payload-active';`,
   'R42 showInactive trace'
 );
 controller = once(
   controller,
-  `    this.deferredActivePayload = null;\n    this.deferredReplayCount += 1;\n    const result = await this.update(parent, deferred);`,
-  `    this.deferredActivePayload = null;\n    this.deferredReplayCount += 1;\n    this._r42PushTrace('replay-deferred', { reason, revision:deferred.revision, cueCount:Array.isArray(deferred.cues) ? deferred.cues.length : 0 });\n    const result = await this.update(parent, deferred);`,
+  `    this.deferredActivePayload = null;
+    this.deferredReplayCount += 1;
+    const result = await this.update(parent, deferred);`,
+  `    this.deferredActivePayload = null;
+    this.deferredReplayCount += 1;
+    this._r42PushTrace('replay-deferred', { reason, revision:deferred.revision, cueCount:Array.isArray(deferred.cues) ? deferred.cues.length : 0 });
+    const result = await this.update(parent, deferred);`,
   'R42 deferred replay trace'
 );
 controller = once(
   controller,
-  `    this.visible = false;\n    this.lastReason = reason;\n  }\n\n  destroy(reason = 'destroy') {`,
-  `    this.visible = false;\n    this.lastReason = reason;\n    this._r42PushTrace('hide', { reason:String(reason || ''), windowVisible:Boolean(win && !win.isDestroyed() && win.isVisible()) });\n  }\n\n  destroy(reason = 'destroy') {`,
+  `    this.visible = false;
+    this.lastReason = reason;
+  }
+
+  destroy(reason = 'destroy') {`,
+  `    this.visible = false;
+    this.lastReason = reason;
+    this._r42PushTrace('hide', { reason:String(reason || ''), windowVisible:Boolean(win && !win.isDestroyed() && win.isVisible()) });
+  }
+
+  destroy(reason = 'destroy') {`,
   'R42 hide trace'
 );
 controller = once(controller, '  snapshot() {', '  snapshot(options = {}) {', 'R42 diagnostic snapshot option');
 controller = once(
   controller,
-  `      marker: 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY',\n      active: this.visible,`,
-  `      marker: 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY',\n      diagnosticMarker: 'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',\n      traceCount: this.r42TraceCount,\n      lastPaint: this.r42LastPaint,\n      diagnosticTrace: options?.includeTrace === true ? this._r42TraceSnapshot() : undefined,\n      active: this.visible,`,
+  `      marker: 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY',
+      active: this.visible,`,
+  `      marker: 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY',
+      diagnosticMarker: 'LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC',
+      traceCount: this.r42TraceCount,
+      lastPaint: this.r42LastPaint,
+      diagnosticTrace: options?.includeTrace === true ? this._r42TraceSnapshot() : undefined,
+      active: this.visible,`,
   'R42 full diagnostic snapshot fields'
 );
 
@@ -215,14 +292,20 @@ function r42SchedulePaintSnapshots(payload, generation) {
 overlayPreload = once(overlayPreload, 'let ready = false;', paintHelpers + 'let ready = false;', 'R42 paint diagnostic helpers');
 overlayPreload = once(
   overlayPreload,
-  `    document.body.dataset.revision = String(payload.revision || 0);\n    return;`,
-  `    document.body.dataset.revision = String(payload.revision || 0);\n    r42PaintSnapshot('inactive-commit', payload, generation);\n    return;`,
+  `    document.body.dataset.revision = String(payload.revision || 0);
+    return;`,
+  `    document.body.dataset.revision = String(payload.revision || 0);
+    r42PaintSnapshot('inactive-commit', payload, generation);
+    return;`,
   'R42 inactive overlay commit trace'
 );
 overlayPreload = once(
   overlayPreload,
-  `  document.body.dataset.marker = 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY';\n}`,
-  `  document.body.dataset.marker = 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY';\n  r42SchedulePaintSnapshots(payload, generation);\n}`,
+  `  document.body.dataset.marker = 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY';
+}`,
+  `  document.body.dataset.marker = 'LILAC_R40_SINGLE_DOM_SUBTITLE_AUTHORITY';
+  r42SchedulePaintSnapshots(payload, generation);
+}`,
   'R42 active overlay paint sampling'
 );
 
@@ -231,7 +314,8 @@ overlayPreload = once(
 main = once(
   main,
   `  r40SubtitleOverlay = new R40SubtitleOverlayWindowController({ BrowserWindow, baseDir: __dirname });`,
-  `  r40SubtitleOverlay = new R40SubtitleOverlayWindowController({ BrowserWindow, baseDir: __dirname });\n  globalThis.__lilacR42SubtitleOverlayDiagnostics = () => r40SubtitleOverlay?.snapshot?.({ includeTrace:true }) || null; // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC`,
+  `  r40SubtitleOverlay = new R40SubtitleOverlayWindowController({ BrowserWindow, baseDir: __dirname });
+  globalThis.__lilacR42SubtitleOverlayDiagnostics = () => r40SubtitleOverlay?.snapshot?.({ includeTrace:true }) || null; // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC`,
   'R42 global overlay diagnostic getter'
 );
 main = once(
@@ -243,7 +327,8 @@ main = once(
 bridge = once(
   bridge,
   `        r26BoundaryTrace: {`,
-  `        r42SubtitleOverlay: typeof globalThis.__lilacR42SubtitleOverlayDiagnostics === 'function' ? globalThis.__lilacR42SubtitleOverlayDiagnostics() : null, // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC\n        r26BoundaryTrace: {`,
+  `        r42SubtitleOverlay: typeof globalThis.__lilacR42SubtitleOverlayDiagnostics === 'function' ? globalThis.__lilacR42SubtitleOverlayDiagnostics() : null, // LILAC_R42_SUBTITLE_HANDOFF_DIAGNOSTIC
+        r26BoundaryTrace: {`,
   'R42 include subtitle overlay in existing diagnostics'
 );
 
