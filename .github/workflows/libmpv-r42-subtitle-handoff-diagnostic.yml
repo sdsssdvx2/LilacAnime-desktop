@@ -41,6 +41,10 @@ env:
   R41_INSTALLER_NAME: LilacAnime-Libmpv-R41-Setup.exe
   R41_MANIFEST_NAME: lilacanime-libmpv-r41-manifest.json
   R41_APP_VERSION: 0.5.54-libmpv-r3f.rc21
+  R41_BASE_INSTALLER_SHA256: 71a8aca205f7e91574236795cc87f02843d304282d98f9d02e9cadfea4d0e19e
+  R41_BASE_INSTALLER_SIZE: 182603002
+  R41_BASE_MANIFEST_SHA256: bf4034484314c8dd7fc256b2801ff8b5fb86d7feb423ace7a274830bbebd3ef0
+  R41_BASE_MANIFEST_SIZE: 1537
   R42_INSTALLER_NAME: LilacAnime-Libmpv-R41-D3-Diagnostic-Setup.exe
   R42_MANIFEST_NAME: lilacanime-libmpv-r41-d3-diagnostic.json
   R42_DIAGNOSTIC_TAG: libmpv-r41-d3-subtitle-handoff-${{ github.run_number }}
@@ -62,28 +66,24 @@ jobs:
         with:
           arch: x64
 
-      - name: Install qualification and packaging helpers
+      - name: Install pinned runtime, qualification and packaging helpers
         shell: powershell
-        run: npm install --no-save --no-audit --no-fund @electron/asar@3.2.18 electron-builder@26.0.12
+        run: npm install --no-save --no-audit --no-fund electron@44.9.3 @electron/asar@3.2.18 electron-builder@26.0.12
 
-      - name: Syntax-check R42 support before historical reconstruction
+      - name: Syntax-check R42 support before shipped-R41 reconstruction
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          node --check scripts/r42-reconstruct-r41-release.cjs
+          if($LASTEXITCODE-ne 0){throw 'R42 R41-release reconstruction syntax failed'}
           node --check scripts/r42-subtitle-handoff-diagnostic.cjs
           if($LASTEXITCODE-ne 0){throw 'R42 transform syntax failed'}
           node --check scripts/r42-package-diagnostic.cjs
           if($LASTEXITCODE-ne 0){throw 'R42 package verifier syntax failed'}
 
-      - name: Qualify exact R41 then apply observation-only R42 diagnostics
+      - name: Reconstruct pinned shipped R41 and apply observation-only R42 diagnostics
         shell: powershell
         env:
-          # R41's own qualified release workflow supplies GH_TOKEN during the
-          # historical baseline reconstruction. electron-builder 26 detects CI
-          # and otherwise aborts its legacy implicit publishing path before the
-          # R41 baseline can finish. Keep this environment byte-for-byte aligned
-          # with the already-qualified R41 workflow; R42 itself is not applied
-          # until r41-preflight.ps1 returns green.
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/r42-preflight.ps1
 
@@ -110,7 +110,7 @@ jobs:
           $tag=$env:R42_DIAGNOSTIC_TAG
           $updaterRegex='^libmpv-r2k-v\d+\.\d+\.\d+-r\d+$'
           if($tag -match $updaterRegex){throw "Diagnostic tag unexpectedly matches updater channel: $tag"}
-          gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title "LilacAnime R41 D3 subtitle handoff diagnostic ($env:GITHUB_RUN_NUMBER)" --notes 'Observation-only diagnostic build on top of fully qualified R41. App/version/install identity and R38 updater remain R41; the release tag intentionally does not match the R2K updater channel. It records source subtitle opacity/transition state at blur, overlay defer/replay/show/hide lifecycle, and overlay DOM opacity at commit/rAF/+50/+100/+200/+300 ms so the reported unfocused subtitle soft reveal can be separated from BrowserWindow compositor timing. Focused direct WebGPU, R41 native presenter, libmpv DLL and native addon are protected byte-for-byte.'
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title "LilacAnime R41 D3 subtitle handoff diagnostic ($env:GITHUB_RUN_NUMBER)" --notes 'Observation-only diagnostic build reconstructed from the pinned, fully qualified shipped R41 installer. App/version/install identity and R38 updater remain R41; the release tag intentionally does not match the R2K updater channel. It records source subtitle opacity/transition state at blur, overlay defer/replay/show/hide lifecycle, and overlay DOM opacity at commit/rAF/+50/+100/+200/+300 ms so the reported unfocused subtitle soft reveal can be separated from BrowserWindow compositor timing. Focused direct WebGPU, R41 native presenter, libmpv DLL and native addon are protected byte-for-byte.'
           if($LASTEXITCODE-ne 0){throw 'R42 diagnostic prerelease create failed'}
           gh release upload $tag "dist/$env:R42_INSTALLER_NAME" "dist/$env:R42_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY
           if($LASTEXITCODE-ne 0){throw 'R42 diagnostic asset upload failed'}
