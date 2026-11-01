@@ -51,12 +51,18 @@ jobs:
           if($LASTEXITCODE-ne 0){throw 'R45 R44 reconstructor syntax failed'}
           node --check scripts/r45-focus-transition-visual-probe.cjs
           if($LASTEXITCODE-ne 0){throw 'R45 transition visual probe syntax failed'}
+          node --check scripts/r45-inspect-r44-focus-helper.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 focus helper inspector syntax failed'}
 
       - name: Reconstruct immutable public R44 release
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/r45-reconstruct-r44-release.cjs
+
+      - name: Inspect shipped R44 focus helper
+        shell: powershell
+        run: node scripts/r45-inspect-r44-focus-helper.cjs
 
       - name: Probe eight real focus transitions for black-frame risk
         shell: powershell
