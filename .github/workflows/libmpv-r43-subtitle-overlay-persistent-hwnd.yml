@@ -172,13 +172,20 @@ jobs:
           }
           if($manifest.baseInstallerSha256-ne$env:R41_BASE_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R41_BASE_MANIFEST_SHA256){throw 'R43 pinned R41 baseline evidence drifted'}
 
-          # Use a regex with no backslash escapes so PowerShell, YAML and the generated
-          # runner script all evaluate exactly the same tag grammar as intended.
+          # Flatten and normalize the same non-draft GitHub release collection used by
+          # the custom updater. Avoid PowerShell 5.1 ConvertFrom-Json array semantics.
+          $rawNonDraftTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
+          if($LASTEXITCODE-ne 0){throw 'R43 updater release collection query failed'}
+          $nonDraftTags=@($rawNonDraftTags|ForEach-Object{([string]$_).Trim()}|Where-Object{$_})
+          if($nonDraftTags.Count-eq 0){throw 'R43 updater release collection unexpectedly empty'}
+          $r43CollectionMatches=@($nonDraftTags|Where-Object{$_-eq$env:R43_RELEASE_TAG})
+          if($r43CollectionMatches.Count-ne 1){throw "R43 collection exposure mismatch count=$($r43CollectionMatches.Count)"}
+
           $customTagRe='^libmpv-r2k-v[0-9]+[.][0-9]+[.][0-9]+-r[0-9]+$'
-          $channel=@((gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100")|ConvertFrom-Json)
-          $customCandidates=@($channel|Where-Object{($_.draft-ne$true)-and([string]$_.tag_name-match$customTagRe)})
-          $r43=@($customCandidates|Where-Object{[string]$_.tag_name-eq$env:R43_RELEASE_TAG})
-          if($r43.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43.Count)"}
-          $selected=if($customCandidates.Count){[string]$customCandidates[0].tag_name}else{'none'}
-          if($selected-ne$env:R43_RELEASE_TAG){throw "R43 is exposed but not selected by updater ordering selected=$selected"}
+          $customCandidates=@($nonDraftTags|Where-Object{$_-match$customTagRe})
+          if($customCandidates.Count-eq 0){throw 'R43 custom updater candidate set unexpectedly empty'}
+          $r43=@($customCandidates|Where-Object{$_-eq$env:R43_RELEASE_TAG})
+          if($r43.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43.Count) candidates=$($customCandidates -join ',')"}
+          $selected=[string]$customCandidates[0]
+          if($selected-ne$env:R43_RELEASE_TAG){throw "R43 is exposed but not selected by updater ordering selected=$selected candidates=$($customCandidates -join ',')"}
           Write-Host "R43_PRERELEASE_CREATED_AND_REVERIFIED_OK sha256=$hash size=$size draft=0 prerelease=1 customUpdaterExposure=1 selectedCustomTag=$selected reusedExisting=$([int]$releaseAlreadyExists) source=$expectedSourceSha"
