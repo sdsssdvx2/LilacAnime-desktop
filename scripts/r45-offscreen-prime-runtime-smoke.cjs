@@ -10,7 +10,7 @@ const { createLibmpvSharedBridge } = require('../electron/libmpv-shared-main.cjs
 
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const hardDeadline = setTimeout(() => { console.error('R45 offscreen-prime smoke exceeded 180s'); process.exit(124); }, 180000);
+const hardDeadline = setTimeout(() => { console.error('R45 tiny-prime smoke exceeded 180s'); process.exit(124); }, 180000);
 
 function makeFixture(dir) {
   const ffmpeg = require('ffmpeg-static');
@@ -58,8 +58,14 @@ const focus = s => s?.r33FocusSurface || {};
 const prime = s => focus(s)?.r45BlurPrime || {};
 const recv = s => Number(s?.receiver?.presentedFrames || 0);
 const sent = s => Number(s?.metrics?.sentFrames || 0);
-const isOffscreen = s => Number(presenter(s).x) <= -30000 || Number(presenter(s).y) <= -30000;
-const isOnscreen = s => Boolean(presenter(s).windowVisible) && !isOffscreen(s);
+const windowWidth = s => Number(presenter(s).screenWidth || 0);
+const windowHeight = s => Number(presenter(s).screenHeight || 0);
+const isTinyPrime = s => {
+  const p = presenter(s), q = prime(s);
+  return Boolean(p.windowVisible) && Number(p.x) === Number(q.primeX) && Number(p.y) === Number(q.primeY) &&
+    windowWidth(s) > 0 && windowHeight(s) > 0 && windowWidth(s) <= 2 && windowHeight(s) <= 2;
+};
+const isFullVisible = s => Boolean(presenter(s).windowVisible) && (windowWidth(s) > 2 || windowHeight(s) > 2);
 
 async function sampleUntil(bridge, predicate, timeoutMs, label) {
   const samples = [];
@@ -70,13 +76,14 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
     const q = prime(state);
     const row = {
       t: Date.now(),
-      x: Number(p.x), y: Number(p.y), visible: Boolean(p.windowVisible),
-      presented: Number(p.presentedFrames || 0), nativeOnly: Number(p.nativeOnlyFrames || 0),
-      active: Boolean(focus(state).active), recv: recv(state), sent: sent(state),
-      pending: Boolean(q.pending), successes: Number(q.successes || 0), timeouts: Number(q.timeouts || 0),
-      failures: Number(q.failures || 0), cancels: Number(q.cancels || 0),
-      proofs: Number(q.firstPresentOffscreenProofs || 0), violations: Number(q.prePresentExposureViolations || 0),
+      x: Number(p.x), y: Number(p.y), screenWidth: Number(p.screenWidth || 0), screenHeight: Number(p.screenHeight || 0),
+      visible: Boolean(p.windowVisible), presented: Number(p.presentedFrames || 0), nativeOnly: Number(p.nativeOnlyFrames || 0),
+      active: Boolean(focus(state).active), recv: recv(state), sent: sent(state), pending: Boolean(q.pending),
+      primeX: Number(q.primeX || 0), primeY: Number(q.primeY || 0), primeWidth: Number(q.primeWidth || 0), primeHeight: Number(q.primeHeight || 0),
+      successes: Number(q.successes || 0), timeouts: Number(q.timeouts || 0), failures: Number(q.failures || 0), cancels: Number(q.cancels || 0),
+      proofs: Number(q.firstPresentTinyProofs || 0), violations: Number(q.prePresentFullExposureViolations || 0),
       proofPresented: Number(q.lastProofPresented || 0), proofX: Number(q.lastProofX || 0), proofY: Number(q.lastProofY || 0),
+      proofWidth: Number(q.lastProofWidth || 0), proofHeight: Number(q.lastProofHeight || 0),
       proofWallMs: Number(q.lastProofWallMs || 0), exposeWallMs: Number(q.lastExposeWallMs || 0),
       redrawRequests: Number(q.redrawRequests || 0), redrawAccepted: Number(q.redrawAccepted || 0), redrawErrors: Number(q.redrawErrors || 0)
     };
@@ -114,15 +121,15 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
     await waitUntil(() => { const s=bridge.state(); return s?.fileLoaded===true && sent(s)>=15 && recv(s)>=15; }, 15000, 'focused playback baseline');
 
     const initial = bridge.state();
-    if (String(prime(initial).marker || '') !== 'LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME') throw new Error(`R45 marker missing ${JSON.stringify(prime(initial))}`);
+    if (String(prime(initial).marker || '') !== 'LILAC_R45_NATIVE_TINY_FIRST_PRESENT_PRIME') throw new Error(`R45 tiny marker missing ${JSON.stringify(prime(initial))}`);
 
     const cycles = [];
     for (let i = 1; i <= 8; i += 1) {
       const before = bridge.state();
       const baselinePresented = Number(presenter(before).presentedFrames || 0);
       const baselineSuccesses = Number(prime(before).successes || 0);
-      const baselineProofs = Number(prime(before).firstPresentOffscreenProofs || 0);
-      const baselineViolations = Number(prime(before).prePresentExposureViolations || 0);
+      const baselineProofs = Number(prime(before).firstPresentTinyProofs || 0);
+      const baselineViolations = Number(prime(before).prePresentFullExposureViolations || 0);
       const baselineTimeouts = Number(prime(before).timeouts || 0);
       const baselineFailures = Number(prime(before).failures || 0);
       const baselineRedrawRequests = Number(prime(before).redrawRequests || 0);
@@ -131,21 +138,24 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
       rival.show(); rival.moveTop(); rival.focus();
       await waitUntil(() => !main.isFocused() && rival.isFocused(), 4000, `cycle ${i} rival focus`);
 
-      const offscreen = await sampleUntil(bridge, (s,row) => row.visible && row.active && isOffscreen(s), 5000, `cycle ${i} offscreen visible prime`);
-      const proof = await sampleUntil(bridge, (s,row) => Number(prime(s).firstPresentOffscreenProofs||0) > baselineProofs, 5000, `cycle ${i} first-Present offscreen proof`);
+      const tiny = await sampleUntil(bridge, (s,row) => row.visible && row.active && row.pending && isTinyPrime(s), 5000, `cycle ${i} 2x2 visible prime`);
+      if (tiny.row.primeWidth !== 2 || tiny.row.primeHeight !== 2) throw new Error(`cycle ${i} configured prime is not 2x2 ${JSON.stringify(tiny.row)}`);
+      const proof = await sampleUntil(bridge, (s,row) => Number(prime(s).firstPresentTinyProofs||0) > baselineProofs, 5000, `cycle ${i} first-Present tiny proof`);
       const qProof = prime(proof.state);
-      if (Number(qProof.prePresentExposureViolations||0) !== baselineViolations) throw new Error(`cycle ${i} pre-Present exposure violation ${JSON.stringify(qProof)}`);
+      if (Number(qProof.prePresentFullExposureViolations||0) !== baselineViolations) throw new Error(`cycle ${i} pre-Present full exposure violation ${JSON.stringify(qProof)}`);
       if (Number(qProof.lastProofPresented||0) <= baselinePresented) throw new Error(`cycle ${i} proof did not advance presentedFrames ${JSON.stringify(qProof)}`);
-      if (!(Number(qProof.lastProofX) <= -30000 || Number(qProof.lastProofY) <= -30000)) throw new Error(`cycle ${i} first Present proof was not offscreen ${JSON.stringify(qProof)}`);
+      if (Number(qProof.lastProofX) !== Number(qProof.primeX) || Number(qProof.lastProofY) !== Number(qProof.primeY) || Number(qProof.lastProofWidth) > 2 || Number(qProof.lastProofHeight) > 2 || Number(qProof.lastProofWidth) < 1 || Number(qProof.lastProofHeight) < 1) {
+        throw new Error(`cycle ${i} first Present proof was not on 2x2 prime ${JSON.stringify(qProof)}`);
+      }
       if (Number(qProof.lastProofWallMs||0) < blurAt) throw new Error(`cycle ${i} stale proof timestamp ${JSON.stringify(qProof)}`);
 
-      const exposed = await sampleUntil(bridge, (s,row) => isOnscreen(s) && row.presented > baselinePresented && Number(prime(s).successes||0) > baselineSuccesses, 5000, `cycle ${i} expose after Present proof`);
+      const exposed = await sampleUntil(bridge, (s,row) => isFullVisible(s) && row.presented > baselinePresented && Number(prime(s).successes||0) > baselineSuccesses, 5000, `cycle ${i} full expose after Present proof`);
       const qExposed = prime(exposed.state);
-      if (Number(qExposed.lastExposeWallMs||0) < Number(qExposed.lastProofWallMs||0)) throw new Error(`cycle ${i} exposure timestamp preceded proof ${JSON.stringify(qExposed)}`);
+      if (Number(qExposed.lastExposeWallMs||0) < Number(qExposed.lastProofWallMs||0)) throw new Error(`cycle ${i} full exposure timestamp preceded proof ${JSON.stringify(qExposed)}`);
       if (Number(qExposed.timeouts||0) !== baselineTimeouts || Number(qExposed.failures||0) !== baselineFailures) throw new Error(`cycle ${i} prime used timeout/failure path ${JSON.stringify(qExposed)}`);
       if (Number(qExposed.redrawRequests||0) <= baselineRedrawRequests || Number(qExposed.redrawAccepted||0) <= baselineRedrawAccepted || Number(qExposed.redrawErrors||0) !== 0) throw new Error(`cycle ${i} forced redraw not accepted ${JSON.stringify(qExposed)}`);
-      const sampledPremature = [...offscreen.samples, ...proof.samples, ...exposed.samples].find(row => row.pending && row.visible && row.x > -30000 && row.y > -30000);
-      if (sampledPremature) throw new Error(`cycle ${i} pending prime was sampled on-screen ${JSON.stringify(sampledPremature)}`);
+      const sampledPremature = [...tiny.samples, ...proof.samples, ...exposed.samples].find(row => row.pending && row.visible && (row.screenWidth > 2 || row.screenHeight > 2));
+      if (sampledPremature) throw new Error(`cycle ${i} pending prime was sampled full-size ${JSON.stringify(sampledPremature)}`);
 
       await sleep(220);
       const beforeFocus = bridge.state();
@@ -161,9 +171,9 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
 
       cycles.push({
         i,
-        blurToOffscreenMs: offscreen.row.t - blurAt,
+        blurToTinyMs: tiny.row.t - blurAt,
         blurToProofMs: Number(qExposed.lastProofWallMs||0) - blurAt,
-        proofToExposeMs: Number(qExposed.lastExposeWallMs||0) - Number(qExposed.lastProofWallMs||0),
+        proofToFullExposeMs: Number(qExposed.lastExposeWallMs||0) - Number(qExposed.lastProofWallMs||0),
         focusToRendererMs: rendererFresh.row.t - focusAt,
         rendererToNativeHideMs: nativeHidden.row.t - rendererFresh.row.t,
         nativeFramesDuringFocusHandoff: Number(presenter(nativeHidden.state).presentedFrames||0) - baseNativePresented
@@ -171,8 +181,6 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
       await sleep(180);
     }
 
-    // Best-effort rapid-refocus cancellation. A forced redraw can finish before the
-    // test process sees pending=true; that is already safe because the proof gate won.
     let cancellationObserved = false;
     for (let attempt = 0; attempt < 4 && !cancellationObserved; attempt += 1) {
       const beforeCancel = bridge.state();
@@ -194,11 +202,11 @@ async function sampleUntil(bridge, predicate, timeoutMs, label) {
 
     const final = bridge.state();
     const q = prime(final);
-    if (Number(q.successes||0) < 8 || Number(q.firstPresentOffscreenProofs||0) < 8 || Number(q.prePresentExposureViolations||0) !== 0 || Number(q.timeouts||0) !== 0 || Number(q.failures||0) !== 0 || Number(q.redrawErrors||0) !== 0) throw new Error(`R45 final counters unexpected ${JSON.stringify(q)}`);
+    if (Number(q.successes||0) < 8 || Number(q.firstPresentTinyProofs||0) < 8 || Number(q.prePresentFullExposureViolations||0) !== 0 || Number(q.timeouts||0) !== 0 || Number(q.failures||0) !== 0 || Number(q.redrawErrors||0) !== 0) throw new Error(`R45 final counters unexpected ${JSON.stringify(q)}`);
     const maxBlurToProof = Math.max(...cycles.map(c=>c.blurToProofMs));
-    const maxProofToExpose = Math.max(...cycles.map(c=>c.proofToExposeMs));
+    const maxProofToExpose = Math.max(...cycles.map(c=>c.proofToFullExposeMs));
     const minRendererToHide = Math.min(...cycles.map(c=>c.rendererToNativeHideMs));
-    console.log(`R45_OFFSCREEN_FIRST_PRESENT_RUNTIME_OK cycles=8 successes=${q.successes} offscreenProofs=${q.firstPresentOffscreenProofs} exposureViolations=${q.prePresentExposureViolations} redrawAccepted=${q.redrawAccepted}/${q.redrawRequests} timeouts=${q.timeouts} failures=${q.failures} cancellationObserved=${cancellationObserved?1:0} maxBlurToProofMs=${maxBlurToProof} maxProofToExposeMs=${maxProofToExpose} minRendererToNativeHideMs=${minRendererToHide} ordering=${JSON.stringify(cycles)}`);
+    console.log(`R45_TINY_FIRST_PRESENT_RUNTIME_OK cycles=8 successes=${q.successes} tinyProofs=${q.firstPresentTinyProofs} fullExposureViolations=${q.prePresentFullExposureViolations} redrawAccepted=${q.redrawAccepted}/${q.redrawRequests} timeouts=${q.timeouts} failures=${q.failures} cancellationObserved=${cancellationObserved?1:0} maxBlurToProofMs=${maxBlurToProof} maxProofToFullExposeMs=${maxProofToExpose} minRendererToNativeHideMs=${minRendererToHide} ordering=${JSON.stringify(cycles)}`);
   } finally {
     clearTimeout(hardDeadline);
     try { await bridge?.close?.(); } catch {}
