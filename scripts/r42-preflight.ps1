@@ -3,30 +3,25 @@ function Assert-Exit([string]$label){ if($LASTEXITCODE-ne 0){ throw "$label fail
 function Sha256([string]$path){ (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Assert-Contains([string]$text,[string]$marker,[string]$label){ if(-not $text.Contains($marker)){ throw "$label missing $marker" } }
 
-# R41/R40 qualification reconstructs historical worktrees. Preserve every R42
-# support file outside the repository and restore it after exact R41 qualification.
-$stash=Join-Path $env:RUNNER_TEMP 'lilac-r42-diagnostic-support'
-Remove-Item $stash -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $stash | Out-Null
-$r42Support=@(Get-ChildItem scripts -File -Filter 'r42-*' | Select-Object -ExpandProperty Name)
-if(-not($r42Support -contains 'r42-subtitle-handoff-diagnostic.cjs')){throw 'R42 transform missing before R41 reconstruction'}
-if(-not($r42Support -contains 'r42-preflight.ps1')){throw 'R42 preflight missing before R41 reconstruction'}
-foreach($name in $r42Support){ Copy-Item (Join-Path 'scripts' $name) (Join-Path $stash $name) -Force }
+Write-Host 'R42_DIAGNOSTIC_PREFLIGHT_BEGIN baseline=pinned-qualified-R41-release scope=subtitle-handoff-observation-only'
 
-Write-Host 'R42_DIAGNOSTIC_PREFLIGHT_BEGIN baseline=qualified-R41 scope=subtitle-handoff-observation-only'
-try {
-  ./scripts/r41-preflight.ps1
-  Assert-Exit 'R42 exact R41 qualification baseline'
-}
-finally {
-  New-Item -ItemType Directory -Force -Path scripts | Out-Null
-  foreach($name in $r42Support){ Copy-Item (Join-Path $stash $name) (Join-Path 'scripts' $name) -Force }
-}
+# Do not replay the full R23->R41 historical runtime chain here. The public R41
+# installer already passed that qualification and post-package verification, while
+# its cadence smoke is timing-sensitive enough to pass and fail on the same hosted
+# runner. Reconstruct the exact shipped R41 app from the pinned release assets and
+# verify their immutable SHA/size + manifest qualification evidence instead.
+node --check scripts/r42-reconstruct-r41-release.cjs
+Assert-Exit 'R42 R41 release reconstruction syntax'
+node scripts/r42-reconstruct-r41-release.cjs
+Assert-Exit 'R42 pinned qualified R41 release reconstruction'
+
+$installedElectron=(node -p "require('electron/package.json').version").Trim()
+Assert-Exit 'R42 installed Electron version query'
+if($installedElectron-ne$env:ELECTRON_VERSION){throw "R42 Electron version drifted: expected $env:ELECTRON_VERSION got $installedElectron"}
 
 $updaterBefore=Sha256 'electron/updater.cjs'
 $focusedPreloadBefore=Sha256 'electron/libmpv-shared-preload.cjs'
 $focusedBundleBefore=Sha256 'electron/preload-libmpv-shared.generated.cjs'
-$nativeSourceBefore=Sha256 'native/libmpv-d3d11-bridge/player_addon.cc'
 $addonBefore=Sha256 'electron/lilac-libmpv-player-bridge.node'
 $dllBefore=Sha256 'electron/libmpv-2.dll'
 $pkgBefore=Sha256 'package.json'
@@ -37,7 +32,7 @@ node scripts/r42-subtitle-handoff-diagnostic.cjs
 Assert-Exit 'R42 subtitle handoff diagnostic transform'
 
 # The source subtitle serializer is part of the normal renderer bundle. Rebuild it
-# with the same qualified R40/R41 bundler; focused WebGPU preload is untouched.
+# with the qualified R40/R41 bundler; focused WebGPU preload remains untouched.
 node scripts/r40-rebundle-renderer.cjs
 Assert-Exit 'R42 renderer rebundle'
 
@@ -53,16 +48,15 @@ foreach($script in @(
   Assert-Exit "R42 post-transform syntax $script"
 }
 
-# Fail closed if this diagnostic build drifts any protected playback/update binary
-# or identity. Only the source DOM subtitle serializer, subtitle overlay, main
-# diagnostic getter and bridge diagnostics object may differ from qualified R41.
+# Fail closed if this observation-only diagnostic drifts any protected shipped R41
+# update/playback binary or install/update identity. The R41 native source does not
+# need to be reconstructed because the exact shipped addon/DLL are reused verbatim.
 if((Sha256 'electron/updater.cjs')-ne $updaterBefore){throw 'R42 changed protected R38 updater'}
 if((Sha256 'electron/libmpv-shared-preload.cjs')-ne $focusedPreloadBefore){throw 'R42 changed focused direct-WebGPU preload'}
 if((Sha256 'electron/preload-libmpv-shared.generated.cjs')-ne $focusedBundleBefore){throw 'R42 changed focused direct-WebGPU preload bundle'}
-if((Sha256 'native/libmpv-d3d11-bridge/player_addon.cc')-ne $nativeSourceBefore){throw 'R42 changed R41 native presenter source'}
-if((Sha256 'electron/lilac-libmpv-player-bridge.node')-ne $addonBefore){throw 'R42 changed R41 native addon'}
-if((Sha256 'electron/libmpv-2.dll')-ne $dllBefore){throw 'R42 changed qualified libmpv DLL'}
-if((Sha256 'package.json')-ne $pkgBefore){throw 'R42 changed R41 package/update identity'}
+if((Sha256 'electron/lilac-libmpv-player-bridge.node')-ne $addonBefore){throw 'R42 changed shipped R41 native addon'}
+if((Sha256 'electron/libmpv-2.dll')-ne $dllBefore){throw 'R42 changed shipped qualified libmpv DLL'}
+if((Sha256 'package.json')-ne $pkgBefore){throw 'R42 changed reconstructed R41 package/update identity'}
 
 $entry=Get-Content 'src/libmpv-shared-entry.js' -Raw
 $renderer=Get-Content 'src/libmpv-shared.generated.js' -Raw
@@ -83,8 +77,9 @@ foreach($forbidden in @('copyTextureToTexture','focus-staged-gpu-copy','--disabl
   if($bridge.Contains($forbidden)-or$entry.Contains($forbidden)){throw "R42 introduced forbidden path $forbidden"}
 }
 
-# Re-run the two runtime gates nearest this change. R41 preflight already re-passed
-# the entire protected baseline before instrumentation was applied.
+# Re-run only the runtime gates nearest the diagnostic change. The exact shipped R41
+# baseline has already passed the historical cadence/E2E/topmost chain; replaying
+# those timing gates on a hosted runner caused the same product to pass then fail.
 $env:LILAC_LIBMPV_PLAYER_ADDON=(Resolve-Path 'electron/lilac-libmpv-player-bridge.node').Path
 $env:LILAC_LIBMPV_DLL=(Resolve-Path 'electron/libmpv-2.dll').Path
 try {
@@ -98,4 +93,4 @@ finally {
   Remove-Item Env:LILAC_LIBMPV_DLL -ErrorAction SilentlyContinue
 }
 
-Write-Host "R42_DIAGNOSTIC_PREFLIGHT_OK updater=$updaterBefore focusedPreload=$focusedPreloadBefore addon=$addonBefore dll=$dllBefore sourceStyle=opacity+transition+animation overlayTrace=256 paintSamples=commit+raf2+50/100/200/300ms identity=R41-unchanged"
+Write-Host "R42_DIAGNOSTIC_PREFLIGHT_OK baseline=pinned-R41-release updater=$updaterBefore focusedPreload=$focusedPreloadBefore addon=$addonBefore dll=$dllBefore sourceStyle=opacity+transition+animation overlayTrace=256 paintSamples=commit+raf2+50/100/200/300ms identity=R41-unchanged"
