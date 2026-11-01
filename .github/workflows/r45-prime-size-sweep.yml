@@ -83,7 +83,7 @@ jobs:
           $replacements=[ordered]@{
             'windowWidth(s) <= 2 && windowHeight(s) <= 2'="windowWidth(s) <= $size && windowHeight(s) <= $size";
             '(windowWidth(s) > 2 || windowHeight(s) > 2)'="(windowWidth(s) > $size || windowHeight(s) > $size)";
-            'row.primeWidth !== 2 || tiny.row.primeHeight !== 2'="row.primeWidth !== $size || tiny.row.primeHeight !== $size";
+            'tiny.row.primeWidth !== 2 || tiny.row.primeHeight !== 2'="tiny.row.primeWidth !== $size || tiny.row.primeHeight !== $size";
             'configured prime is not 2x2'="configured prime is not ${size}x${size}";
             'Number(qProof.lastProofWidth) > 2 || Number(qProof.lastProofHeight) > 2'="Number(qProof.lastProofWidth) > $size || Number(qProof.lastProofHeight) > $size";
             'first Present proof was not on 2x2 prime'="first Present proof was not on ${size}x${size} prime";
