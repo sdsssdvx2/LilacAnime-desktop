@@ -1,0 +1,81 @@
+name: LilacAnime R43 published release channel verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/workflows/libmpv-r43-release-channel-verify.yml
+
+permissions:
+  contents: read
+
+env:
+  R43_RELEASE_TAG: libmpv-r2k-v0.5.54-r43
+  R43_APP_VERSION: 0.5.54-libmpv-r3f.rc22
+  R43_INSTALLER_NAME: LilacAnime-Libmpv-R43-Setup.exe
+  R43_INSTALLER_SHA256: 7a56a8a4b372bbbf83e73b95e0ca43548e5c10029bf2d218c9f4b86e2aae4589
+  R43_INSTALLER_SIZE: 185778449
+  R43_MANIFEST_NAME: lilacanime-libmpv-r43-manifest.json
+  R43_MANIFEST_SHA256: 5732a77967ec4961719deb75656d3e6340b6295f8b83ec42ce301328ebc82ed0
+  R43_MANIFEST_SIZE: 1826
+  R43_QUALIFIED_SOURCE_SHA: 754b0e023d182685cc3c90a695c4d69adb3f1930
+  R41_BASE_INSTALLER_SHA256: 71a8aca205f7e91574236795cc87f02843d304282d98f9d02e9cadfea4d0e19e
+  R41_BASE_MANIFEST_SHA256: bf4034484314c8dd7fc256b2801ff8b5fb86d7feb423ace7a274830bbebd3ef0
+
+jobs:
+  verify-published-r43:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify immutable release assets and updater collection ordering
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+
+          $release=(gh release view $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isPrerelease,isDraft,targetCommitish | ConvertFrom-Json)
+          if($release.tagName-ne$env:R43_RELEASE_TAG-or$release.isDraft-ne$false-or$release.isPrerelease-ne$true-or[string]$release.targetCommitish-ne$env:R43_QUALIFIED_SOURCE_SHA){
+            throw "R43 release state mismatch tag=$($release.tagName) draft=$($release.isDraft) prerelease=$($release.isPrerelease) target=$($release.targetCommitish)"
+          }
+
+          $verify=Join-Path $env:RUNNER_TEMP 'r43-published-release-verify'
+          Remove-Item $verify -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $verify|Out-Null
+          gh release download $env:R43_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $verify --pattern $env:R43_INSTALLER_NAME --pattern $env:R43_MANIFEST_NAME
+          if($LASTEXITCODE-ne 0){throw 'R43 release asset download failed'}
+
+          $exe=Join-Path $verify $env:R43_INSTALLER_NAME
+          $manifestPath=Join-Path $verify $env:R43_MANIFEST_NAME
+          $exeHash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $exeSize=(Get-Item $exe).Length
+          $manifestHash=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestSize=(Get-Item $manifestPath).Length
+          if($exeHash-ne$env:R43_INSTALLER_SHA256-or$exeSize-ne[long]$env:R43_INSTALLER_SIZE){throw "R43 installer immutable identity mismatch hash=$exeHash size=$exeSize"}
+          if($manifestHash-ne$env:R43_MANIFEST_SHA256-or$manifestSize-ne[long]$env:R43_MANIFEST_SIZE){throw "R43 manifest immutable identity mismatch hash=$manifestHash size=$manifestSize"}
+
+          $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
+          if($manifest.version-ne$env:R43_APP_VERSION-or$manifest.tag-ne$env:R43_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$env:R43_QUALIFIED_SOURCE_SHA){throw 'R43 manifest release identity mismatch'}
+          if($manifest.installerSha256-ne$env:R43_INSTALLER_SHA256-or[long]$manifest.installerSize-ne[long]$env:R43_INSTALLER_SIZE){throw 'R43 manifest installer identity mismatch'}
+          if($manifest.baseInstallerSha256-ne$env:R41_BASE_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R41_BASE_MANIFEST_SHA256){throw 'R43 manifest pinned R41 baseline mismatch'}
+          foreach($flag in @('r43PreflightQualified','r43PersistentSubtitleHwndRuntimeQualified','r43R41LiveHandoffRequalified','r43ProtectedR41BytesQualified')){
+            if($manifest.$flag-ne$true){throw "R43 manifest qualification flag missing $flag"}
+          }
+
+          # Let gh/jq flatten the API array. This avoids Windows PowerShell 5.1's
+          # ConvertFrom-Json array pipeline semantics entirely.
+          $nonDraftTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
+          if($LASTEXITCODE-ne 0){throw 'R43 updater release collection query failed'}
+          if($nonDraftTags.Count-eq 0){throw 'R43 updater release collection unexpectedly empty'}
+          Write-Host "R43_CHANNEL_NON_DRAFT_HEAD=$($nonDraftTags|Select-Object -First 8|Join-String -Separator ',')"
+
+          $customTagRe='^libmpv-r2k-v[0-9]+[.][0-9]+[.][0-9]+-r[0-9]+$'
+          $customCandidates=@($nonDraftTags|Where-Object{([string]$_)-match$customTagRe})
+          if($customCandidates.Count-eq 0){throw 'R43 custom updater candidate set unexpectedly empty'}
+          $r43Matches=@($customCandidates|Where-Object{[string]$_-eq$env:R43_RELEASE_TAG})
+          if($r43Matches.Count-ne 1){throw "R43 updater exposure mismatch count=$($r43Matches.Count) candidates=$($customCandidates -join ',')"}
+          $selected=[string]$customCandidates[0]
+          if($selected-ne$env:R43_RELEASE_TAG){throw "R43 updater ordering mismatch selected=$selected candidates=$($customCandidates -join ',')"}
+
+          Write-Host "R43_RELEASE_CHANNEL_VERIFIED_OK tag=$env:R43_RELEASE_TAG version=$env:R43_APP_VERSION sha256=$exeHash size=$exeSize selectedCustomTag=$selected immutableAssets=1 manifestFlags=4 pinnedR41=1"
