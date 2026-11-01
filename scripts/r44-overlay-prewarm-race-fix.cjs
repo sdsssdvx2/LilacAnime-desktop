@@ -240,8 +240,8 @@ controller = once(
 
 main = once(
   main,
-  "  win.on('focus', () => r40SubtitleOverlay?.hide('owner-focused'));\n  win.on('hide', () => r40SubtitleOverlay?.hide('owner-hidden'));",
-  "  win.on('focus', () => r40SubtitleOverlay?.hide('owner-focused'));\n  // LILAC_R44_PREWARMED_SUBTITLE_OVERLAY: establish the empty transparent owned\n  // HWND before the first unfocused cue. If R40 captured an active cue during the\n  // renderer/BrowserWindow focus race, replay it only after prewarm is committed.\n  win.on('blur', () => {\n    try {\n      const task = r40SubtitleOverlay?.prewarm(win, 'owner-blur');\n      if (task && typeof task.then === 'function') {\n        void task.then(() => r40SubtitleOverlay?.reconcileDeferred(win, 'owner-blur')).catch(() => {});\n      }\n    } catch {}\n  });\n  win.on('hide', () => r40SubtitleOverlay?.hide('owner-hidden'));",
+  "  win.on('focus', () => r40SubtitleOverlay?.hide('owner-focused'));",
+  "  win.on('focus', () => r40SubtitleOverlay?.hide('owner-focused'));\n  // LILAC_R44_PREWARMED_SUBTITLE_OVERLAY: establish the empty transparent owned\n  // HWND before the first unfocused cue. If R40 captured an active cue during the\n  // renderer/BrowserWindow focus race, replay it only after prewarm is committed.\n  win.on('blur', () => {\n    try {\n      const task = r40SubtitleOverlay?.prewarm(win, 'owner-blur');\n      if (task && typeof task.then === 'function') {\n        void task.then(() => r40SubtitleOverlay?.reconcileDeferred(win, 'owner-blur')).catch(() => {});\n      }\n    } catch {}\n  });",
   'owner blur prewarm lifecycle'
 );
 
