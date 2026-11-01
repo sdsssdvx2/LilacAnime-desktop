@@ -1,0 +1,115 @@
+name: LilacAnime R45 DWM prime-size sweep
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/workflows/r45-prime-size-sweep.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lilac-r45-prime-size-sweep
+  cancel-in-progress: true
+
+env:
+  ELECTRON_VERSION: 44.9.3
+  STABLE_APP_ID: com.lilac.anime.desktop.libmpvr2jcandidate
+  STABLE_PRODUCT_NAME: LilacAnime Libmpv
+  STABLE_SHORTCUT_NAME: LilacAnime Libmpv
+  STABLE_EXE_BASE: LilacAnime-Libmpv-R2K
+  R44_RELEASE_TAG: libmpv-r2k-v0.5.54-r44
+  R44_APP_VERSION: 0.5.54-libmpv-r3f.rc23
+  R44_INSTALLER_NAME: LilacAnime-Libmpv-R44-Setup.exe
+  R44_INSTALLER_SHA256: 5b71017d1a93450ae803c174dfc184f8f0797d2263df0745b97347182f8bcaf8
+  R44_INSTALLER_SIZE: 185779681
+  R44_MANIFEST_NAME: lilacanime-libmpv-r44-manifest.json
+  R44_MANIFEST_SHA256: 96f79cd0c80c49a2b3acee0a909e11277e16a8dd19eaa27e174d8ae3e31efb7a
+  R44_MANIFEST_SIZE: 2307
+
+jobs:
+  sweep:
+    name: prime-${{ matrix.prime }}px
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        prime: [2, 8, 16, 32, 64, 96, 128, 256]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pinned runtime and extraction helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund electron@44.9.3 @electron/asar@3.2.18 ffmpeg-static@5.3.0
+
+      - name: Reconstruct immutable R44 release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/r45-reconstruct-r44-release.cjs
+
+      - name: Transform R44 with candidate prime size
+        shell: powershell
+        env:
+          R45_PRIME_SIZE: ${{ matrix.prime }}
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r45-native-offscreen-first-present-prime.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 candidate prime transform failed'}
+          node scripts/r45-prime-force-redraw-wake.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 redraw transform failed'}
+          node scripts/r45-prime-order-proof-guard.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 proof transform failed'}
+          node --check electron/libmpv-shared-main.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 transformed bridge syntax failed'}
+
+      - name: Generate candidate-aware eight-cycle smoke
+        shell: powershell
+        env:
+          R45_PRIME_SIZE: ${{ matrix.prime }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $size=[int]$env:R45_PRIME_SIZE
+          $source=Get-Content scripts/r45-offscreen-prime-runtime-smoke.cjs -Raw
+          $replacements=[ordered]@{
+            'windowWidth(s) <= 2 && windowHeight(s) <= 2'="windowWidth(s) <= $size && windowHeight(s) <= $size";
+            '(windowWidth(s) > 2 || windowHeight(s) > 2)'="(windowWidth(s) > $size || windowHeight(s) > $size)";
+            'row.primeWidth !== 2 || tiny.row.primeHeight !== 2'="row.primeWidth !== $size || tiny.row.primeHeight !== $size";
+            'configured prime is not 2x2'="configured prime is not ${size}x${size}";
+            'Number(qProof.lastProofWidth) > 2 || Number(qProof.lastProofHeight) > 2'="Number(qProof.lastProofWidth) > $size || Number(qProof.lastProofHeight) > $size";
+            'first Present proof was not on 2x2 prime'="first Present proof was not on ${size}x${size} prime";
+            '(row.screenWidth > 2 || row.screenHeight > 2)'="(row.screenWidth > $size || row.screenHeight > $size)";
+            '`cycle ${i} 2x2 visible prime`'='`cycle ${i} candidate visible prime`'
+          }
+          foreach($entry in $replacements.GetEnumerator()){
+            $count=([regex]::Matches($source,[regex]::Escape([string]$entry.Key))).Count
+            if($count-lt 1){throw "candidate smoke replacement missing: $($entry.Key)"}
+            $source=$source.Replace([string]$entry.Key,[string]$entry.Value)
+          }
+          $out=Join-Path $env:RUNNER_TEMP "r45-prime-$size-smoke.cjs"
+          [IO.File]::WriteAllText($out,$source,(New-Object Text.UTF8Encoding($false)))
+          "R45_SWEEP_SMOKE=$out"|Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          node --check $out
+          if($LASTEXITCODE-ne 0){throw 'candidate smoke syntax failed'}
+
+      - name: Run eight repeated focus cycles
+        shell: powershell
+        env:
+          R45_PRIME_SIZE: ${{ matrix.prime }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
+          $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
+          Write-Host "R45_PRIME_SIZE_SWEEP_BEGIN size=$env:R45_PRIME_SIZE runner=$env:ImageVersion"
+          node scripts/r40-run-electron-gate.cjs $env:R45_SWEEP_SMOKE R45_TINY_FIRST_PRESENT_RUNTIME_OK 180000
+          if($LASTEXITCODE-ne 0){throw "R45 prime-size candidate failed size=$env:R45_PRIME_SIZE"}
+          Write-Host "R45_PRIME_SIZE_SWEEP_OK size=$env:R45_PRIME_SIZE runner=$env:ImageVersion cycles=8"
