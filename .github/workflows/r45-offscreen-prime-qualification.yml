@@ -1,0 +1,130 @@
+name: LilacAnime R45 offscreen first-Present qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [libmpv-r3f-054-r41-visual-handoff-stall-trace]
+    paths:
+      - .github/workflows/r45-offscreen-prime-qualification.yml
+      - scripts/r45-native-offscreen-first-present-prime.cjs
+      - scripts/r45-offscreen-prime-runtime-smoke.cjs
+      - scripts/r45-reconstruct-r44-release.cjs
+
+concurrency:
+  group: lilac-r45-offscreen-prime-qualification
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_VERSION: 44.9.3
+  R44_RELEASE_TAG: libmpv-r2k-v0.5.54-r44
+  R44_APP_VERSION: 0.5.54-libmpv-r3f.rc23
+  R44_INSTALLER_NAME: LilacAnime-Libmpv-R44-Setup.exe
+  R44_INSTALLER_SHA256: 5b71017d1a93450ae803c174dfc184f8f0797d2263df0745b97347182f8bcaf8
+  R44_INSTALLER_SIZE: 185779681
+  R44_MANIFEST_NAME: lilacanime-libmpv-r44-manifest.json
+  R44_MANIFEST_SHA256: 96f79cd0c80c49a2b3acee0a909e11277e16a8dd19eaa27e174d8ae3e31efb7a
+  R44_MANIFEST_SIZE: 2307
+
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pinned runtime and extraction helpers
+        shell: powershell
+        run: npm install --no-save --no-audit --no-fund electron@44.9.3 @electron/asar@3.2.18 ffmpeg-static@5.3.0
+
+      - name: Syntax check R45 qualification support
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($file in @(
+            'scripts/r45-reconstruct-r44-release.cjs',
+            'scripts/r45-native-offscreen-first-present-prime.cjs',
+            'scripts/r45-offscreen-prime-runtime-smoke.cjs',
+            'scripts/r41-live-handoff-native-smoke.cjs'
+          )){
+            node --check $file
+            if($LASTEXITCODE-ne 0){throw "syntax failed $file"}
+          }
+
+      - name: Reconstruct immutable public R44 release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/r45-reconstruct-r44-release.cjs
+
+      - name: Capture protected R44 byte identities
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(
+            'electron/libmpv-shared-preload.cjs',
+            'electron/preload-libmpv-shared.generated.cjs',
+            'electron/r40-subtitle-overlay-window.cjs',
+            'electron/r40-subtitle-overlay-preload.cjs',
+            'electron/lilac-libmpv-player-bridge.node',
+            'electron/libmpv-2.dll',
+            'electron/updater.cjs',
+            'electron/main.cjs',
+            'src/libmpv-shared.generated.js'
+          )
+          $map=@{}
+          foreach($f in $files){$map[$f]=(Get-FileHash $f -Algorithm SHA256).Hash.ToLowerInvariant()}
+          $map|ConvertTo-Json|Set-Content (Join-Path $env:RUNNER_TEMP 'r45-protected-r44.json') -Encoding UTF8
+
+      - name: Apply R45 blur first-Present gate
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          node scripts/r45-native-offscreen-first-present-prime.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 transform failed'}
+          node --check electron/libmpv-shared-main.cjs
+          if($LASTEXITCODE-ne 0){throw 'R45 transformed bridge syntax failed'}
+
+      - name: Prove protected R44/R41 bytes are unchanged
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $before=Get-Content (Join-Path $env:RUNNER_TEMP 'r45-protected-r44.json') -Raw|ConvertFrom-Json
+          foreach($prop in $before.PSObject.Properties){
+            $after=(Get-FileHash $prop.Name -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($after-ne[string]$prop.Value){throw "protected byte drift $($prop.Name) before=$($prop.Value) after=$after"}
+          }
+          $bridge=Get-Content electron/libmpv-shared-main.cjs -Raw
+          foreach($m in @('LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing bridge marker $m"}}
+          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
+          Write-Host 'R45_PROTECTED_R44_BYTES_OK bridgeOnlyChange=1 r41FocusedPath=protected r44Overlay=protected nativeAddon=protected dll=protected updater=protected'
+
+      - name: Qualify offscreen first-Present ordering across repeated focus cycles
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
+          $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
+          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_OFFSCREEN_FIRST_PRESENT_RUNTIME_OK 180000
+          if($LASTEXITCODE-ne 0){throw "R45 prime runtime smoke exited $LASTEXITCODE"}
+
+      - name: Requalify R41 focused visual-commit handoff
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
+          $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
+          node scripts/r40-run-electron-gate.cjs scripts/r41-live-handoff-native-smoke.cjs R41_LIVE_NATIVE_HANDOFF_RUNTIME_OK 150000
+          if($LASTEXITCODE-ne 0){throw "R41 handoff requalification exited $LASTEXITCODE"}
+
+      - name: Qualification summary
+        shell: powershell
+        run: Write-Host 'R45_OFFSCREEN_PRIME_QUALIFIED_OK base=immutable-R44 subtitleFirstCue=R44-preserved blurExpose=first-Present-gated refocus=R41-visual-commit nativeBytes=unchanged'
