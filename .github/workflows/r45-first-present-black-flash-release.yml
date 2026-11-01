@@ -1,4 +1,4 @@
-name: LilacAnime R45 first-Present black-flash release
+name: LilacAnime R45 tiny first-Present black-flash release
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ on:
 
 concurrency:
   group: lilac-r45-first-present-black-flash-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -105,16 +105,16 @@ jobs:
           "R45_PROTECTED_BASELINE_JSON=$baselinePath"|Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "R45_R44_PROTECTED_BASELINE_CAPTURED_OK files=$($files.Count)"
 
-      - name: Apply only the R45 blur first-Present transforms
+      - name: Apply only the R45 tiny first-Present transforms
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           node scripts/r45-native-offscreen-first-present-prime.cjs
-          if($LASTEXITCODE-ne 0){throw 'R45 first-Present transform failed'}
+          if($LASTEXITCODE-ne 0){throw 'R45 tiny first-Present transform failed'}
           node scripts/r45-prime-force-redraw-wake.cjs
           if($LASTEXITCODE-ne 0){throw 'R45 forced-redraw transform failed'}
           node scripts/r45-prime-order-proof-guard.cjs
-          if($LASTEXITCODE-ne 0){throw 'R45 ordering-proof transform failed'}
+          if($LASTEXITCODE-ne 0){throw 'R45 tiny ordering-proof transform failed'}
           node --check electron/libmpv-shared-main.cjs
           if($LASTEXITCODE-ne 0){throw 'R45 transformed bridge syntax failed'}
 
@@ -128,18 +128,18 @@ jobs:
             if($after-ne[string]$prop.Value){throw "protected byte drift $($prop.Name) before=$($prop.Value) after=$after"}
           }
           $bridge=Get-Content electron/libmpv-shared-main.cjs -Raw
-          foreach($m in @('LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF','LILAC_R40_HANDOFF_FORCE_REDRAW','requestFrameProducerRedraw','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing R45 bridge marker $m"}}
-          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
-          Write-Host 'R45_RELEASE_PROTECTED_BYTES_OK changed=electron/libmpv-shared-main.cjs-only r44Subtitle=byte-identical focusedWebGPU=byte-identical addon=byte-identical dll=byte-identical updater=byte-identical'
+          foreach($m in @('LILAC_R45_NATIVE_TINY_FIRST_PRESENT_PRIME','LILAC_R45_PRIME_FORCE_REDRAW_WAKE','LILAC_R45_FIRST_PRESENT_TINY_PROOF','LILAC_R40_HANDOFF_FORCE_REDRAW','requestFrameProducerRedraw','r41HandoffPlaying')){if(-not$bridge.Contains($m)){throw "missing R45 bridge marker $m"}}
+          foreach($bad in @('copyTextureToTexture','focus-staged-gpu-copy','--disable-direct-composition','-32000','LILAC_R45_NATIVE_OFFSCREEN_FIRST_PRESENT_PRIME','LILAC_R45_FIRST_PRESENT_OFFSCREEN_PROOF')){if($bridge.Contains($bad)){throw "forbidden legacy path $bad"}}
+          Write-Host 'R45_RELEASE_PROTECTED_BYTES_OK changed=electron/libmpv-shared-main.cjs-only prime=2x2 r44Subtitle=byte-identical focusedWebGPU=byte-identical addon=byte-identical dll=byte-identical updater=byte-identical'
 
-      - name: Qualify eight first-Present-before-expose focus cycles
+      - name: Qualify eight tiny first-Present-before-full-expose focus cycles
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $env:LILAC_LIBMPV_PLAYER_ADDON=(Join-Path $PWD 'electron/lilac-libmpv-player-bridge.node')
           $env:LILAC_LIBMPV_DLL=(Join-Path $PWD 'electron/libmpv-2.dll')
-          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_OFFSCREEN_FIRST_PRESENT_RUNTIME_OK 180000
-          if($LASTEXITCODE-ne 0){throw "R45 first-Present runtime qualification exited $LASTEXITCODE"}
+          node scripts/r40-run-electron-gate.cjs scripts/r45-offscreen-prime-runtime-smoke.cjs R45_TINY_FIRST_PRESENT_RUNTIME_OK 180000
+          if($LASTEXITCODE-ne 0){throw "R45 tiny first-Present runtime qualification exited $LASTEXITCODE"}
 
       - name: Requalify protected R41 focused visual-commit handoff
         shell: powershell
@@ -179,7 +179,7 @@ jobs:
           if($existingExit-eq 0){throw 'R45 release already exists; refusing qualified asset replacement'}
           if($existingExit-ne 1){throw "R45 release existence probe failed exit=$existingExit"}
 
-          gh release create $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r45 first-Present black-flash guard' --notes 'R45 targets the remaining focus-to-blur black flash without changing steady playback cadence. The shipped R44 installer is reconstructed and pinned byte-for-byte, then only the shared main bridge is transformed. On blur the R33 owned native popup is moved offscreen, the existing R40 one-shot current-frame redraw is requested, and the popup remains offscreen until native presentedFrames proves a real Present occurred. A geometry guard keeps every pending-prime resync offscreen; an on-screen-before-Present observation is a hard hide/cancel violation. After the proof, the same already-presented HWND is moved to the video bounds. Refocus preserves the R41 live visual-commit handoff. CI requires eight repeated cycles with eight offscreen first-Present proofs, zero pre-Present exposure violations, zero timeouts/failures, accepted forced redraws, and then re-runs the protected R41 handoff. R44 subtitle prewarm/persistent HWND, focused direct WebGPU, native addon, libmpv DLL, R38 updater, and renderer bundle remain byte-identical. The separate subtle 23.976fps-on-144Hz display-phase judder investigation is intentionally not changed by R45.'
+          gh release create $env:R45_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title 'LilacAnime Libmpv 0.5.54 r45 tiny first-Present black-flash guard' --notes 'R45 targets the remaining focus-to-blur black flash without changing steady playback cadence. The shipped R44 installer is reconstructed and pinned byte-for-byte, then only the shared main bridge is transformed. On blur the R33 owned native popup is reduced to a 2x2 surface at the bottom-right of the real video rectangle, the existing R40 one-shot current-frame redraw is requested, and the popup remains 2x2 until native presentedFrames proves a real Present occurred. This avoids the DWM off-desktop occlusion behavior found on older Windows Server 2025 runner images while limiting any uninitialized pre-Present surface to two pixels by two pixels. A geometry guard prevents any pending prime from becoming full-size. Only after a proven Present is the same HWND expanded to the real video bounds. Refocus preserves the R41 live visual-commit handoff. CI requires eight repeated cycles with eight tiny-surface first-Present proofs, zero pre-Present full-size exposure violations, zero timeouts/failures, accepted forced redraws, and then re-runs the protected R41 handoff. R44 subtitle prewarm/persistent HWND, focused direct WebGPU, native addon, libmpv DLL, R38 updater, and renderer bundle remain byte-identical. The separate subtle 23.976fps-on-144Hz display-phase judder investigation is intentionally not changed by R45.'
           if($LASTEXITCODE-ne 0){throw 'R45 prerelease create failed'}
           gh release upload $env:R45_RELEASE_TAG "dist/$env:R45_INSTALLER_NAME" "dist/$env:R45_MANIFEST_NAME" --repo $env:GITHUB_REPOSITORY
           if($LASTEXITCODE-ne 0){throw 'R45 prerelease upload failed'}
@@ -196,7 +196,8 @@ jobs:
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $size=(Get-Item $exe).Length
           if($manifest.version-ne$env:R45_APP_VERSION-or$manifest.tag-ne$env:R45_RELEASE_TAG-or$manifest.releaseWorkflowSourceSha-ne$env:GITHUB_SHA-or$manifest.installerSha256-ne$hash-or[long]$manifest.installerSize-ne$size){throw 'R45 redownload identity/hash mismatch'}
-          foreach($flag in @('r45OffscreenFirstPresentQualified','r45FirstPresentProofQualified','r45NoPrePresentExposureViolations','r45ForcedRedrawQualified','r45R41LiveHandoffRequalified','r45R44SubtitleOverlayPreserved','r45ProtectedVideoPipelineBytesQualified')){if($manifest.$flag-ne$true){throw "R45 qualification flag missing $flag"}}
+          foreach($flag in @('r45TinyFirstPresentQualified','r45FirstPresentProofQualified','r45NoPrePresentFullExposureViolations','r45ForcedRedrawQualified','r45R41LiveHandoffRequalified','r45R44SubtitleOverlayPreserved','r45ProtectedVideoPipelineBytesQualified')){if($manifest.$flag-ne$true){throw "R45 qualification flag missing $flag"}}
+          if($manifest.r45PrimeSize-ne'2x2'){throw "R45 prime size mismatch $($manifest.r45PrimeSize)"}
           if($manifest.baseReleaseTag-ne$env:R44_RELEASE_TAG-or$manifest.baseInstallerSha256-ne$env:R44_INSTALLER_SHA256-or$manifest.baseManifestSha256-ne$env:R44_MANIFEST_SHA256){throw 'R45 pinned R44 baseline mismatch'}
 
           $rawTags=@(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')
