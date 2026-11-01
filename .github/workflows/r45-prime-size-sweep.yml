@@ -95,7 +95,9 @@ jobs:
             if($count-lt 1){throw "candidate smoke replacement missing: $($entry.Key)"}
             $source=$source.Replace([string]$entry.Key,[string]$entry.Value)
           }
-          $out=Join-Path $env:RUNNER_TEMP "r45-prime-$size-smoke.cjs"
+          # Keep the generated script beside the original smoke. Its ../electron and
+          # ../src relative requires are part of the qualification contract.
+          $out=Join-Path $PWD "scripts/r45-prime-$size-smoke.generated.cjs"
           [IO.File]::WriteAllText($out,$source,(New-Object Text.UTF8Encoding($false)))
           "R45_SWEEP_SMOKE=$out"|Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           node --check $out
