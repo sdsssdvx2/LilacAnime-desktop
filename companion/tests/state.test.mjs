@@ -48,3 +48,19 @@ test('rememberSubtitle skips an identical subtitle preference instead of rewriti
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('forgetSubtitle removes only the polluted episode preference', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lilac-companion-state-'));
+  const file = path.join(dir, 'state.json');
+  try {
+    const state = await new StateStore(file).load();
+    const anime = { provider: 'miruro', id: 'bleach', title: 'Bleach' };
+    await state.rememberSubtitle(anime, 1, { path: 'C:\\Subs\\Bleach_-_001.sync.vtt', kind: 'user' });
+    await state.rememberSubtitle(anime, 2, { path: 'C:\\Subs\\Bleach_-_001.sync.vtt', kind: 'user' });
+    assert.equal(await state.forgetSubtitle(anime, 2), true);
+    assert.ok(state.subtitlePreference(anime, 1));
+    assert.equal(state.subtitlePreference(anime, 2), null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
