@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMasterPlaylist, parseMediaPlaylist } from '../src/source/hls-probe.mjs';
 import { pickAnimeCandidate, pickEpisode } from '../src/source/provider-map.mjs';
-import { chooseBestSource, safeAutoSwitchDecision } from '../src/source/scout.mjs';
+import { chooseBestSource, safeAutoSwitchDecision, scanSources } from '../src/source/scout.mjs';
 
 test('master playlist parses and ranks 1080p ahead of 720p', () => {
   const master = `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1"\n720/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1"\n1080/index.m3u8`;
@@ -50,6 +50,26 @@ const source = (provider, height, bitrate, stability, failureRate = 0, mappingCo
       metrics: { stability, failureRate }
     }
   }
+});
+
+test('current playing source uses live playback evidence instead of re-resolving the provider episode', async () => {
+  let prepareCalls = 0;
+  const bridge = {
+    async titleVariants() { return []; },
+    async resolveTitles() { return []; },
+    async prepareEpisodeStream() { prepareCalls++; throw new Error('must not re-resolve current source'); }
+  };
+  const context = {
+    anime: { title: 'Sword of Coming' },
+    episode: { provider: 'reanime', number: 1 },
+    stream: { url: '' },
+    playback: { width: 1920, height: 1080, readyState: 4, bufferedAhead: 8, droppedVideoFrames: 0, totalVideoFrames: 500 }
+  };
+  const scan = await scanSources(bridge, context, { providers: ['reanime'], sampleCount: 1 });
+  assert.equal(prepareCalls, 0);
+  assert.equal(scan.results[0]?.ok, true);
+  assert.equal(scan.results[0]?.value?.probe?.quality?.height, 1080);
+  assert.equal(scan.decision?.selected?.provider, 'reanime');
 });
 
 test('unstable higher-quality source is rejected before quality ranking', () => {
