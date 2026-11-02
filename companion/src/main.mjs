@@ -99,7 +99,7 @@ async function chooseLocalSubtitleWithFallback(bridge, { anime, episode, episode
   let effectiveAliases = aliases;
   const candidates = localAliasCandidates({ anime, episode, episodeMeta, files }).map(item => item.query);
   let match = chooseSubtitleMatch({ anime, episode, episodeMeta, aliases: effectiveAliases, files, manual });
-  if (match.best || manual) return { match, aliases: effectiveAliases, fallback: [], candidates };
+  if (match.selected || manual) return { match, aliases: effectiveAliases, fallback: [], candidates };
 
   const fallback = await reverseResolveLocalAliases(bridge, {
     anime,
@@ -213,42 +213,49 @@ async function watch() {
     if (doneAt && Date.now() - doneAt < sourceCacheMs) return;
 
     const task = (async () => {
-      await sleep(800);
-      const start = await connection.bridge.playbackContext();
-      if (!start?.anime || sourceEpisodeKey(start) !== key) return;
-      console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
-      const quick = await scanSources(connection.bridge, start, { sampleCount: 1 });
-      printSourceScan('auto quick scan (all providers)', quick);
-      const deep = await deepScanTop(connection.bridge, quick, { count: 3, sampleCount: 3 });
-      printSourceScan('auto deep scan (top providers)', deep);
-      sourceDone.set(key, Date.now());
-      const selected = deep.decision?.selected;
-      const safety = safeAutoSwitchDecision(deep, start.episode.provider);
-      console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
+      let diagnosisConnection = null;
+      try {
+        await sleep(1200);
+        diagnosisConnection = await connectBridge({ launch: false });
+        const start = await diagnosisConnection.bridge.playbackContext();
+        if (!start?.anime || sourceEpisodeKey(start) !== key) return;
+        console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
+        const quick = await scanSources(diagnosisConnection.bridge, start, { sampleCount: 1, concurrency: 2 });
+        printSourceScan('auto quick scan (all providers)', quick);
+        const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3 });
+        printSourceScan('auto deep scan (top providers)', deep);
+        const selected = deep.decision?.selected;
+        const safety = safeAutoSwitchDecision(deep, start.episode.provider);
+        const cacheTime = selected ? Date.now() : Date.now() - sourceCacheMs + 5 * 60 * 1000;
+        sourceDone.set(key, cacheTime);
+        console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
 
-      const live = await connection.bridge.playbackContext();
-      if (!live?.anime || sourceEpisodeKey(live) !== key) return;
-      if (live.episode?.provider !== start.episode?.provider) {
-        console.log(`[companion] source switch skipped: provider changed during scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
-        return;
-      }
-      if (!safety.switch) return;
-      if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
-        console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
-        return;
-      }
-      if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return;
+        const live = await diagnosisConnection.bridge.playbackContext();
+        if (!live?.anime || sourceEpisodeKey(live) !== key) return;
+        if (live.episode?.provider !== start.episode?.provider) {
+          console.log(`[companion] source switch skipped: provider changed during scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
+          return;
+        }
+        if (!safety.switch) return;
+        if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
+          console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
+          return;
+        }
+        if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return;
 
-      console.log(`[companion] auto-switching source: ${live.episode.provider} -> ${safety.selected.provider} (${safety.reason})`);
-      sourceSwitchGuard = { episode: Number(live.episode.number), until: Date.now() + 60000 };
-      await connection.bridge.switchToResolvedSource(safety.selected, {
-        title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
-      });
-      handledRef = '';
-      lastAttachedPath = '';
+        console.log(`[companion] auto-switching source: ${live.episode.provider} -> ${safety.selected.provider} (${safety.reason})`);
+        sourceSwitchGuard = { episode: Number(live.episode.number), until: Date.now() + 60000 };
+        await diagnosisConnection.bridge.switchToResolvedSource(safety.selected, {
+          title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
+        });
+        handledRef = '';
+        lastAttachedPath = '';
+      } finally {
+        try { diagnosisConnection?.session?.close(); } catch {}
+      }
     })().catch(error => {
       console.warn(`[companion] source scan failed: ${error?.message || error}`);
-      sourceDone.set(key, Date.now());
+      sourceDone.set(key, Date.now() - sourceCacheMs + 5 * 60 * 1000);
     }).finally(() => sourceTasks.delete(key));
 
     sourceTasks.set(key, task);
@@ -280,17 +287,21 @@ async function watch() {
       const context = await connection.bridge.playbackContext();
       if (!context?.anime || !context?.episode?.number) { await sleep(900); continue; }
       const ref = playbackRef(state, context);
-      startSourceDiagnosis(context);
 
       if (context.subtitle?.source === 'user' && context.subtitle.path && context.subtitle.path !== lastAttachedPath && await exists(context.subtitle.path)) {
         await state.rememberSubtitle(context.anime, context.episode.number, { path: context.subtitle.path, kind: 'user' });
         handledRef = ref;
         console.log(`[companion] remembered user subtitle: ${context.subtitle.path}`);
+        startSourceDiagnosis(context);
         await sleep(900);
         continue;
       }
 
-      if (ref === handledRef) { await sleep(900); continue; }
+      if (ref === handledRef) {
+        startSourceDiagnosis(context);
+        await sleep(900);
+        continue;
+      }
       await sleep(650);
       const stable = await connection.bridge.playbackContext();
       if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
@@ -317,14 +328,19 @@ async function watch() {
         if (resolved.candidates.length) console.log(`[companion] local alias candidates tried: ${resolved.candidates.slice(0, 10).join(' | ')}`);
         if (match.best) console.log(`[companion] local subtitle not auto-applied (${match.confidence}, score ${match.best.score}): ${match.best.file.path}`);
         else console.log('[companion] no local subtitle candidate; Lilac keeps its normal subtitle flow');
+        startSourceDiagnosis(stable);
         continue;
       }
 
-      if (stable.subtitle?.source === 'user' && path.resolve(stable.subtitle.path || '') === path.resolve(match.selected.path)) continue;
+      if (stable.subtitle?.source === 'user' && path.resolve(stable.subtitle.path || '') === path.resolve(match.selected.path)) {
+        startSourceDiagnosis(stable);
+        continue;
+      }
       const prepared = await prepareSubtitle(match.selected.path);
       await connection.bridge.attachPreparedSubtitle(prepared, { label: `Lilac Companion · ${path.basename(match.selected.path)}` });
       lastAttachedPath = match.selected.path;
       console.log(`[companion] auto-applied local subtitle (${match.confidence}): ${match.selected.path}`);
+      startSourceDiagnosis(stable);
     } catch (error) {
       console.error(`[companion] ${error?.message || error}`);
       try { connection?.session?.close(); } catch {}
