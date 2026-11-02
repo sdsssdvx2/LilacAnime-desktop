@@ -9,6 +9,7 @@ import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { scanSources, deepScanTop } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
 
+const VERSION = '0.1.0';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
@@ -181,7 +182,8 @@ async function watch() {
   }
 }
 
-if (command === 'doctor') await doctor();
+if (command === 'version' || command === '--version' || command === '-v') console.log(`Lilac Companion ${VERSION}`);
+else if (command === 'doctor') await doctor();
 else if (command === 'source-doctor') await sourceDoctor();
 else if (command === 'watch') await watch();
 else throw new Error(`Unknown command: ${command}`);
