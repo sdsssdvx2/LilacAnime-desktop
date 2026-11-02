@@ -12,6 +12,7 @@ import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { SourceDecisionCache } from './source/decision-cache.mjs';
+import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { StateStore } from './state.mjs';
 
 const VERSION = '0.1.0';
@@ -21,6 +22,7 @@ const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
 const cdpPort = Number(process.env.LILAC_CDP_PORT || 9223);
 const sourceAutoMode = String(process.env.LILAC_SOURCE_AUTO || 'safe').toLowerCase();
 const sourceDecisionCacheMs = Number(process.env.LILAC_SOURCE_DECISION_CACHE_MS || process.env.LILAC_SOURCE_CACHE_MS || 15 * 60 * 1000);
+const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_MS || 2 * 60 * 1000);
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 25);
 
@@ -281,6 +283,14 @@ async function watch() {
           return;
         }
         printSourceScan('auto quick scan (all providers)', quick);
+
+        const quickSafety = safeAutoSwitchDecision(quick, start.episode.provider);
+        if (afterQuick.episode?.provider === start.episode?.provider && allowQuickAutoSwitch(quick, quickSafety)) {
+          console.log(`[companion] source recommendation (quick): ${quick.decision?.selected?.provider || 'none'} · ${quickSafety.reason}`);
+          sourceDecisions.remember(key, quick, Date.now(), sourceQuickDecisionCacheMs);
+          if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason)) return;
+        }
+
         const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3 });
         const afterDeep = await diagnosisConnection.bridge.playbackContext().catch(() => null);
         if (!afterDeep?.anime || sourceEpisodeKey(afterDeep) !== key) {
