@@ -12,7 +12,8 @@ const required = [
   'linkkfSearch',
   'linkkfEpisodes',
   'attachSubtitle',
-  'playbackContext'
+  'playbackContext',
+  'resolveIntoPlayer'
 ];
 
 const { session, target } = await connectLilacCdp({ port });
