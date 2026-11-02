@@ -12,7 +12,15 @@ async function resolveProviderEpisode(bridge, provider, context, aliases) {
   const wanted = context.episode.number;
   if (provider === context.episode.provider) {
     const stream = await bridge.prepareEpisodeStream(context.episode);
-    return { provider, anime: context.anime, episode: context.episode, stream, mapping: 'current', mappingConfidence: 'high' };
+    return {
+      provider,
+      anime: context.anime,
+      episode: context.episode,
+      seriesEpisodes: Array.isArray(context.seriesEpisodes) ? context.seriesEpisodes : [],
+      stream,
+      mapping: 'current',
+      mappingConfidence: 'high'
+    };
   }
 
   const queries = [...new Set([context.anime.title, context.anime.title_english, context.anime.romaji, ...aliases].filter(Boolean))].slice(0, 5);
@@ -30,7 +38,15 @@ async function resolveProviderEpisode(bridge, provider, context, aliases) {
   if (!episode) throw new Error(`episode ${wanted} not found`);
   const stream = await bridge.prepareEpisodeStream(episode);
   if (!stream?.url) throw new Error('stream URL missing');
-  return { provider, anime: picked.selected, episode, stream, mapping: 'matched', mappingConfidence: picked.confidence };
+  return {
+    provider,
+    anime: picked.selected,
+    episode,
+    seriesEpisodes: episodes,
+    stream,
+    mapping: 'matched',
+    mappingConfidence: picked.confidence
+  };
 }
 
 async function probeResolved(resolved, sampleCount) {
