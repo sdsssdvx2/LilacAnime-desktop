@@ -182,7 +182,7 @@ function liveFallbackProbe(resolved) {
   };
 }
 
-async function probeResolved(resolved, sampleCount) {
+export async function probeResolved(resolved, sampleCount) {
   const url = resolved.stream?.url || '';
   if (!/^https?:\/\//i.test(url)) {
     const fallback = liveFallbackProbe(resolved);
@@ -191,13 +191,24 @@ async function probeResolved(resolved, sampleCount) {
   }
   const headers = streamHeaders(resolved.stream);
   if (/\.m3u8(?:$|\?)/i.test(url)) {
-    const probe = await probeHls(url, { headers, sampleCount });
-    if (!probe.quality?.height && resolved.live?.height) {
-      probe.quality.width = resolved.live.width || probe.quality.width;
-      probe.quality.height = resolved.live.height;
-      probe.quality.duration = probe.quality.duration || resolved.live.duration || null;
+    try {
+      const probe = await probeHls(url, { headers, sampleCount });
+      if (!probe.quality?.height && resolved.live?.height) {
+        probe.quality.width = resolved.live.width || probe.quality.width;
+        probe.quality.height = resolved.live.height;
+        probe.quality.duration = probe.quality.duration || resolved.live.duration || null;
+      }
+      return { ...resolved, probe, kind: 'hls' };
+    } catch (error) {
+      // Miruro and some protected HLS CDNs accept the real Electron/HLS.js player
+      // but reject Node fetch probes (often HTTP 403). If this is the source that
+      // is already playing, its live video metrics are stronger evidence than a
+      // failed out-of-band request. Non-current candidates have no live evidence
+      // and still fail normally, so this cannot manufacture a fake usable source.
+      const fallback = liveFallbackProbe(resolved);
+      if (fallback) return { ...resolved, probe: fallback, kind: 'live', note: `HLS probe blocked; using live playback (${error?.message || error})` };
+      throw error;
     }
-    return { ...resolved, probe, kind: 'hls' };
   }
   try {
     const probe = await probeDirect(url, { headers, sampleCount, live: resolved.live });
