@@ -36,7 +36,8 @@ async function connectBridge({ launch = true } = {}) {
     return await readyConnection();
   } catch (first) {
     if (!launch) throw first;
-    await launchLilacForCompanion(cdpPort);
+    const resolved = await launchLilacForCompanion(cdpPort);
+    console.log(`[companion] launching Lilac (${resolved.source}): ${resolved.path}`);
     let last = first;
     for (let i = 0; i < 40; i++) {
       await sleep(500);
@@ -142,7 +143,6 @@ async function watch() {
       if (!context?.anime || !context?.episode?.number) { await sleep(900); continue; }
       const ref = playbackRef(state, context);
 
-      // A user subtitle already chosen inside Lilac always wins. Remember it when it is a real local file.
       if (context.subtitle?.source === 'user' && context.subtitle.path && context.subtitle.path !== lastAttachedPath && await exists(context.subtitle.path)) {
         await state.rememberSubtitle(context.anime, context.episode.number, { path: context.subtitle.path, kind: 'user' });
         handledRef = ref;
@@ -152,7 +152,6 @@ async function watch() {
       }
 
       if (ref === handledRef) { await sleep(900); continue; }
-      // Let Lilac finish its own episode transition first; then local subtitles may override online/provider subtitles.
       await sleep(650);
       const stable = await connection.bridge.playbackContext();
       if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
