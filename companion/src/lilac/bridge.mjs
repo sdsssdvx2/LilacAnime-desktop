@@ -213,14 +213,18 @@ export class LilacBridge {
     })()`);
   }
 
-  async switchToResolvedSource(resolved, { title = '', image = '' } = {}) {
+  async switchToResolvedSource(resolved, { title = '', image = '', resumeSeconds = 0, resumeDuration = 0 } = {}) {
+    const seconds = Math.max(0, Number(resumeSeconds || 0));
+    const duration = Math.max(0, Number(resumeDuration || 0));
     const payload = JSON.stringify({
       provider: resolved?.provider || resolved?.episode?.provider || '',
       anime: resolved?.anime || {},
       episode: resolved?.episode || {},
       seriesEpisodes: Array.isArray(resolved?.seriesEpisodes) ? resolved.seriesEpisodes : [],
       title: String(title || ''),
-      image: String(image || '')
+      image: String(image || ''),
+      resumeSeconds: seconds,
+      resumeProgress: duration > 0 ? Math.min(94, seconds / duration * 100) : 0
     });
     return this.session.evaluate(`(async () => {
       if (typeof resolveIntoPlayer !== 'function') throw new Error('resolveIntoPlayer is unavailable');
@@ -235,13 +239,15 @@ export class LilacBridge {
         image: data.image || '',
         anime,
         resolveKind: data.provider === 'linkkf' ? 'linkkf' : undefined,
-        seriesEpisodes: Array.isArray(data.seriesEpisodes) ? data.seriesEpisodes : []
+        seriesEpisodes: Array.isArray(data.seriesEpisodes) ? data.seriesEpisodes : [],
+        resumeSeconds: Number(data.resumeSeconds || 0),
+        resumeProgress: Number(data.resumeProgress || 0)
       };
       const resolver = () => data.provider === 'linkkf'
         ? window.lilac.linkkfResolve(ep)
         : window.lilac.providerResolve(ep);
       await resolveIntoPlayer(resolver, displayTitle + ' · ' + (ep.name || number + '화'), context, displayTitle, number);
-      return { ok: true, provider: data.provider, episode: number, seriesEpisodes: context.seriesEpisodes.length };
+      return { ok: true, provider: data.provider, episode: number, resumeSeconds: context.resumeSeconds, seriesEpisodes: context.seriesEpisodes.length };
     })()`, { timeoutMs: 20000 });
   }
 }
