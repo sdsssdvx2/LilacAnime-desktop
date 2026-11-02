@@ -33,10 +33,16 @@ jobs:
         shell: bash
         run: |
           node --check src/main.mjs
+          node --check src/state.mjs
+          node --check src/normalize.mjs
           node --check src/lilac/cdp.mjs
           node --check src/lilac/bridge.mjs
+          node --check src/lilac/launcher.mjs
           node --check src/subtitles/indexer.mjs
           node --check src/subtitles/matcher.mjs
           node --check src/subtitles/prepare.mjs
+          node --check src/source/hls-probe.mjs
+          node --check src/source/provider-map.mjs
+          node --check src/source/scout.mjs
       - name: Tests
         run: npm test
