@@ -42,6 +42,18 @@ export class LilacBridge {
       const s = c.stream || {};
       const sub = typeof currentSubtitle !== 'undefined' && currentSubtitle ? currentSubtitle : {};
       const seriesEpisodes = Array.isArray(c.seriesEpisodes) ? c.seriesEpisodes : [];
+      const video = document.querySelector('#video');
+      let quality = {};
+      try { quality = typeof video?.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : {}; } catch {}
+      let bufferedAhead = 0;
+      try {
+        if (video && video.buffered && video.buffered.length) {
+          const now = Number(video.currentTime || 0);
+          for (let i = 0; i < video.buffered.length; i++) {
+            if (video.buffered.start(i) <= now && video.buffered.end(i) >= now) { bufferedAhead = Math.max(0, video.buffered.end(i) - now); break; }
+          }
+        }
+      } catch {}
       return {
         anime: {
           provider: a.provider || '', id: a.id ?? null, mal_id: a.mal_id ?? null,
@@ -56,10 +68,20 @@ export class LilacBridge {
           kind: e.kind || '', type: e.type || ''
         },
         seriesEpisodes,
-        stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null },
+        stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
-        playing: Boolean(document.querySelector('#video')),
-        currentTime: Number(document.querySelector('#video')?.currentTime || 0)
+        playing: Boolean(video),
+        currentTime: Number(video?.currentTime || 0),
+        playback: {
+          width: Number(video?.videoWidth || 0) || null,
+          height: Number(video?.videoHeight || 0) || null,
+          duration: Number.isFinite(Number(video?.duration)) ? Number(video.duration) : null,
+          readyState: Number(video?.readyState || 0),
+          networkState: Number(video?.networkState || 0),
+          bufferedAhead,
+          droppedVideoFrames: Number(quality?.droppedVideoFrames || 0),
+          totalVideoFrames: Number(quality?.totalVideoFrames || 0)
+        }
       };
     })()`);
   }
