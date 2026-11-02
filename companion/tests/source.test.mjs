@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseMasterPlaylist, parseMediaPlaylist } from '../src/source/hls-probe.mjs';
 import { pickAnimeCandidate, pickEpisode } from '../src/source/provider-map.mjs';
 import { chooseBestSource, safeAutoSwitchDecision, scanSources } from '../src/source/scout.mjs';
+import { bestAlignedSequenceFrame } from '../src/source/visual-quality.mjs';
 
 test('master playlist parses and ranks 1080p ahead of 720p', () => {
   const master = `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1"\n720/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1"\n1080/index.m3u8`;
@@ -70,6 +71,32 @@ test('current playing source uses live playback evidence instead of re-resolving
   assert.equal(scan.results[0]?.ok, true);
   assert.equal(scan.results[0]?.value?.probe?.quality?.height, 1080);
   assert.equal(scan.decision?.selected?.provider, 'reanime');
+});
+
+test('visual alignment finds the same frame when another source is shifted by three seconds', () => {
+  const anchor = Buffer.from([0, 8, 24, 50, 90, 145, 205, 250]);
+  const wrong = Buffer.from([250, 205, 145, 90, 50, 24, 8, 0]);
+  const frames = Array.from({ length: 17 }, () => Buffer.from(wrong));
+  frames[11] = Buffer.from(anchor); // start 92, target 100 => index 11 is +3 seconds.
+  const aligned = bestAlignedSequenceFrame(anchor, { frames, start: 92, fps: 1 }, 100, { maxOffset: 8 });
+  assert.ok(aligned);
+  assert.equal(aligned.offset, 3);
+  assert.ok(aligned.similarity > 0.99);
+});
+
+test('visual alignment honors the first-sample offset on later samples', () => {
+  const anchor = Buffer.from([0, 8, 24, 50, 90, 145, 205, 250]);
+  const wrong = Buffer.from([250, 205, 145, 90, 50, 24, 8, 0]);
+  const frames = Array.from({ length: 17 }, () => Buffer.from(wrong));
+  frames[1] = Buffer.from(anchor);  // -7 seconds: tempting repeated scene.
+  frames[11] = Buffer.from(anchor); // +3 seconds: expected timeline offset.
+  const aligned = bestAlignedSequenceFrame(anchor, { frames, start: 92, fps: 1 }, 100, {
+    expectedOffset: 3,
+    maxOffset: 8,
+    offsetTolerance: 2
+  });
+  assert.ok(aligned);
+  assert.equal(aligned.offset, 3);
 });
 
 test('unstable higher-quality source is rejected before quality ranking', () => {
