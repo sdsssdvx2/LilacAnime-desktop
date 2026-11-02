@@ -89,6 +89,81 @@ export class CdpSession {
   }
 }
 
+function debuggerHttpBase(webSocketUrl) {
+  const parsed = new URL(webSocketUrl);
+  const protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+  return `${protocol}//${parsed.host}`;
+}
+
+async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
+  const chunks = [];
+  try {
+    while (true) {
+      const part = await session.send('IO.read', { handle }, { timeoutMs });
+      if (part.data) chunks.push(part.base64Encoded ? Buffer.from(part.data, 'base64') : Buffer.from(part.data));
+      if (part.eof) break;
+    }
+  } finally {
+    await session.send('IO.close', { handle }, { timeoutMs: 1500 }).catch(() => {});
+  }
+  return Buffer.concat(chunks);
+}
+
+export async function createAuxiliaryCdpTarget(parentSession, { url = 'about:blank', timeoutMs = 2500 } = {}) {
+  const base = debuggerHttpBase(parentSession.webSocketUrl);
+  const response = await fetch(`${base}/json/new?${encodeURIComponent(url)}`, {
+    method: 'PUT',
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!response.ok) throw new Error(`CDP auxiliary target HTTP ${response.status}`);
+  const target = await response.json();
+  if (!target?.id || !target?.webSocketDebuggerUrl) throw new Error('CDP auxiliary target is missing debugger metadata');
+  const session = new CdpSession(target.webSocketDebuggerUrl);
+  await session.connect({ timeoutMs });
+  const close = async () => {
+    session.close();
+    await fetch(`${base}/json/close/${encodeURIComponent(target.id)}`, { signal: AbortSignal.timeout(1500) }).catch(() => {});
+  };
+  return { session, target, close };
+}
+
+export async function loadCdpNetworkResource(session, url, {
+  headers = {},
+  userAgent = '',
+  timeoutMs = 8000
+} = {}) {
+  await session.send('Network.enable', {}, { timeoutMs: 2000 });
+  if (headers && Object.keys(headers).length) {
+    await session.send('Network.setExtraHTTPHeaders', { headers }, { timeoutMs: 2000 });
+  }
+  if (userAgent) {
+    await session.send('Network.setUserAgentOverride', { userAgent }, { timeoutMs: 2000 });
+  }
+  const frameTree = await session.send('Page.getFrameTree', {}, { timeoutMs: 2000 });
+  const frameId = frameTree?.frameTree?.frame?.id;
+  const started = performance.now();
+  const result = await session.send('Network.loadNetworkResource', {
+    ...(frameId ? { frameId } : {}),
+    url,
+    options: { disableCache: true, includeCredentials: true }
+  }, { timeoutMs });
+  const ended = performance.now();
+  const resource = result?.resource || {};
+  const status = Number(resource.httpStatusCode || 0);
+  if (!resource.success || status < 200 || status >= 300) {
+    throw new Error(status ? `HTTP ${status}` : (resource.netErrorName || 'CDP network resource load failed'));
+  }
+  const body = resource.stream ? await readCdpStream(session, resource.stream, { timeoutMs }) : Buffer.alloc(0);
+  return {
+    body,
+    status,
+    headers: resource.headers || {},
+    bytes: body.length,
+    totalMs: ended - started,
+    mbps: body.length > 0 && ended > started ? (body.length * 8) / ((ended - started) / 1000) / 1_000_000 : 0
+  };
+}
+
 export async function discoverLilacTarget({ host = '127.0.0.1', port = 9223 } = {}) {
   const response = await fetch(`http://${host}:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
   if (!response.ok) throw new Error(`CDP discovery HTTP ${response.status}`);
