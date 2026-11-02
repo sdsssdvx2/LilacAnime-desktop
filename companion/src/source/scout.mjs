@@ -20,13 +20,17 @@ function compactIdentity(value = '') {
 }
 
 function seriesMappingKey(provider, anime = {}) {
-  const identity = Number(anime.anilistId || 0)
+  const externalIdentity = Number(anime.anilistId || 0)
     ? `anilist:${Number(anime.anilistId)}`
     : Number(anime.malId || 0)
       ? `mal:${Number(anime.malId)}`
       : /^\d+$/.test(String(anime.mal_id || ''))
         ? `mal:${anime.mal_id}`
-        : compactIdentity(anime.title_english || anime.romaji || anime.title || '');
+        : '';
+  const fallbackIdentity = compactIdentity(anime.title_english || anime.romaji || anime.title || '');
+  const identity = externalIdentity || (fallbackIdentity
+    ? `${fallbackIdentity}|season:${String(anime.season || '')}|year:${String(anime.year || '')}`
+    : '');
   return identity ? `${provider}|${identity}` : '';
 }
 
@@ -269,6 +273,7 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
   const bestStable = Boolean(bestItem?.stable);
   const currentStable = Boolean(currentItem?.stable);
   const bestStability = Number(bestProbe.metrics?.stability || 0);
+  const currentStability = Number(currentProbe.metrics?.stability || 0);
 
   if (!bestStable || bestStability < 80) return { switch: false, reason: 'winner-not-stable-enough', selected };
 
@@ -288,15 +293,24 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
     return { switch: true, reason: 'decisive-bitrate-quality-win', selected };
   }
 
+  const comparable = visuallyComparableResolutions(bestHeight, currentHeight);
+  const currentHasDecisiveQualityEdge = clearResolutionAdvantage(currentProbe, bestProbe)
+    || decisiveBitrateQualityAdvantage(currentProbe, bestProbe);
+  if (comparable && !currentHasDecisiveQualityEdge
+      && bestStability >= 95 && currentStability <= 85
+      && bestStability - currentStability >= 12) {
+    return { switch: true, reason: 'decisive-stability-win', selected };
+  }
+
   if (scan.visual?.confidence === 'high'
       && scan.visual?.selectedProvider === selected.provider
-      && visuallyComparableResolutions(bestHeight, currentHeight)) {
+      && comparable) {
     return { switch: true, reason: 'visual-quality-win', selected };
   }
 
   return {
     switch: false,
-    reason: scan.visual?.reason || (visuallyComparableResolutions(bestHeight, currentHeight)
+    reason: scan.visual?.reason || (comparable
       ? 'near-resolution-needs-visual-evidence'
       : 'quality-win-not-large-enough'),
     selected
