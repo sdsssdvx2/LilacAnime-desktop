@@ -6,6 +6,7 @@ import { compareVisualSources } from './visual-quality.mjs';
 import {
   clearResolutionAdvantage,
   compareProbeQuality,
+  decisiveBitrateQualityAdvantage,
   descriptiveQualityScore,
   visuallyComparableResolutions
 } from './quality-policy.mjs';
@@ -281,6 +282,10 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
 
   if (clearResolutionAdvantage(bestProbe, currentProbe)) {
     return { switch: true, reason: 'clear-resolution-win', selected };
+  }
+
+  if (decisiveBitrateQualityAdvantage(bestProbe, currentProbe)) {
+    return { switch: true, reason: 'decisive-bitrate-quality-win', selected };
   }
 
   if (scan.visual?.confidence === 'high'
