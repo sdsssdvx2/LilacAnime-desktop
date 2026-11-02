@@ -15,7 +15,8 @@ export class LilacBridge {
       linkkfEpisodes: typeof window.lilac?.linkkfEpisodes === 'function',
       attachSubtitle: typeof attachSubtitle === 'function',
       playbackContext: typeof currentPlaybackContext !== 'undefined',
-      preferAiSubtitle: typeof preferAiSubtitle === 'function'
+      preferAiSubtitle: typeof preferAiSubtitle === 'function',
+      resolveIntoPlayer: typeof resolveIntoPlayer === 'function'
     }))()`);
   }
 
@@ -49,8 +50,9 @@ export class LilacBridge {
         },
         episode: {
           provider: e.provider || '', id: e.id ?? null, number: Number(e.number || 0) || null,
-          name: e.name || '', url: e.url || '', animeId: e.animeId ?? null,
-          postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || ''
+          name: e.name || '', title: e.title || '', url: e.url || '', animeId: e.animeId ?? null,
+          postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || '',
+          kind: e.kind || '', type: e.type || ''
         },
         stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
@@ -118,6 +120,9 @@ export class LilacBridge {
     return this.session.evaluate(`(() => {
       if (typeof attachSubtitle !== 'function') throw new Error('attachSubtitle is unavailable');
       const data = ${payload};
+      // Lilac starts its online subtitle search in parallel with video resolving. Invalidate that in-flight
+      // search before attaching the user's local subtitle so a later Anissia/Kairan/Csora result cannot overwrite it.
+      if (typeof subtitleSearchId !== 'undefined') ++subtitleSearchId;
       const old = Array.isArray(window.__lilacCompanionSubtitleUrls) ? window.__lilacCompanionSubtitleUrls : [];
       for (const url of old) { try { URL.revokeObjectURL(url); } catch {} }
       const vttUrl = URL.createObjectURL(new Blob([data.vtt], { type: 'text/vtt;charset=utf-8' }));
@@ -140,6 +145,37 @@ export class LilacBridge {
         companion: true
       });
       return { ok: true, path: data.path, ass: Boolean(data.ass), fonts: data.fonts.length };
+    })()`);
+  }
+
+  async switchToResolvedSource(resolved, { title = '', image = '' } = {}) {
+    const payload = JSON.stringify({
+      provider: resolved?.provider || resolved?.episode?.provider || '',
+      anime: resolved?.anime || {},
+      episode: resolved?.episode || {},
+      title: String(title || ''),
+      image: String(image || '')
+    });
+    return this.session.evaluate(`(async () => {
+      if (typeof resolveIntoPlayer !== 'function') throw new Error('resolveIntoPlayer is unavailable');
+      const data = ${payload};
+      const ep = data.episode || {};
+      const anime = data.anime || {};
+      const number = Number(ep.number || 0) || 1;
+      const displayTitle = data.title || anime.title || anime.title_english || 'Anime';
+      const context = {
+        episode: ep,
+        subtitleTitle: displayTitle,
+        image: data.image || '',
+        anime,
+        resolveKind: data.provider === 'linkkf' ? 'linkkf' : undefined,
+        seriesEpisodes: []
+      };
+      const resolver = () => data.provider === 'linkkf'
+        ? window.lilac.linkkfResolve(ep)
+        : window.lilac.providerResolve(ep);
+      await resolveIntoPlayer(resolver, displayTitle + ' · ' + (ep.name || number + '화'), context, displayTitle, number);
+      return { ok: true, provider: data.provider, episode: number };
     })()`);
   }
 }
