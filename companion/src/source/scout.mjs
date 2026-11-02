@@ -94,7 +94,7 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
       return { provider, ok: false, error: error?.message || String(error) };
     }
   }));
-  return { aliases, results: settled, decision: chooseBestSource(settled) };
+  return { context, aliases, results: settled, decision: chooseBestSource(settled) };
 }
 
 export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3 } = {}) {
