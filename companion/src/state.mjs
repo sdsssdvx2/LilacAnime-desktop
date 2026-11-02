@@ -59,8 +59,13 @@ export class StateStore {
     const key = this.animeKey(anime), ep = String(Number(episode) || episode);
     this.data.subtitlePreferences ||= {};
     this.data.subtitlePreferences[key] ||= {};
+    const previous = this.data.subtitlePreferences[key][ep] || null;
+    const nextPath = String(value?.path || '');
+    const nextKind = String(value?.kind || 'user');
+    if (previous && String(previous.path || '') === nextPath && String(previous.kind || 'user') === nextKind) return false;
     this.data.subtitlePreferences[key][ep] = { ...value, updatedAt: Date.now() };
     await this.save();
+    return true;
   }
 
   async touchRecent(anime, episode) {
