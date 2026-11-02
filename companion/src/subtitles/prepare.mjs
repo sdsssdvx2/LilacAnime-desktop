@@ -35,10 +35,11 @@ function htmlEntities(text) {
 }
 
 function cleanCueText(text) {
-  return htmlEntities(String(text || ''))
+  const stripped = String(text || '')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
-    .replace(/\r/g, '')
+    .replace(/\r/g, '');
+  return htmlEntities(stripped)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
