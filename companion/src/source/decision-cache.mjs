@@ -9,17 +9,18 @@ export class SourceDecisionCache {
   get(key, now = Date.now()) {
     const entry = this.decisions.get(key);
     if (!entry) return null;
-    if (now - Number(entry.at || 0) >= this.ttlMs) {
+    const ttl = Math.max(1000, Number(entry.ttlMs || this.ttlMs));
+    if (now - Number(entry.at || 0) >= ttl) {
       this.decisions.delete(key);
       return null;
     }
     return entry;
   }
 
-  remember(key, scan, now = Date.now()) {
+  remember(key, scan, now = Date.now(), ttlMs = this.ttlMs) {
     const selected = scan?.decision?.selected || null;
     if (!key || !selected?.provider) return null;
-    const entry = { at: now, scan };
+    const entry = { at: now, ttlMs: Math.max(1000, Number(ttlMs) || this.ttlMs), scan };
     this.decisions.set(key, entry);
     this.retryAfter.delete(key);
     return entry;
