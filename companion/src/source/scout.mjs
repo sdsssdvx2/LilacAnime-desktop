@@ -1,6 +1,7 @@
 import { animeAliases } from '../subtitles/matcher.mjs';
 import { PROVIDERS, pickAnimeCandidate, pickEpisode } from './provider-map.mjs';
 import { probeHls } from './hls-probe.mjs';
+import { probeHlsViaCdp } from './browser-hls-probe.mjs';
 import { probeDirect } from './direct-probe.mjs';
 import { compareVisualSources } from './visual-quality.mjs';
 import {
@@ -182,7 +183,10 @@ function liveFallbackProbe(resolved) {
   };
 }
 
-export async function probeResolved(resolved, sampleCount) {
+export async function probeResolved(resolved, sampleCount, {
+  browserSession = null,
+  browserHlsProbe = probeHlsViaCdp
+} = {}) {
   const url = resolved.stream?.url || '';
   if (!/^https?:\/\//i.test(url)) {
     const fallback = liveFallbackProbe(resolved);
@@ -200,11 +204,21 @@ export async function probeResolved(resolved, sampleCount) {
       }
       return { ...resolved, probe, kind: 'hls' };
     } catch (error) {
-      // Miruro and some protected HLS CDNs accept the real Electron/HLS.js player
-      // but reject Node fetch probes (often HTTP 403). If this is the source that
-      // is already playing, its live video metrics are stronger evidence than a
-      // failed out-of-band request. Non-current candidates have no live evidence
-      // and still fail normally, so this cannot manufacture a fake usable source.
+      if (resolved.provider === 'miruro' && browserSession && typeof browserHlsProbe === 'function') {
+        try {
+          const probe = await browserHlsProbe(browserSession, url, { headers, sampleCount });
+          if (!probe.quality?.height && resolved.live?.height) {
+            probe.quality.width = resolved.live.width || probe.quality.width;
+            probe.quality.height = resolved.live.height;
+            probe.quality.duration = probe.quality.duration || resolved.live.duration || null;
+          }
+          return { ...resolved, probe, kind: 'hls-browser', note: `Node HLS probe blocked; browser probe succeeded (${error?.message || error})` };
+        } catch (browserError) {
+          const fallback = liveFallbackProbe(resolved);
+          if (fallback) return { ...resolved, probe: fallback, kind: 'live', note: `HLS probes blocked; using live playback (${error?.message || error}; browser: ${browserError?.message || browserError})` };
+          throw browserError;
+        }
+      }
       const fallback = liveFallbackProbe(resolved);
       if (fallback) return { ...resolved, probe: fallback, kind: 'live', note: `HLS probe blocked; using live playback (${error?.message || error})` };
       throw error;
@@ -365,7 +379,7 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
   const settledOrdered = await mapLimit(ordered, concurrency, async provider => {
     try {
       const resolved = await resolveProviderEpisode(bridge, provider, context, effectiveAliases);
-      const value = await probeResolved(resolved, sampleCount);
+      const value = await probeResolved(resolved, sampleCount, { browserSession: bridge.session || null });
       return { provider, ok: true, value };
     } catch (error) {
       return { provider, ok: false, error: error?.message || String(error) };
