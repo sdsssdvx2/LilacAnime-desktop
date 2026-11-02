@@ -10,6 +10,48 @@ import {
   visuallyComparableResolutions
 } from './quality-policy.mjs';
 
+const providerMappingCache = new Map();
+const providerMappingCacheMs = 30 * 60 * 1000;
+const providerMissCacheMs = 10 * 60 * 1000;
+
+function compactIdentity(value = '') {
+  return String(value || '').normalize('NFKC').toLowerCase().replace(/[\s\-_:·.,!?'"()[\]~]+/g, '');
+}
+
+function seriesMappingKey(provider, anime = {}) {
+  const identity = Number(anime.anilistId || 0)
+    ? `anilist:${Number(anime.anilistId)}`
+    : Number(anime.malId || 0)
+      ? `mal:${Number(anime.malId)}`
+      : /^\d+$/.test(String(anime.mal_id || ''))
+        ? `mal:${anime.mal_id}`
+        : compactIdentity(anime.title_english || anime.romaji || anime.title || '');
+  return identity ? `${provider}|${identity}` : '';
+}
+
+function cachedProviderMapping(provider, anime) {
+  const key = seriesMappingKey(provider, anime);
+  if (!key) return null;
+  const cached = providerMappingCache.get(key);
+  if (!cached) return null;
+  const ttl = cached.miss ? providerMissCacheMs : providerMappingCacheMs;
+  if (Date.now() - Number(cached.at || 0) >= ttl) {
+    providerMappingCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function rememberProviderMapping(provider, anime, value) {
+  const key = seriesMappingKey(provider, anime);
+  if (!key) return;
+  providerMappingCache.set(key, { at: Date.now(), ...value });
+}
+
+export function resetSourceMappingCacheForTests() {
+  providerMappingCache.clear();
+}
+
 function streamHeaders(stream = {}) {
   const raw = stream.headers;
   const headers = (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -19,17 +61,39 @@ function streamHeaders(stream = {}) {
   return headers;
 }
 
-async function resolveProviderEpisode(bridge, provider, context, aliases) {
+async function searchProviderCandidates(bridge, provider, queries) {
+  const groups = [];
+  for (const batch of [queries.slice(0, 4), queries.slice(4, 6)]) {
+    if (!batch.length) continue;
+    const found = await Promise.all(batch.map(query => bridge.searchProvider(provider, query, { timeoutMs: 6000 }).catch(() => [])));
+    for (const list of found) if (Array.isArray(list)) groups.push(...list);
+    if (groups.length) break;
+  }
+  const unique = new Map();
+  for (const item of groups) {
+    const key = String(item?.id ?? item?.mal_id ?? item?.url ?? item?.title ?? JSON.stringify(item));
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()];
+}
+
+export async function resolveProviderEpisode(bridge, provider, context, aliases) {
   const wanted = context.episode.number;
   if (provider === context.episode.provider) {
     let stream = context.stream || {};
     const hasLiveEvidence = Boolean(stream.url || context.playback?.height || context.playback?.readyState >= 2);
     if (!hasLiveEvidence) stream = await bridge.prepareEpisodeStream(context.episode);
+    const seriesEpisodes = Array.isArray(context.seriesEpisodes) ? context.seriesEpisodes : [];
+    if (seriesEpisodes.length) rememberProviderMapping(provider, context.anime, {
+      selected: context.anime,
+      episodes: seriesEpisodes,
+      confidence: 'high'
+    });
     return {
       provider,
       anime: context.anime,
       episode: context.episode,
-      seriesEpisodes: Array.isArray(context.seriesEpisodes) ? context.seriesEpisodes : [],
+      seriesEpisodes,
       stream,
       live: context.playback || null,
       mapping: 'current',
@@ -37,17 +101,29 @@ async function resolveProviderEpisode(bridge, provider, context, aliases) {
     };
   }
 
-  const queries = animeAliases(context.anime, aliases).slice(0, 10);
-  let candidates = [];
-  for (const query of queries) {
-    try {
-      candidates = await bridge.searchProvider(provider, query);
-      if (candidates.length) break;
-    } catch {}
+  let picked = null;
+  let episodes = null;
+  const cached = cachedProviderMapping(provider, context.anime);
+  if (cached?.miss) throw new Error(`anime mapping cached-${cached.confidence || 'none'}`);
+  if (cached?.selected && Array.isArray(cached.episodes)) {
+    picked = { selected: cached.selected, confidence: cached.confidence || 'high' };
+    episodes = cached.episodes;
+  } else {
+    const queries = animeAliases(context.anime, aliases).slice(0, 10);
+    const candidates = await searchProviderCandidates(bridge, provider, queries);
+    picked = pickAnimeCandidate(animeAliases(context.anime, aliases), candidates, context.anime);
+    if (!picked.selected) {
+      rememberProviderMapping(provider, context.anime, { miss: true, confidence: picked.confidence || 'none' });
+      throw new Error(`anime mapping ${picked.confidence}`);
+    }
+    episodes = await bridge.providerEpisodes(provider, picked.selected);
+    rememberProviderMapping(provider, context.anime, {
+      selected: picked.selected,
+      episodes,
+      confidence: picked.confidence
+    });
   }
-  const picked = pickAnimeCandidate(animeAliases(context.anime, aliases), candidates, context.anime);
-  if (!picked.selected) throw new Error(`anime mapping ${picked.confidence}`);
-  const episodes = await bridge.providerEpisodes(provider, picked.selected);
+
   const episode = pickEpisode(episodes, wanted);
   if (!episode) throw new Error(`episode ${wanted} not found`);
   const stream = await bridge.prepareEpisodeStream(episode);
@@ -59,7 +135,7 @@ async function resolveProviderEpisode(bridge, provider, context, aliases) {
     seriesEpisodes: episodes,
     stream,
     live: null,
-    mapping: 'matched',
+    mapping: cached ? 'cached' : 'matched',
     mappingConfidence: picked.confidence
   };
 }
@@ -199,8 +275,6 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
     return { switch: true, reason: 'current-unstable', selected };
   }
 
-  // Unknown resolution is unknown, not 0p. Never manufacture a resolution win
-  // merely because one provider did not expose its dimensions during this probe.
   if (!bestHeight || !currentHeight) {
     return { switch: false, reason: 'quality-evidence-incomplete', selected };
   }
@@ -227,16 +301,15 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
 async function collectSourceAliases(bridge, anime = {}) {
   const seeds = animeAliases(anime, []).slice(0, 6);
   const output = new Set(seeds);
-  for (const seed of seeds.slice(0, 4)) {
-    try { for (const value of await bridge.titleVariants(seed)) output.add(value); } catch {}
+  const [variantGroups, resolved] = await Promise.all([
+    Promise.all(seeds.slice(0, 4).map(seed => bridge.titleVariants(seed).catch(() => []))),
+    bridge.resolveTitles([anime]).catch(() => [])
+  ]);
+  for (const group of variantGroups) for (const value of (Array.isArray(group) ? group : [])) output.add(value);
+  for (const item of (Array.isArray(resolved) ? resolved : [])) {
+    if (item?.ko) output.add(item.ko);
+    if (item?.en) output.add(item.en);
   }
-  try {
-    const resolved = await bridge.resolveTitles([anime]);
-    for (const item of (Array.isArray(resolved) ? resolved : [])) {
-      if (item?.ko) output.add(item.ko);
-      if (item?.en) output.add(item.en);
-    }
-  } catch {}
   return [...output].filter(Boolean);
 }
 
@@ -255,13 +328,13 @@ async function mapLimit(values, limit, worker) {
   return output;
 }
 
-export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS, concurrency = 2 } = {}) {
-  const aliases = await collectSourceAliases(bridge, context.anime);
+export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS, concurrency = 2, aliases = null } = {}) {
+  const effectiveAliases = Array.isArray(aliases) && aliases.length ? aliases : await collectSourceAliases(bridge, context.anime);
   const currentProvider = String(context.episode?.provider || '');
   const ordered = [...new Set([currentProvider, ...providers].filter(Boolean))];
   const settledOrdered = await mapLimit(ordered, concurrency, async provider => {
     try {
-      const resolved = await resolveProviderEpisode(bridge, provider, context, aliases);
+      const resolved = await resolveProviderEpisode(bridge, provider, context, effectiveAliases);
       const value = await probeResolved(resolved, sampleCount);
       return { provider, ok: true, value };
     } catch (error) {
@@ -272,7 +345,7 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
   const settled = [...new Set([...providers, currentProvider].filter(Boolean))]
     .map(provider => byProvider.get(provider))
     .filter(Boolean);
-  return { context, aliases, results: settled, decision: chooseBestSource(settled), visual: null };
+  return { context, aliases: effectiveAliases, results: settled, decision: chooseBestSource(settled), visual: null };
 }
 
 export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true } = {}) {
@@ -283,7 +356,7 @@ export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, v
   if (!providers.length) return quick;
   const context = quick.context;
   if (!context) throw new Error('quick scan context is required');
-  const deep = await scanSources(bridge, context, { sampleCount, providers, concurrency: 2 });
+  const deep = await scanSources(bridge, context, { sampleCount, providers, concurrency: 2, aliases: quick.aliases });
 
   let visualResult = null;
   let decision = deep.decision;
