@@ -126,3 +126,32 @@ export async function extractGrayFrame(url, {
   if (result.stdout.length !== expected) throw new Error(`FFmpeg returned ${result.stdout.length} frame bytes; expected ${expected}`);
   return result.stdout;
 }
+
+export async function extractGrayFrameSequence(url, {
+  headers = {}, start = 52, duration = 17, fps = 1, width = 320, height = 180, timeoutMs = 11000
+} = {}) {
+  const ffmpeg = await discoverLilacFfmpeg();
+  if (!ffmpeg) throw new Error('Lilac bundled FFmpeg was not found');
+  const safeStart = Math.max(0, Number(start) || 0);
+  const safeDuration = Math.max(1, Math.min(30, Number(duration) || 17));
+  const safeFps = Math.max(0.25, Math.min(4, Number(fps) || 1));
+  const args = ['-hide_banner', '-loglevel', 'error', '-rw_timeout', String(Math.max(1, timeoutMs) * 1000), '-ss', String(safeStart)];
+  const blob = headerBlob(headers);
+  if (blob) args.push('-headers', blob);
+  args.push(
+    '-i', String(url), '-map', '0:v:0', '-t', String(safeDuration),
+    '-vf', `fps=${safeFps},scale=${width}:${height}:flags=bilinear,format=gray`,
+    '-pix_fmt', 'gray', '-f', 'rawvideo', '-'
+  );
+  const frameBytes = width * height;
+  const maxFrames = Math.ceil(safeDuration * safeFps) + 4;
+  const result = await runFfmpeg(args, { timeoutMs, maxStdout: frameBytes * maxFrames + 4096 });
+  const count = Math.floor(result.stdout.length / frameBytes);
+  if (!count) throw new Error('FFmpeg returned no alignment frames');
+  const frames = [];
+  for (let index = 0; index < count; index++) {
+    const from = index * frameBytes;
+    frames.push(result.stdout.subarray(from, from + frameBytes));
+  }
+  return { frames, start: safeStart, fps: safeFps, width, height };
+}
