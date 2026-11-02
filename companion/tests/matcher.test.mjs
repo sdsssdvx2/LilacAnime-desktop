@@ -81,6 +81,21 @@ test('a detected special never auto-selects a normal episode with the same numbe
   assert.ok(result.ranked.find(item => item.file.path === main.path).reasons.some(reason => reason.startsWith('kind:mismatch:')));
 });
 
+test('Special and OVA labels are equivalent for non-main bonus episodes', () => {
+  const ova = file('D:\\Utility\\자막\\Iseleve 스페셜\\[SubsPlease] Iseleve - OVA.smi', {
+    episode: null, episodeKind: 'ova', titleHints: ['Iseleve 스페셜', 'Iseleve OVA']
+  });
+  const result = chooseSubtitleMatch({
+    anime: { title: '이세계에서 치트 스킬을 얻은 나는 현실 세계에서도 무쌍한다' },
+    episode: 1,
+    episodeMeta: { name: '스페셜 1' },
+    aliases: ['Iseleve', 'I Got a Cheat Skill in Another World'],
+    files: [ova]
+  });
+  assert.ok(result.best?.reasons.some(reason => reason === 'kind:equivalent:ova->special'));
+  assert.notEqual(result.best?.score, -489);
+});
+
 test('equally plausible subtitle files are not auto-applied', () => {
   const files = [
     file('D:\\Subs\\Show\\A 07.smi', { episode: 7, titleHints: ['Show'] }),
