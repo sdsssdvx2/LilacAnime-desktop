@@ -235,12 +235,10 @@ export async function inferLocalSeasonFromLilacSearch(bridge, {
 
   const hits = await Promise.all(candidates.map(async local => {
     try {
-      const found = await bridge.searchProvider(provider, local.query);
+      const found = await bridge.searchProvider(provider, local.query, { timeoutMs: 5000 });
       for (const candidate of (Array.isArray(found) ? found : []).slice(0, 12)) {
         if (!sameIdentity(anime, candidate, currentAliases)) continue;
         const remoteSeason = candidateSeason(candidate);
-        // First seasons are often unlabelled. Later-season folder queries require an explicit matching season
-        // so a fuzzy search result for season 1 cannot accidentally validate "2기".
         if (local.season > 1 && remoteSeason !== local.season) continue;
         if (remoteSeason && remoteSeason !== local.season) continue;
         return local.season;
@@ -255,10 +253,10 @@ export async function inferLocalSeasonFromLilacSearch(bridge, {
   return seasons[0];
 }
 
-async function providerSearchResolves(bridge, query, anime, currentAliases, providers = null) {
+async function providerSearchResolves(bridge, query, anime, currentAliases, providers = null, timeoutMs = 12000) {
   const providerList = providers || uniq([anime.provider, 'reanime', 'miruro', 'ohli24', 'linkani', 'animenosub', 'linkkf']).filter(Boolean).slice(0, 5);
   const batches = await Promise.all(providerList.map(async provider => {
-    try { return await bridge.searchProvider(provider, query); } catch { return []; }
+    try { return await bridge.searchProvider(provider, query, { timeoutMs }); } catch { return []; }
   }));
   for (const found of batches) {
     for (const candidate of (Array.isArray(found) ? found : []).slice(0, 10)) {
@@ -288,23 +286,19 @@ export async function reverseResolveLocalAliases(bridge, {
     return resolved;
   };
 
-  // Primary path: ask the same provider-aware Lilac search surface used by the app itself. This is what makes
-  // a local folder such as "검래" resolve to the playing "Sword of Coming" without show-specific rules.
   const currentProvider = String(episodeMeta.provider || anime.provider || '').trim();
   if (currentProvider) {
     const primaryHits = await Promise.all(candidates.slice(0, 4).map(async candidate => {
-      const variants = await providerSearchResolves(bridge, candidate.query, anime, currentAliases, [currentProvider]);
+      const variants = await providerSearchResolves(bridge, candidate.query, anime, currentAliases, [currentProvider], 5000);
       return variants.length ? [candidate.query, ...variants] : [];
     }));
     const primaryResolved = uniq(primaryHits.flat());
     if (primaryResolved.length) return finalize(primaryResolved);
   }
 
-  // A unique season-wide episode fingerprint is a fast metadata-free fallback when translated titles differ.
   const structural = inferStructuralLocalAlias({ anime, episode, episodeMeta, files });
   if (structural?.query) return finalize([structural.query]);
 
-  // Run title-variant lookups in parallel instead of serially.
   const variantHits = await Promise.all(candidates.map(async candidate => {
     try {
       const variants = await bridge.titleVariants(candidate.query);
@@ -314,7 +308,6 @@ export async function reverseResolveLocalAliases(bridge, {
   const variantResolved = uniq(variantHits.flat());
   if (variantResolved.length) return finalize(variantResolved);
 
-  // Lilac's resolveTitles API accepts a batch and resolves metadata concurrently internally.
   try {
     const requests = candidates.map((candidate, index) => ({
       provider: 'companion',
@@ -333,8 +326,6 @@ export async function reverseResolveLocalAliases(bridge, {
     if (resolved.length) return finalize(resolved);
   } catch {}
 
-  // Emergency offline fallback for a tiny number of known metadata gaps. It is intentionally after Lilac's own
-  // search/title resolvers so future similar cases are handled generically first.
   const known = [];
   for (const candidate of candidates) {
     const group = knownAliasHit(currentAliases, candidate.query);
@@ -342,7 +333,6 @@ export async function reverseResolveLocalAliases(bridge, {
   }
   if (known.length) return finalize(known);
 
-  // Broad provider search is the expensive last resort. Limit it to the strongest three local groups.
   const providerHits = await Promise.all(candidates.slice(0, 3).map(async candidate => {
     const variants = await providerSearchResolves(bridge, candidate.query, anime, currentAliases);
     return variants.length ? [candidate.query, ...variants] : [];
