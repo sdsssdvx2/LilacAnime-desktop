@@ -6,6 +6,7 @@ import { LilacBridge } from './lilac/bridge.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
+import { scanSources, deepScanTop } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -88,6 +89,33 @@ async function doctor() {
   } finally { session.close(); }
 }
 
+function printSourceScan(name, scan) {
+  console.log(`\n[companion] ${name}`);
+  for (const item of scan.results) {
+    if (!item.ok) { console.log(`  ${item.provider}: FAIL · ${item.error}`); continue; }
+    const probe = item.value.probe;
+    if (!probe) { console.log(`  ${item.provider}: ${item.value.kind} · ${item.value.note || 'resolved'}`); continue; }
+    const q = probe.quality, m = probe.metrics;
+    console.log(`  ${item.provider}: ${q.height ? `${q.height}p` : '?p'} · ${(q.bandwidth || 0) ? `${((q.averageBandwidth || q.bandwidth) / 1_000_000).toFixed(2)} Mbps` : '? Mbps'} · stability ${m.stability} · min ${m.minMbps == null ? '?' : m.minMbps.toFixed(2)} Mbps · TTFB95 ${m.p95TtfbMs == null ? '?' : Math.round(m.p95TtfbMs)} ms`);
+  }
+  const selected = scan.decision?.selected;
+  console.log(`[companion] recommendation: ${selected?.provider || 'none'} (${scan.decision?.reason || 'n/a'})`);
+}
+
+async function sourceDoctor() {
+  const { session, bridge, target } = await connectBridge({ launch: false });
+  try {
+    console.log(`[companion] CDP target: ${target.title || target.url}`);
+    const context = await bridge.playbackContext();
+    if (!context?.anime || !context?.episode?.number) throw new Error('Play an anime episode in Lilac before source-doctor');
+    console.log(`[companion] source doctor: ${context.anime.title || context.anime.title_english} · E${context.episode.number}`);
+    const quick = await scanSources(bridge, context, { sampleCount: 1 });
+    printSourceScan('quick scan (all providers)', quick);
+    const deep = await deepScanTop(bridge, quick, { count: 3, sampleCount: 3 });
+    printSourceScan('deep scan (top providers)', deep);
+  } finally { session.close(); }
+}
+
 async function watch() {
   const state = await new StateStore().load();
   let index = await indexSubtitleRoot(subtitleRoot);
@@ -166,5 +194,6 @@ async function watch() {
 }
 
 if (command === 'doctor') await doctor();
+else if (command === 'source-doctor') await sourceDoctor();
 else if (command === 'watch') await watch();
 else throw new Error(`Unknown command: ${command}`);
