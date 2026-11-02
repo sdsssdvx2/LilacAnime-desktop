@@ -132,7 +132,7 @@ export class LilacBridge {
     })()`, { timeoutMs: 12000 });
   }
 
-  async searchProvider(provider, query) {
+  async searchProvider(provider, query, { timeoutMs = 12000 } = {}) {
     const p = JSON.stringify(String(provider || ''));
     const q = JSON.stringify(String(query || ''));
     return this.session.evaluate(`(async () => {
@@ -145,7 +145,7 @@ export class LilacBridge {
       }
       if (typeof window.lilac?.providerCatalog === 'function') return list(await window.lilac.providerCatalog(provider, query, 0, ''));
       return [];
-    })()`, { timeoutMs: 12000 });
+    })()`, { timeoutMs });
   }
 
   async providerEpisodes(provider, anime) {
