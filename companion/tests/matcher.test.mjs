@@ -81,7 +81,7 @@ test('a detected special never auto-selects a normal episode with the same numbe
   assert.ok(result.ranked.find(item => item.file.path === main.path).reasons.some(reason => reason.startsWith('kind:mismatch:')));
 });
 
-test('Special and OVA labels are equivalent for non-main bonus episodes', () => {
+test('Special and OVA labels are equivalent and auto-select an unnumbered OVA subtitle', () => {
   const ova = file('D:\\Utility\\자막\\Iseleve 스페셜\\[SubsPlease] Iseleve - OVA.smi', {
     episode: null, episodeKind: 'ova', titleHints: ['Iseleve 스페셜', 'Iseleve OVA']
   });
@@ -93,7 +93,9 @@ test('Special and OVA labels are equivalent for non-main bonus episodes', () => 
     files: [ova]
   });
   assert.ok(result.best?.reasons.some(reason => reason === 'kind:equivalent:ova->special'));
-  assert.notEqual(result.best?.score, -489);
+  assert.ok(result.best?.reasons.includes('episode:special-unnumbered'));
+  assert.equal(result.confidence, 'high');
+  assert.equal(result.selected?.path, ova.path);
 });
 
 test('equally plausible subtitle files are not auto-applied', () => {
