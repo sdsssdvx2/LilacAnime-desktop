@@ -1,4 +1,5 @@
-import { connectLilacCdp } from '../src/lilac/cdp.mjs';
+import http from 'node:http';
+import { connectLilacCdp, createAuxiliaryCdpTarget, loadCdpNetworkResource } from '../src/lilac/cdp.mjs';
 import { LilacBridge } from '../src/lilac/bridge.mjs';
 
 const port = Number(process.env.LILAC_CDP_PORT || 9223);
@@ -17,6 +18,17 @@ const required = [
   'resolveIntoPlayer'
 ];
 
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve(server.address()));
+  });
+}
+
+function closeServer(server) {
+  return new Promise(resolve => server.close(() => resolve()));
+}
+
 const { session, target } = await connectLilacCdp({ port });
 try {
   const bridge = new LilacBridge(session);
@@ -27,6 +39,35 @@ try {
   if (missing.length) {
     console.error(`Missing required Lilac bridge features: ${missing.join(', ')}`);
     process.exitCode = 2;
+  }
+
+  const probeServer = http.createServer((req, res) => {
+    if (req.headers['x-companion-probe'] !== 'yes') {
+      res.writeHead(403, { 'content-type': 'text/plain' });
+      res.end('forbidden');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('isolated-browser-probe-ok');
+  });
+  const probeAddress = await listen(probeServer);
+  let auxiliary = null;
+  try {
+    auxiliary = await createAuxiliaryCdpTarget(session);
+    const resource = await loadCdpNetworkResource(
+      auxiliary.session,
+      `http://127.0.0.1:${probeAddress.port}/protected`,
+      { headers: { 'X-Companion-Probe': 'yes' }, timeoutMs: 5000 }
+    );
+    const browserProbe = { status: resource.status, body: resource.body.toString('utf8'), target: auxiliary.target.id };
+    console.log(JSON.stringify({ browserProbe }, null, 2));
+    if (browserProbe.status !== 200 || browserProbe.body !== 'isolated-browser-probe-ok') {
+      console.error('Companion isolated CDP target could not load a protected network resource');
+      process.exitCode = 7;
+    }
+  } finally {
+    await auxiliary?.close?.().catch(() => {});
+    await closeServer(probeServer);
   }
 
   await session.evaluate(`(() => {
