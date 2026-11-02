@@ -95,21 +95,20 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
   const bestProbe = bestItem?.value?.probe;
   const currentProbe = currentItem?.value?.probe;
   if (!bestProbe) return { switch: false, reason: 'selected-not-probed', selected };
+  if (!currentProbe) return { switch: false, reason: 'current-not-probed', selected };
 
   const bestHeight = Number(bestProbe.quality?.height || 0);
-  const currentHeight = Number(currentProbe?.quality?.height || 0);
+  const currentHeight = Number(currentProbe.quality?.height || 0);
   const bestStable = Boolean(bestItem?.stable);
   const currentStable = Boolean(currentItem?.stable);
   const bestStability = Number(bestProbe.metrics?.stability || 0);
 
   if (!bestStable || bestStability < 80) return { switch: false, reason: 'winner-not-stable-enough', selected };
 
-  // Safe mode only changes source when the win is obvious without subjective frame-quality analysis:
-  // clearly higher resolution, or the current source is measurably unstable while the winner is at least as sharp.
   if (bestHeight >= 720 && bestHeight >= currentHeight + 180) {
     return { switch: true, reason: 'clear-resolution-win', selected };
   }
-  if (currentProbe && !currentStable && bestHeight >= currentHeight) {
+  if (!currentStable && bestHeight >= currentHeight) {
     return { switch: true, reason: 'current-unstable', selected };
   }
   return { switch: false, reason: 'same-resolution-needs-visual-compare', selected };
