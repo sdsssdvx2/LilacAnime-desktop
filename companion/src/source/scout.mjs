@@ -16,8 +16,9 @@ function streamHeaders(stream = {}) {
 async function resolveProviderEpisode(bridge, provider, context, aliases) {
   const wanted = context.episode.number;
   if (provider === context.episode.provider) {
-    let stream = context.stream?.url ? context.stream : null;
-    if (!stream) stream = await bridge.prepareEpisodeStream(context.episode);
+    let stream = context.stream || {};
+    const hasLiveEvidence = Boolean(stream.url || context.playback?.height || context.playback?.readyState >= 2);
+    if (!hasLiveEvidence) stream = await bridge.prepareEpisodeStream(context.episode);
     return {
       provider,
       anime: context.anime,
@@ -211,9 +212,26 @@ async function collectSourceAliases(bridge, anime = {}) {
   return [...output].filter(Boolean);
 }
 
-export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS } = {}) {
+async function mapLimit(values, limit, worker) {
+  const list = [...values];
+  const output = new Array(list.length);
+  let next = 0;
+  const run = async () => {
+    while (true) {
+      const index = next++;
+      if (index >= list.length) return;
+      output[index] = await worker(list[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), list.length || 1) }, run));
+  return output;
+}
+
+export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS, concurrency = 2 } = {}) {
   const aliases = await collectSourceAliases(bridge, context.anime);
-  const settled = await Promise.all(providers.map(async provider => {
+  const currentProvider = String(context.episode?.provider || '');
+  const ordered = [...new Set([currentProvider, ...providers].filter(Boolean))];
+  const settledOrdered = await mapLimit(ordered, concurrency, async provider => {
     try {
       const resolved = await resolveProviderEpisode(bridge, provider, context, aliases);
       const value = await probeResolved(resolved, sampleCount);
@@ -221,7 +239,11 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
     } catch (error) {
       return { provider, ok: false, error: error?.message || String(error) };
     }
-  }));
+  });
+  const byProvider = new Map(settledOrdered.map(item => [item.provider, item]));
+  const settled = [...new Set([...providers, currentProvider].filter(Boolean))]
+    .map(provider => byProvider.get(provider))
+    .filter(Boolean);
   return { context, aliases, results: settled, decision: chooseBestSource(settled), visual: null };
 }
 
@@ -233,7 +255,7 @@ export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, v
   if (!providers.length) return quick;
   const context = quick.context;
   if (!context) throw new Error('quick scan context is required');
-  const deep = await scanSources(bridge, context, { sampleCount, providers });
+  const deep = await scanSources(bridge, context, { sampleCount, providers, concurrency: 2 });
 
   let visualResult = null;
   let decision = deep.decision;
