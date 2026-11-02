@@ -10,13 +10,13 @@ export function defaultStatePath() {
 export class StateStore {
   constructor(file = defaultStatePath()) {
     this.file = file;
-    this.data = { version: 2, subtitlePreferences: {}, titleAliases: {}, recent: {} };
+    this.data = { version: 3, subtitlePreferences: {}, titleAliases: {}, recent: {} };
   }
 
   async load() {
     try {
       const parsed = JSON.parse(await fs.readFile(this.file, 'utf8'));
-      if (parsed && typeof parsed === 'object') this.data = { ...this.data, ...parsed, version: 2 };
+      if (parsed && typeof parsed === 'object') this.data = { ...this.data, ...parsed, version: 3 };
     } catch {}
     return this;
   }
@@ -35,7 +35,12 @@ export class StateStore {
 
   titleAliases(anime) {
     const key = this.animeKey(anime);
-    const values = this.data.titleAliases?.[key]?.aliases;
+    const record = this.data.titleAliases?.[key] || {};
+    const seasonNumber = Number(record.seasonNumber || 0);
+    if (seasonNumber > 0 && anime && typeof anime === 'object' && !Number(anime.companionSeasonNumber || 0)) {
+      anime.companionSeasonNumber = seasonNumber;
+    }
+    const values = record.aliases;
     return Array.isArray(values) ? values.filter(Boolean) : [];
   }
 
@@ -45,7 +50,8 @@ export class StateStore {
     if (!merged.length) return;
     const key = this.animeKey(anime);
     this.data.titleAliases ||= {};
-    this.data.titleAliases[key] = { aliases: merged, updatedAt: Date.now() };
+    const seasonNumber = Number(anime?.companionSeasonNumber || 0) || null;
+    this.data.titleAliases[key] = { aliases: merged, seasonNumber, updatedAt: Date.now() };
     await this.save();
   }
 
