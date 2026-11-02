@@ -19,6 +19,19 @@ export class LilacBridge {
     }))()`);
   }
 
+  async waitUntilReady({ timeoutMs = 20000, intervalMs = 200 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    let last = null;
+    while (Date.now() < deadline) {
+      try {
+        last = await this.features();
+        if (last?.lilac && last?.attachSubtitle && last?.playbackContext) return last;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+    throw new Error(`Lilac renderer did not finish loading (features=${JSON.stringify(last || {})})`);
+  }
+
   async playbackContext() {
     return this.session.evaluate(`(() => {
       if (typeof currentPlaybackContext === 'undefined' || !currentPlaybackContext) return null;
