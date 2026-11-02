@@ -42,10 +42,46 @@ function titleScore(aliases, hints) {
   return best;
 }
 
-function inferCurrentSeason(anime = {}) {
+function inferSeasonFromLocalStructure(anime = {}, aliases = [], files = []) {
+  const series = Array.isArray(anime.companionSeriesEpisodes) ? anime.companionSeriesEpisodes : [];
+  const targetEpisodes = new Set(series.map(item => Number(item?.number || 0)).filter(value => Number.isFinite(value) && value > 0));
+  if (targetEpisodes.size < 8) return null;
+
+  const names = animeAliases(anime, aliases);
+  const groups = new Map();
+  for (const file of files) {
+    const season = Number(file?.season || 0);
+    const episode = Number(file?.episode || 0);
+    if (!season || !episode) continue;
+    if (titleScore(names, file.titleHints || []).score < 145) continue;
+    const current = groups.get(season) || new Set();
+    current.add(episode);
+    groups.set(season, current);
+  }
+
+  const scored = [...groups.entries()].map(([season, episodes]) => {
+    const overlap = [...episodes].filter(value => targetEpisodes.has(value)).length;
+    const coverage = overlap / targetEpisodes.size;
+    const precision = overlap / episodes.size;
+    const sizeDelta = Math.abs(episodes.size - targetEpisodes.size);
+    return { season, overlap, coverage, precision, sizeDelta };
+  }).filter(item => item.overlap >= Math.min(8, targetEpisodes.size) && item.coverage >= 0.9 && item.precision >= 0.9)
+    .sort((a, b) => b.coverage - a.coverage || b.precision - a.precision || a.sizeDelta - b.sizeDelta);
+
+  const best = scored[0], second = scored[1];
+  if (!best) return null;
+  if (second && best.coverage === second.coverage && best.precision === second.precision && best.sizeDelta === second.sizeDelta) return null;
+  return best.season;
+}
+
+function inferCurrentSeason(anime = {}, aliases = [], files = []) {
+  const companion = Number(anime.companionSeasonNumber || 0);
+  if (companion > 0) return companion;
   const explicit = Number(anime.seasonNumber || anime.season_number || anime.seasonIndex || 0);
   if (explicit > 0) return explicit;
-  return extractSeason([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
+  const parsed = extractSeason([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
+  if (parsed) return parsed;
+  return inferSeasonFromLocalStructure(anime, aliases, files);
 }
 
 function inferCurrentPart(anime = {}) {
@@ -83,7 +119,7 @@ function kindFamily(kind) {
 
 export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, aliases = [], files = [], manual = null } = {}) {
   const targetEpisode = Number(episode) || null;
-  const targetSeason = inferCurrentSeason(anime);
+  const targetSeason = inferCurrentSeason(anime, aliases, files);
   const targetPart = inferCurrentPart(anime);
   const targetYear = inferCurrentYear(anime);
   const targetKind = inferCurrentKind(anime, episodeMeta, aliases);
@@ -157,7 +193,7 @@ export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, alias
       reasons.push('manual:root');
     }
 
-    return { file, score, reasons, title, targetKind, targetYear };
+    return { file, score, reasons, title, targetKind, targetYear, targetSeason };
   }).filter(Boolean).sort((a, b) => b.score - a.score || b.file.mtimeMs - a.file.mtimeMs);
 }
 
