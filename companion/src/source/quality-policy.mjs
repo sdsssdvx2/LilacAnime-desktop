@@ -51,12 +51,24 @@ export function clearResolutionAdvantage(bestProbe, currentProbe) {
   const difference = best.height - current.height;
   if (difference < 180 || ratio < 1.25) return false;
 
-  // A nominally higher resolution can still be a visibly worse transcode when it
-  // is starved of bits. Codec-adjust the bitrate before treating resolution as
-  // decisive. Unknown bitrate is not treated as zero.
   if (best.effectiveBitrate && current.effectiveBitrate
       && best.effectiveBitrate < current.effectiveBitrate * 0.70) return false;
   return true;
+}
+
+export function decisiveBitrateQualityAdvantage(bestProbe, currentProbe) {
+  const best = qualityEvidence(bestProbe), current = qualityEvidence(currentProbe);
+  if (!best.height || !current.height || !best.effectiveBitrate || !current.effectiveBitrate) return false;
+  const ratio = resolutionRatio(best.height, current.height);
+  if (ratio == null || ratio > 1.18) return false;
+
+  const bitrateRatio = best.effectiveBitrate / current.effectiveBitrate;
+  // Same-resolution encodes need a clear bitrate/codec-efficiency gap. When the
+  // nominal winner is modestly lower resolution (e.g. 720p vs 804p), demand a
+  // larger gap so bitrate does not casually erase real spatial detail.
+  if (best.height === current.height) return bitrateRatio >= 1.30;
+  if (best.height < current.height) return bitrateRatio >= 1.55;
+  return bitrateRatio >= 1.20;
 }
 
 export function compareProbeQuality(aProbe, bProbe) {
@@ -73,8 +85,6 @@ export function compareProbeQuality(aProbe, bProbe) {
         if (bitrateRatio >= 1.15) return -1;
         if (bitrateRatio <= 1 / 1.15) return 1;
       }
-      // Near resolutions (e.g. 804p vs 720p) are not allowed to swamp bitrate
-      // evidence. If bitrate is missing/close, preserve the modest resolution edge.
       if (a.height !== b.height) return b.height - a.height;
     } else if (a.height !== b.height) {
       return b.height - a.height;
