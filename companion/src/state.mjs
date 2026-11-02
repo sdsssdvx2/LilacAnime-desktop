@@ -10,13 +10,13 @@ export function defaultStatePath() {
 export class StateStore {
   constructor(file = defaultStatePath()) {
     this.file = file;
-    this.data = { version: 1, subtitlePreferences: {}, recent: {} };
+    this.data = { version: 2, subtitlePreferences: {}, titleAliases: {}, recent: {} };
   }
 
   async load() {
     try {
       const parsed = JSON.parse(await fs.readFile(this.file, 'utf8'));
-      if (parsed && typeof parsed === 'object') this.data = { ...this.data, ...parsed };
+      if (parsed && typeof parsed === 'object') this.data = { ...this.data, ...parsed, version: 2 };
     } catch {}
     return this;
   }
@@ -31,6 +31,22 @@ export class StateStore {
   subtitlePreference(anime, episode) {
     const key = this.animeKey(anime);
     return this.data.subtitlePreferences?.[key]?.[String(Number(episode) || episode)] || null;
+  }
+
+  titleAliases(anime) {
+    const key = this.animeKey(anime);
+    const values = this.data.titleAliases?.[key]?.aliases;
+    return Array.isArray(values) ? values.filter(Boolean) : [];
+  }
+
+  async rememberTitleAliases(anime, aliases = []) {
+    const incoming = Array.isArray(aliases) ? aliases : [aliases];
+    const merged = [...new Set([...this.titleAliases(anime), ...incoming].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 32);
+    if (!merged.length) return;
+    const key = this.animeKey(anime);
+    this.data.titleAliases ||= {};
+    this.data.titleAliases[key] = { aliases: merged, updatedAt: Date.now() };
+    await this.save();
   }
 
   async rememberSubtitle(anime, episode, value) {
