@@ -339,8 +339,17 @@ async function watch() {
       const stable = await connection.bridge.playbackContext();
       if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
 
-      const preference = state.subtitlePreference(stable.anime, stable.episode.number);
-      const manual = preference?.kind === 'user' ? preference : null;
+      let preference = state.subtitlePreference(stable.anime, stable.episode.number);
+      let manual = preference?.kind === 'user' ? preference : null;
+      if (manual?.path) {
+        const compatibility = isUserSubtitleCompatibleWithEpisode(manual.path, stable.episode.number);
+        if (!compatibility.compatible) {
+          await state.forgetSubtitle(stable.anime, stable.episode.number);
+          console.log(`[companion] removed stale remembered subtitle for E${stable.episode.number} (file looks like E${compatibility.hintedEpisode}): ${manual.path}`);
+          preference = null;
+          manual = null;
+        }
+      }
       const cachedAliases = state.titleAliases(stable.anime);
       const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
         anime: stable.anime,
