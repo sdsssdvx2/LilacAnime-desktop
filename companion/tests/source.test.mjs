@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMasterPlaylist, parseMediaPlaylist } from '../src/source/hls-probe.mjs';
 import { pickAnimeCandidate, pickEpisode } from '../src/source/provider-map.mjs';
-import { chooseBestSource } from '../src/source/scout.mjs';
+import { chooseBestSource, safeAutoSwitchDecision } from '../src/source/scout.mjs';
 
 test('master playlist parses and ranks 1080p ahead of 720p', () => {
   const master = `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1"\n720/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1"\n1080/index.m3u8`;
@@ -39,11 +39,12 @@ test('episode mapping finds the requested episode without confusing resolution',
   assert.equal(pickEpisode(episodes, 9)?.name, 'Show - 09 [1080p]');
 });
 
-const source = (provider, height, bitrate, stability, failureRate = 0) => ({
+const source = (provider, height, bitrate, stability, failureRate = 0, mappingConfidence = 'high') => ({
   provider,
   ok: true,
   value: {
     provider,
+    mappingConfidence,
     probe: {
       quality: { height, bandwidth: bitrate },
       metrics: { stability, failureRate }
@@ -66,4 +67,38 @@ test('near-identical quality prefers the more stable source', () => {
     source('miruro', 1080, 4_800_000, 97)
   ]);
   assert.equal(result.selected?.provider, 'miruro');
+});
+
+test('safe auto switch allows a clear 1080p over 720p win', () => {
+  const results = [
+    source('reanime', 720, 3_000_000, 95),
+    source('miruro', 1080, 5_000_000, 94)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, true);
+  assert.equal(decision.reason, 'clear-resolution-win');
+  assert.equal(decision.selected?.provider, 'miruro');
+});
+
+test('safe auto switch does not choose between stable 1080p sources without visual comparison', () => {
+  const results = [
+    source('reanime', 1080, 4_500_000, 90),
+    source('miruro', 1080, 5_500_000, 96)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, false);
+  assert.equal(decision.reason, 'same-resolution-needs-visual-compare');
+});
+
+test('safe auto switch replaces an unstable source at the same resolution', () => {
+  const results = [
+    source('reanime', 1080, 5_500_000, 50),
+    source('miruro', 1080, 4_500_000, 96)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, true);
+  assert.equal(decision.reason, 'current-unstable');
 });
