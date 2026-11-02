@@ -1,4 +1,4 @@
-import { extractGrayFrame } from './ffmpeg-media.mjs';
+import { extractGrayFrame, extractGrayFrameSequence } from './ffmpeg-media.mjs';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -87,13 +87,66 @@ function commonDuration(entries, context) {
   return durations.length ? Math.min(...durations) : null;
 }
 
+function sequenceFrameNearest(sequence, targetTime) {
+  if (!sequence?.frames?.length) return null;
+  const index = clamp(Math.round((Number(targetTime) - Number(sequence.start || 0)) * Number(sequence.fps || 1)), 0, sequence.frames.length - 1);
+  return { frame: sequence.frames[index], index, time: Number(sequence.start || 0) + index / Number(sequence.fps || 1) };
+}
+
+export function bestAlignedSequenceFrame(anchorFrame, sequence, targetTime, {
+  expectedOffset = null,
+  maxOffset = 8,
+  offsetTolerance = 3
+} = {}) {
+  if (!anchorFrame || !sequence?.frames?.length) return null;
+  const fps = Number(sequence.fps || 1);
+  const start = Number(sequence.start || 0);
+  let best = null;
+  for (let index = 0; index < sequence.frames.length; index++) {
+    const frameTime = start + index / fps;
+    const offset = frameTime - Number(targetTime || 0);
+    if (Math.abs(offset) > maxOffset + 0.51 / fps) continue;
+    if (expectedOffset != null && Math.abs(offset - expectedOffset) > offsetTolerance) continue;
+    const similarity = frameSimilarity(anchorFrame, sequence.frames[index]);
+    if (!best || similarity > best.similarity) best = { frame: sequence.frames[index], index, time: frameTime, offset, similarity };
+  }
+  return best;
+}
+
+async function alignmentSequences(candidates, time, {
+  windowSeconds,
+  fps,
+  width,
+  height,
+  timeoutMs
+}) {
+  const start = Math.max(0, Number(time) - windowSeconds);
+  const duration = windowSeconds * 2 + 1;
+  const pairs = await Promise.all(candidates.map(async entry => {
+    try {
+      const sequence = await extractGrayFrameSequence(entry.stream.url, {
+        headers: streamHeaders(entry.stream), start, duration, fps, width, height, timeoutMs
+      });
+      return [entry.provider, sequence];
+    } catch {
+      return [entry.provider, null];
+    }
+  }));
+  return new Map(pairs);
+}
+
 export async function compareVisualSources(entries, {
   context = null,
   currentProvider = '',
   maxSources = 2,
   width = 640,
   height = 360,
-  similarityThreshold = 0.86,
+  alignmentWidth = 320,
+  alignmentHeight = 180,
+  alignmentWindowSeconds = 8,
+  alignmentFps = 1,
+  alignmentThreshold = 0.80,
+  similarityThreshold = 0.82,
   timeoutMs = 8500
 } = {}) {
   const candidates = entries
@@ -111,37 +164,79 @@ export async function compareVisualSources(entries, {
   const times = sampleTimes(commonDuration(candidates, context));
   const scores = new Map(candidates.map(entry => [entry.provider, []]));
   const similarities = new Map(candidates.map(entry => [entry.provider, []]));
+  const offsets = new Map(candidates.map(entry => [entry.provider, []]));
+  const expectedOffsets = new Map([[anchor.provider, 0]]);
 
   for (const time of times) {
+    const sequences = await alignmentSequences(candidates, time, {
+      windowSeconds: alignmentWindowSeconds,
+      fps: alignmentFps,
+      width: alignmentWidth,
+      height: alignmentHeight,
+      timeoutMs: Math.max(timeoutMs, 10000)
+    });
+    const anchorSequence = sequences.get(anchor.provider);
+    const anchorAligned = sequenceFrameNearest(anchorSequence, time);
+    if (!anchorAligned?.frame) continue;
+
     let anchorFrame;
     try {
-      anchorFrame = await extractGrayFrame(anchor.stream.url, { headers: streamHeaders(anchor.stream), time, width, height, timeoutMs });
+      anchorFrame = await extractGrayFrame(anchor.stream.url, {
+        headers: streamHeaders(anchor.stream), time, width, height, timeoutMs
+      });
     } catch {
       continue;
     }
     const anchorMetrics = frameMetrics(anchorFrame, width, height);
     scores.get(anchor.provider).push(0);
     similarities.get(anchor.provider).push(1);
+    offsets.get(anchor.provider).push(0);
 
-    await Promise.all(candidates.filter(entry => entry !== anchor).map(async entry => {
+    for (const entry of candidates) {
+      if (entry === anchor) continue;
+      const sequence = sequences.get(entry.provider);
+      const expectedOffset = expectedOffsets.has(entry.provider) ? expectedOffsets.get(entry.provider) : null;
+      const aligned = bestAlignedSequenceFrame(anchorAligned.frame, sequence, time, {
+        expectedOffset,
+        maxOffset: alignmentWindowSeconds,
+        offsetTolerance: expectedOffset == null ? alignmentWindowSeconds : 3
+      });
+      if (!aligned || aligned.similarity < alignmentThreshold) continue;
+
+      let frame;
       try {
-        const frame = await extractGrayFrame(entry.stream.url, { headers: streamHeaders(entry.stream), time, width, height, timeoutMs });
-        const similarity = frameSimilarity(anchorFrame, frame);
-        similarities.get(entry.provider).push(similarity);
-        if (similarity < similarityThreshold) return;
-        scores.get(entry.provider).push(relativeScore(frameMetrics(frame, width, height), anchorMetrics));
-      } catch {}
-    }));
+        frame = await extractGrayFrame(entry.stream.url, {
+          headers: streamHeaders(entry.stream),
+          time: Math.max(0, time + aligned.offset),
+          width,
+          height,
+          timeoutMs
+        });
+      } catch {
+        continue;
+      }
+      const similarity = frameSimilarity(anchorFrame, frame);
+      similarities.get(entry.provider).push(similarity);
+      offsets.get(entry.provider).push(aligned.offset);
+      if (similarity < similarityThreshold) continue;
+      scores.get(entry.provider).push(relativeScore(frameMetrics(frame, width, height), anchorMetrics));
+
+      if (!expectedOffsets.has(entry.provider)) expectedOffsets.set(entry.provider, aligned.offset);
+      else expectedOffsets.set(entry.provider, (expectedOffsets.get(entry.provider) + aligned.offset) / 2);
+    }
   }
 
   const providerResults = candidates.map(entry => {
     const values = scores.get(entry.provider) || [];
     const sims = similarities.get(entry.provider) || [];
+    const providerOffsets = offsets.get(entry.provider) || [];
     return {
       provider: entry.provider,
       samples: values.length,
       score: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
-      minSimilarity: sims.length ? Math.min(...sims) : null
+      minSimilarity: sims.length ? Math.min(...sims) : null,
+      offsetSeconds: providerOffsets.length ? providerOffsets.reduce((sum, value) => sum + value, 0) / providerOffsets.length : null,
+      offsetSpread: providerOffsets.length > 1 ? Math.max(...providerOffsets) - Math.min(...providerOffsets) : 0
     };
   }).filter(item => item.score != null).sort((a, b) => b.score - a.score);
 
@@ -152,13 +247,14 @@ export async function compareVisualSources(entries, {
   const secondSamples = scores.get(second.provider) || [];
   const comparableCount = Math.min(bestSamples.length, secondSamples.length);
   const pairMargins = Array.from({ length: comparableCount }, (_, index) => bestSamples[index] - secondSamples[index]);
+  const offsetsStable = providerResults.every(item => item.offsetSpread <= 3.1);
   const consistent = pairMargins.length >= 2 && pairMargins.every(value => value >= 0.025);
-  const high = comparableCount >= 2 && consistent && margin >= 0.055;
-  const medium = comparableCount >= 1 && margin >= 0.035;
+  const high = comparableCount >= 2 && offsetsStable && consistent && margin >= 0.055;
+  const medium = comparableCount >= 1 && offsetsStable && margin >= 0.035;
   return {
     available: true,
     confidence: high ? 'high' : medium ? 'medium' : 'low',
-    reason: high ? 'consistent-visual-win' : medium ? 'possible-visual-win' : 'visual-difference-too-small',
+    reason: high ? 'consistent-visual-win' : medium ? 'possible-visual-win' : offsetsStable ? 'visual-difference-too-small' : 'alignment-offset-inconsistent',
     selectedProvider: best.provider,
     margin,
     times,
