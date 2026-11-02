@@ -40,8 +40,12 @@ jobs:
           node --check src/lilac/launcher.mjs
           node --check src/subtitles/indexer.mjs
           node --check src/subtitles/matcher.mjs
+          node --check src/subtitles/alias-fallback.mjs
           node --check src/subtitles/prepare.mjs
           node --check src/source/hls-probe.mjs
+          node --check src/source/direct-probe.mjs
+          node --check src/source/ffmpeg-media.mjs
+          node --check src/source/visual-quality.mjs
           node --check src/source/provider-map.mjs
           node --check src/source/scout.mjs
       - name: Tests
