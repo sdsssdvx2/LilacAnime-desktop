@@ -68,6 +68,16 @@ export class StateStore {
     return true;
   }
 
+  async forgetSubtitle(anime, episode) {
+    const key = this.animeKey(anime), ep = String(Number(episode) || episode);
+    const bucket = this.data.subtitlePreferences?.[key];
+    if (!bucket || !Object.prototype.hasOwnProperty.call(bucket, ep)) return false;
+    delete bucket[ep];
+    if (!Object.keys(bucket).length) delete this.data.subtitlePreferences[key];
+    await this.save();
+    return true;
+  }
+
   async touchRecent(anime, episode) {
     const key = this.animeKey(anime);
     this.data.recent ||= {};
