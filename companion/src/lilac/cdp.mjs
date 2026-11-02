@@ -70,13 +70,13 @@ export class CdpSession {
     });
   }
 
-  async evaluate(expression, { awaitPromise = true } = {}) {
+  async evaluate(expression, { awaitPromise = true, timeoutMs = 4000 } = {}) {
     const response = await this.send('Runtime.evaluate', {
       expression,
       awaitPromise,
       returnByValue: true,
       userGesture: false
-    });
+    }, { timeoutMs });
     if (response.exceptionDetails) {
       const description = response.exceptionDetails.exception?.description || response.exceptionDetails.text || 'Runtime.evaluate failed';
       throw new Error(description);
