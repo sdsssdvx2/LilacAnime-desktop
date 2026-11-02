@@ -28,3 +28,23 @@ test('resolved title aliases persist and restore companion season context', asyn
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('rememberSubtitle skips an identical subtitle preference instead of rewriting state', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lilac-companion-state-'));
+  const file = path.join(dir, 'state.json');
+  try {
+    const state = await new StateStore(file).load();
+    const anime = { provider: 'miruro', id: 'bleach', title: 'Bleach' };
+    const subtitle = { path: 'C:\\Subs\\Bleach_-_001.sync.vtt', kind: 'user' };
+    assert.equal(await state.rememberSubtitle(anime, 1, subtitle), true);
+    const first = JSON.parse(await fs.readFile(file, 'utf8'));
+    const firstRecord = first.subtitlePreferences['miruro:bleach']['1'];
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(await state.rememberSubtitle(anime, 1, subtitle), false);
+    const second = JSON.parse(await fs.readFile(file, 'utf8'));
+    assert.equal(second.subtitlePreferences['miruro:bleach']['1'].updatedAt, firstRecord.updatedAt);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
