@@ -1,6 +1,7 @@
 import http from 'node:http';
-import { connectLilacCdp, loadCdpNetworkResource } from '../src/lilac/cdp.mjs';
+import { connectLilacCdp } from '../src/lilac/cdp.mjs';
 import { LilacBridge } from '../src/lilac/bridge.mjs';
+import { probeHlsViaCdp } from '../src/source/browser-hls-probe.mjs';
 
 const port = Number(process.env.LILAC_CDP_PORT || 9223);
 const required = [
@@ -41,26 +42,52 @@ try {
     process.exitCode = 2;
   }
 
+  const segment = Buffer.alloc(64 * 1024, 0x5a);
   const probeServer = http.createServer((req, res) => {
+    const cors = { 'access-control-allow-origin': '*' };
     if (req.headers['x-companion-probe'] !== 'yes') {
-      res.writeHead(403, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' });
+      res.writeHead(403, { ...cors, 'content-type': 'text/plain' });
       res.end('forbidden');
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' });
-    res.end('selective-browser-probe-ok');
+    if (req.url === '/master.m3u8') {
+      res.writeHead(200, { ...cors, 'content-type': 'application/vnd.apple.mpegurl' });
+      res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000,AVERAGE-BANDWIDTH=1700000,RESOLUTION=1920x1080,CODECS="avc1.640028"\nmedia.m3u8\n');
+      return;
+    }
+    if (req.url === '/media.m3u8') {
+      res.writeHead(200, { ...cors, 'content-type': 'application/vnd.apple.mpegurl' });
+      res.end('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXTINF:4,\nseg1.ts\n#EXTINF:4,\nseg2.ts\n#EXT-X-ENDLIST\n');
+      return;
+    }
+    if (/^\/seg[0-2]\.ts$/.test(req.url || '')) {
+      res.writeHead(200, { ...cors, 'content-type': 'video/mp2t', 'content-length': String(segment.length) });
+      res.end(segment);
+      return;
+    }
+    res.writeHead(404, cors);
+    res.end();
   });
   const probeAddress = await listen(probeServer);
   try {
-    const resource = await loadCdpNetworkResource(
+    const browserHls = await probeHlsViaCdp(
       session,
-      `http://127.0.0.1:${probeAddress.port}/protected`,
-      { headers: { 'X-Companion-Probe': 'yes' }, timeoutMs: 5000 }
+      `http://127.0.0.1:${probeAddress.port}/master.m3u8`,
+      { headers: { 'X-Companion-Probe': 'yes' }, sampleCount: 3, timeoutMs: 5000 }
     );
-    const browserProbe = { status: resource.status, body: resource.body.toString('utf8') };
-    console.log(JSON.stringify({ browserProbe }, null, 2));
-    if (browserProbe.status !== 200 || browserProbe.body !== 'selective-browser-probe-ok') {
-      console.error('Companion selective CDP headers could not load a protected network resource');
+    console.log(JSON.stringify({ browserHls: {
+      height: browserHls.quality?.height,
+      expectedMbps: browserHls.metrics?.expectedMbps,
+      samples: browserHls.samples?.length,
+      failureRate: browserHls.metrics?.failureRate,
+      browserProbe: browserHls.browserProbe
+    } }, null, 2));
+    const hlsOk = browserHls.browserProbe === true
+      && Number(browserHls.quality?.height) === 1080
+      && Number(browserHls.samples?.length) === 3
+      && Number(browserHls.metrics?.failureRate) === 0;
+    if (!hlsOk) {
+      console.error('Companion browser HLS fallback could not read a header-protected HLS stream');
       process.exitCode = 7;
     }
   } finally {
