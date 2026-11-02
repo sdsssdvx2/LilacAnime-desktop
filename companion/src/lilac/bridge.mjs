@@ -99,6 +99,7 @@ export class LilacBridge {
       path: prepared.path,
       vtt: prepared.vtt,
       ass: prepared.ass || null,
+      fonts: Array.isArray(prepared.fonts) ? prepared.fonts : [],
       label
     });
     return this.session.evaluate(`(() => {
@@ -120,12 +121,12 @@ export class LilacBridge {
         path: data.path,
         assUrl,
         assPath: data.ass ? data.path : null,
-        fonts: [],
+        fonts: data.fonts,
         source: 'user',
         saved: true,
         companion: true
       });
-      return { ok: true, path: data.path, ass: Boolean(data.ass) };
+      return { ok: true, path: data.path, ass: Boolean(data.ass), fonts: data.fonts.length };
     })()`);
   }
 }
