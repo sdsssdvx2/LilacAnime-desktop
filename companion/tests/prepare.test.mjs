@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { srtToVtt, smiToVtt, assToVtt } from '../src/subtitles/prepare.mjs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { srtToVtt, smiToVtt, assToVtt, prepareSubtitle } from '../src/subtitles/prepare.mjs';
 
 test('SRT converts comma timestamps to WebVTT', () => {
   const out = srtToVtt('1\r\n00:00:01,250 --> 00:00:03,500\r\n안녕\r\n');
@@ -22,4 +25,17 @@ test('ASS dialogue is preserved as plain VTT fallback', () => {
   assert.match(out, /00:00:01\.000 --> 00:00:03\.500/);
   assert.match(out, /위쪽\n둘째/);
   assert.doesNotMatch(out, /\\an8/);
+});
+
+test('ASS preparation exposes adjacent font files as file URLs', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lilac-companion-ass-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const assPath = path.join(dir, 'episode.ass');
+  await fs.writeFile(assPath, '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,hello');
+  await fs.writeFile(path.join(dir, 'Fancy Font.ttf'), 'not-a-real-font');
+  await fs.writeFile(path.join(dir, 'ignore.txt'), 'x');
+  const prepared = await prepareSubtitle(assPath);
+  assert.equal(prepared.fonts.length, 1);
+  assert.match(prepared.fonts[0], /^file:/);
+  assert.match(decodeURIComponent(prepared.fonts[0]), /Fancy Font\.ttf$/);
 });
