@@ -13,6 +13,7 @@ import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { SourceDecisionCache } from './source/decision-cache.mjs';
 import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
+import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
 
 const VERSION = '0.1.0';
@@ -24,7 +25,7 @@ const sourceAutoMode = String(process.env.LILAC_SOURCE_AUTO || 'safe').toLowerCa
 const sourceDecisionCacheMs = Number(process.env.LILAC_SOURCE_DECISION_CACHE_MS || process.env.LILAC_SOURCE_CACHE_MS || 15 * 60 * 1000);
 const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_MS || 2 * 60 * 1000);
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
-const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 25);
+const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 120);
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -213,10 +214,10 @@ async function watch() {
     subtitleChangedAt = Date.now();
   });
 
-  const switchSource = async (bridge, live, selected, reason, { cached = false, early = false } = {}) => {
+  const switchSource = async (bridge, live, selected, reason, { cached = false, early = false, entryStartedAt = 0 } = {}) => {
     if (!selected?.provider || selected.provider === live.episode?.provider) return false;
-    if (!early && Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
-      console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
+    if (!early && !withinSourceSwitchWindow(entryStartedAt, { maxSeconds: sourceAutoSwitchMaxSeconds })) {
+      console.log('[companion] source switch skipped: diagnosis finished outside the automatic switch window');
       return false;
     }
     if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return false;
@@ -271,6 +272,7 @@ async function watch() {
     }
 
     if (!sourceDecisions.canScan(key)) return;
+    const entryStartedAt = Date.now();
     const task = (async () => {
       let diagnosisConnection = null;
       try {
@@ -313,7 +315,7 @@ async function watch() {
           return;
         }
         if (!safety.switch) return;
-        await switchSource(diagnosisConnection.bridge, live, safety.selected, safety.reason);
+        await switchSource(diagnosisConnection.bridge, live, safety.selected, safety.reason, { entryStartedAt });
       } finally {
         try { diagnosisConnection?.session?.close(); } catch {}
       }
