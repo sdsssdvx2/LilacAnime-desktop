@@ -41,6 +41,7 @@ export class LilacBridge {
       const e = c.episode || {};
       const s = c.stream || {};
       const sub = typeof currentSubtitle !== 'undefined' && currentSubtitle ? currentSubtitle : {};
+      const seriesEpisodes = Array.isArray(c.seriesEpisodes) ? c.seriesEpisodes : [];
       return {
         anime: {
           provider: a.provider || '', id: a.id ?? null, mal_id: a.mal_id ?? null,
@@ -54,6 +55,7 @@ export class LilacBridge {
           postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || '',
           kind: e.kind || '', type: e.type || ''
         },
+        seriesEpisodes,
         stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
         playing: Boolean(document.querySelector('#video')),
@@ -94,7 +96,13 @@ export class LilacBridge {
       const list = value => Array.isArray(value) ? value : Array.isArray(value?.episodes) ? value.episodes : Array.isArray(value?.data?.episodes) ? value.data.episodes : Array.isArray(value?.data) ? value.data : [];
       if (provider === 'linkkf') {
         if (typeof window.lilac?.linkkfEpisodes !== 'function') return [];
-        return list(await window.lilac.linkkfEpisodes(anime.id || anime.postId));
+        const servers = list(await window.lilac.linkkfEpisodes(anime.id || anime.postId));
+        const flattened = [];
+        for (const server of servers) {
+          const episodes = Array.isArray(server?.episodes) ? server.episodes : [];
+          for (const episode of episodes) flattened.push({ ...episode, __companionServer: server?.name || server?.label || server?.server || '' });
+        }
+        return flattened.length ? flattened : servers;
       }
       if (typeof window.lilac?.providerDetail !== 'function') return [];
       return list(await window.lilac.providerDetail(anime));
@@ -120,8 +128,6 @@ export class LilacBridge {
     return this.session.evaluate(`(() => {
       if (typeof attachSubtitle !== 'function') throw new Error('attachSubtitle is unavailable');
       const data = ${payload};
-      // Lilac starts its online subtitle search in parallel with video resolving. Invalidate that in-flight
-      // search before attaching the user's local subtitle so a later Anissia/Kairan/Csora result cannot overwrite it.
       if (typeof subtitleSearchId !== 'undefined') ++subtitleSearchId;
       const old = Array.isArray(window.__lilacCompanionSubtitleUrls) ? window.__lilacCompanionSubtitleUrls : [];
       for (const url of old) { try { URL.revokeObjectURL(url); } catch {} }
@@ -153,6 +159,7 @@ export class LilacBridge {
       provider: resolved?.provider || resolved?.episode?.provider || '',
       anime: resolved?.anime || {},
       episode: resolved?.episode || {},
+      seriesEpisodes: Array.isArray(resolved?.seriesEpisodes) ? resolved.seriesEpisodes : [],
       title: String(title || ''),
       image: String(image || '')
     });
@@ -169,13 +176,13 @@ export class LilacBridge {
         image: data.image || '',
         anime,
         resolveKind: data.provider === 'linkkf' ? 'linkkf' : undefined,
-        seriesEpisodes: []
+        seriesEpisodes: Array.isArray(data.seriesEpisodes) ? data.seriesEpisodes : []
       };
       const resolver = () => data.provider === 'linkkf'
         ? window.lilac.linkkfResolve(ep)
         : window.lilac.providerResolve(ep);
       await resolveIntoPlayer(resolver, displayTitle + ' · ' + (ep.name || number + '화'), context, displayTitle, number);
-      return { ok: true, provider: data.provider, episode: number };
+      return { ok: true, provider: data.provider, episode: number, seriesEpisodes: context.seriesEpisodes.length };
     })()`);
   }
 }
