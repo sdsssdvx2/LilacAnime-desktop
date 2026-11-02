@@ -61,7 +61,8 @@ async function connectBridge({ launch = true } = {}) {
 function playbackRef(store, context) {
   const anime = store.animeKey(context.anime);
   const ep = context.episode?.number || context.episode?.id || context.episode?.url || '';
-  return `${anime}|${ep}|${context.episode?.provider || ''}|${context.stream?.server || ''}`;
+  const entry = Number(context.playbackSessionId || 0) || 0;
+  return `${anime}|${ep}|${context.episode?.provider || ''}|${context.stream?.server || ''}|entry:${entry}`;
 }
 
 function sourceEpisodeKey(context) {
@@ -81,17 +82,17 @@ async function collectVariants(bridge, anime) {
     ...synonyms
   ].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 8);
   const output = new Set(seeds);
-  for (const seed of seeds.slice(0, 4)) {
-    try { for (const value of await bridge.titleVariants(seed)) output.add(value); }
-    catch {}
+  const [variantGroups, resolved] = await Promise.all([
+    Promise.all(seeds.slice(0, 4).map(async seed => {
+      try { return await bridge.titleVariants(seed); } catch { return []; }
+    })),
+    bridge.resolveTitles([anime]).catch(() => [])
+  ]);
+  for (const group of variantGroups) for (const value of (Array.isArray(group) ? group : [])) output.add(value);
+  for (const item of (Array.isArray(resolved) ? resolved : [])) {
+    if (item?.ko) output.add(item.ko);
+    if (item?.en) output.add(item.en);
   }
-  try {
-    const resolved = await bridge.resolveTitles([anime]);
-    for (const item of (Array.isArray(resolved) ? resolved : [])) {
-      if (item?.ko) output.add(item.ko);
-      if (item?.en) output.add(item.en);
-    }
-  } catch {}
   return [...output];
 }
 
@@ -221,8 +222,18 @@ async function watch() {
         if (!start?.anime || sourceEpisodeKey(start) !== key) return;
         console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
         const quick = await scanSources(diagnosisConnection.bridge, start, { sampleCount: 1, concurrency: 2 });
+        const afterQuick = await diagnosisConnection.bridge.playbackContext().catch(() => null);
+        if (!afterQuick?.anime || sourceEpisodeKey(afterQuick) !== key) {
+          console.log('[companion] source scan cancelled: playback changed during quick scan');
+          return;
+        }
         printSourceScan('auto quick scan (all providers)', quick);
         const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3 });
+        const afterDeep = await diagnosisConnection.bridge.playbackContext().catch(() => null);
+        if (!afterDeep?.anime || sourceEpisodeKey(afterDeep) !== key) {
+          console.log('[companion] source scan cancelled: playback changed during deep scan');
+          return;
+        }
         printSourceScan('auto deep scan (top providers)', deep);
         const selected = deep.decision?.selected;
         const safety = safeAutoSwitchDecision(deep, start.episode.provider);
@@ -230,8 +241,7 @@ async function watch() {
         sourceDone.set(key, cacheTime);
         console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
 
-        const live = await diagnosisConnection.bridge.playbackContext();
-        if (!live?.anime || sourceEpisodeKey(live) !== key) return;
+        const live = afterDeep;
         if (live.episode?.provider !== start.episode?.provider) {
           console.log(`[companion] source switch skipped: provider changed during scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
           return;
@@ -285,7 +295,14 @@ async function watch() {
       }
 
       const context = await connection.bridge.playbackContext();
-      if (!context?.anime || !context?.episode?.number) { await sleep(900); continue; }
+      if (!context?.anime || !context?.episode?.number) {
+        if (!context?.activePlayer) {
+          handledRef = '';
+          lastAttachedPath = '';
+        }
+        await sleep(900);
+        continue;
+      }
       const ref = playbackRef(state, context);
 
       if (context.subtitle?.source === 'user' && context.subtitle.path && context.subtitle.path !== lastAttachedPath && await exists(context.subtitle.path)) {
@@ -302,18 +319,18 @@ async function watch() {
         await sleep(900);
         continue;
       }
+      console.log(`[companion] playback detected: ${context.anime.title || context.anime.title_english || context.anime.romaji || 'unknown'} · E${context.episode.number} · entry ${context.playbackSessionId || 0}`);
       await sleep(650);
       const stable = await connection.bridge.playbackContext();
       if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
 
-      const aliases = await collectVariants(connection.bridge, stable.anime);
       const preference = state.subtitlePreference(stable.anime, stable.episode.number);
       const manual = preference?.kind === 'user' ? preference : null;
       const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
         anime: stable.anime,
         episode: stable.episode.number,
         episodeMeta: stable.episode,
-        aliases,
+        aliases: [],
         files: index.files,
         manual
       });
