@@ -185,6 +185,10 @@ async function watch() {
 
       const live = await connection.bridge.playbackContext();
       if (!live?.anime || sourceEpisodeKey(live) !== key) return;
+      if (live.episode?.provider !== start.episode?.provider) {
+        console.log(`[companion] source switch skipped: provider changed during scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
+        return;
+      }
       if (!safety.switch) return;
       if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
         console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
