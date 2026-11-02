@@ -30,7 +30,8 @@ try {
   }
 
   await session.evaluate(`(() => {
-    currentPlaybackContext = {};
+    currentPlaybackContext = { seriesEpisodes: Array.from({ length: 26 }, (_, i) => ({ number: i + 1 })) };
+    if (typeof playbackRequestId !== 'undefined') playbackRequestId = 41;
     document.body.classList.add('player-mode');
     const view = document.querySelector('#playerView');
     if (view) view.classList.add('active');
@@ -44,10 +45,25 @@ try {
   const recoveredOk = recovered?.anime?.title === 'Sword of Coming'
     && Number(recovered?.episode?.number) === 1
     && recovered?.episode?.provider === 'reanime'
-    && recovered?.activePlayer === true;
+    && recovered?.activePlayer === true
+    && Number(recovered?.playbackSessionId) === 41
+    && recovered?.anime?.companionSeriesEpisodes?.length === 26;
   if (!recoveredOk) {
-    console.error('Companion could not recover playback identity from the active Lilac player DOM');
+    console.error('Companion could not recover playback identity/session from the active Lilac player DOM');
     process.exitCode = 3;
+  }
+
+  await session.evaluate(`(() => {
+    if (typeof playbackRequestId !== 'undefined') playbackRequestId = 42;
+    const title = document.querySelector('#playerTitle');
+    if (title) title.textContent = 'Sword of Coming · 1화';
+    return true;
+  })()`);
+  const reentered = await bridge.playbackContext();
+  console.log(JSON.stringify({ reenteredPlayback: reentered }, null, 2));
+  if (Number(reentered?.episode?.number) !== 1 || Number(reentered?.playbackSessionId) !== 42) {
+    console.error('Companion could not distinguish re-entering the same episode as a new playback entry');
+    process.exitCode = 4;
   }
 } finally {
   session.close();
