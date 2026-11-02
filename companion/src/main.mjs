@@ -19,20 +19,29 @@ async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
 }
 
+async function readyConnection() {
+  const { session, target } = await connectLilacCdp({ port: cdpPort });
+  const bridge = new LilacBridge(session);
+  try {
+    await bridge.waitUntilReady();
+    return { session, bridge, target };
+  } catch (error) {
+    session.close();
+    throw error;
+  }
+}
+
 async function connectBridge({ launch = true } = {}) {
   try {
-    const { session, target } = await connectLilacCdp({ port: cdpPort });
-    return { session, bridge: new LilacBridge(session), target };
+    return await readyConnection();
   } catch (first) {
     if (!launch) throw first;
     await launchLilacForCompanion(cdpPort);
     let last = first;
     for (let i = 0; i < 40; i++) {
       await sleep(500);
-      try {
-        const { session, target } = await connectLilacCdp({ port: cdpPort });
-        return { session, bridge: new LilacBridge(session), target };
-      } catch (error) { last = error; }
+      try { return await readyConnection(); }
+      catch (error) { last = error; }
     }
     throw last;
   }
@@ -119,7 +128,6 @@ async function watch() {
       if (!connection) {
         connection = await connectBridge({ launch: true });
         const features = await connection.bridge.features();
-        if (!features.playbackContext) throw new Error('Lilac playback context is not accessible');
         console.log(`[companion] connected: ${connection.target.title || connection.target.url}`);
         console.log(`[companion] features: ${JSON.stringify(features)}`);
         handledRef = '';
