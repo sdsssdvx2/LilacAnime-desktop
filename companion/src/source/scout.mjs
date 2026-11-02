@@ -3,6 +3,12 @@ import { PROVIDERS, pickAnimeCandidate, pickEpisode } from './provider-map.mjs';
 import { probeHls } from './hls-probe.mjs';
 import { probeDirect } from './direct-probe.mjs';
 import { compareVisualSources } from './visual-quality.mjs';
+import {
+  clearResolutionAdvantage,
+  compareProbeQuality,
+  descriptiveQualityScore,
+  visuallyComparableResolutions
+} from './quality-policy.mjs';
 
 function streamHeaders(stream = {}) {
   const raw = stream.headers;
@@ -128,17 +134,28 @@ async function probeResolved(resolved, sampleCount) {
 }
 
 export function rankSourceResults(results = []) {
-  return results.map(item => {
+  const ranked = results.map(item => {
     if (!item?.ok || !item.value) return { ...item, rankScore: -Infinity, stable: false };
     const probe = item.value.probe;
     if (!probe) return { ...item, rankScore: 0, stable: false };
-    const metrics = probe.metrics || {}, quality = probe.quality || {};
+    const metrics = probe.metrics || {};
     const stable = (metrics.stability ?? 0) >= 70 && (metrics.failureRate ?? 1) <= 0.34;
-    const height = Number(quality.height || 0);
-    const bandwidthMbps = Number(quality.averageBandwidth || quality.bandwidth || 0) / 1_000_000;
-    const rankScore = (stable ? 1_000_000 : 0) + height * 1000 + bandwidthMbps * 10 + Number(metrics.stability || 0);
-    return { ...item, rankScore, stable };
-  }).sort((a, b) => b.rankScore - a.rankScore);
+    const qualityScore = descriptiveQualityScore(probe);
+    const rankScore = (stable ? 1_000_000 : 0) + qualityScore + Number(metrics.stability || 0);
+    return { ...item, rankScore, stable, qualityScore };
+  });
+
+  return ranked.sort((a, b) => {
+    if (a.stable !== b.stable) return a.stable ? -1 : 1;
+    if (!a?.value?.probe && !b?.value?.probe) return 0;
+    if (!a?.value?.probe) return 1;
+    if (!b?.value?.probe) return -1;
+    const quality = compareProbeQuality(a.value.probe, b.value.probe);
+    if (quality) return quality;
+    const stability = Number(b.value.probe?.metrics?.stability || 0) - Number(a.value.probe?.metrics?.stability || 0);
+    if (Math.abs(stability) >= 3) return stability;
+    return Number(b.rankScore || 0) - Number(a.rankScore || 0);
+  });
 }
 
 export function chooseBestSource(results = []) {
@@ -146,20 +163,14 @@ export function chooseBestSource(results = []) {
   const usable = ranked.filter(item => item.ok && item.value?.probe);
   if (!usable.length) return { selected: null, reason: 'no-source', ranked };
   const stable = usable.filter(item => item.stable);
-  const pool = stable.length ? [...stable] : [...usable];
+  const pool = stable.length ? stable : usable;
   const best = pool[0];
-  const next = pool[1];
   if (!best) return { selected: null, reason: 'no-source', ranked };
-
-  const bq = best.value.probe?.quality || {}, nq = next?.value?.probe?.quality || {};
-  const sameResolution = next && Number(bq.height || 0) === Number(nq.height || 0);
-  const bBitrate = Number(bq.averageBandwidth || bq.bandwidth || 0);
-  const nBitrate = Number(nq.averageBandwidth || nq.bandwidth || 0);
-  const bitrateClose = sameResolution && bBitrate && nBitrate && Math.abs(bBitrate - nBitrate) / Math.max(bBitrate, nBitrate) < 0.08;
-  if (bitrateClose) {
-    pool.sort((a, b) => Number(b.value.probe?.metrics?.stability || 0) - Number(a.value.probe?.metrics?.stability || 0));
-  }
-  return { selected: pool[0]?.value || null, reason: stable.length ? 'stable-quality-first' : 'fallback-no-stable-source', ranked };
+  return {
+    selected: best.value || null,
+    reason: stable.length ? 'stable-resolution-bitrate-quality' : 'fallback-no-stable-source',
+    ranked
+  };
 }
 
 export function safeAutoSwitchDecision(scan, currentProvider) {
@@ -184,16 +195,33 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
 
   if (!bestStable || bestStability < 80) return { switch: false, reason: 'winner-not-stable-enough', selected };
 
-  if (bestHeight >= 720 && bestHeight >= currentHeight + 180) {
-    return { switch: true, reason: 'clear-resolution-win', selected };
-  }
-  if (!currentStable && bestHeight >= currentHeight) {
+  if (!currentStable && (!currentHeight || !bestHeight || bestHeight >= currentHeight)) {
     return { switch: true, reason: 'current-unstable', selected };
   }
-  if (scan.visual?.confidence === 'high' && scan.visual?.selectedProvider === selected.provider && bestHeight === currentHeight) {
+
+  // Unknown resolution is unknown, not 0p. Never manufacture a resolution win
+  // merely because one provider did not expose its dimensions during this probe.
+  if (!bestHeight || !currentHeight) {
+    return { switch: false, reason: 'quality-evidence-incomplete', selected };
+  }
+
+  if (clearResolutionAdvantage(bestProbe, currentProbe)) {
+    return { switch: true, reason: 'clear-resolution-win', selected };
+  }
+
+  if (scan.visual?.confidence === 'high'
+      && scan.visual?.selectedProvider === selected.provider
+      && visuallyComparableResolutions(bestHeight, currentHeight)) {
     return { switch: true, reason: 'visual-quality-win', selected };
   }
-  return { switch: false, reason: scan.visual?.reason || 'same-resolution-needs-visual-compare', selected };
+
+  return {
+    switch: false,
+    reason: scan.visual?.reason || (visuallyComparableResolutions(bestHeight, currentHeight)
+      ? 'near-resolution-needs-visual-evidence'
+      : 'quality-win-not-large-enough'),
+    selected
+  };
 }
 
 async function collectSourceAliases(bridge, anime = {}) {
@@ -262,14 +290,17 @@ export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, v
   if (visual) {
     const ranked = rankSourceResults(deep.results);
     const stable = ranked.filter(item => item.ok && item.stable && item.value?.probe);
-    const bestHeight = Number(stable[0]?.value?.probe?.quality?.height || 0);
+    const anchorHeight = Number(stable[0]?.value?.probe?.quality?.height || 0);
     const comparable = stable
-      .filter(item => Number(item.value?.probe?.quality?.height || 0) === bestHeight)
+      .filter(item => {
+        const height = Number(item.value?.probe?.quality?.height || 0);
+        return anchorHeight > 0 && height > 0 && visuallyComparableResolutions(anchorHeight, height);
+      })
       .slice(0, 3)
       .map(item => item.value);
-    if (bestHeight > 0 && comparable.length >= 2) {
+    if (comparable.length >= 2) {
       try {
-        visualResult = await compareVisualSources(comparable, { context, currentProvider, maxSources: 3 });
+        visualResult = await compareVisualSources(comparable, { context, currentProvider, maxSources: 3, maxResolutionRatio: 1.18 });
         if (visualResult?.confidence === 'high' && visualResult.selectedProvider) {
           const winner = ranked.find(item => item.ok && item.stable && item.value?.provider === visualResult.selectedProvider);
           if (winner?.value) decision = { ...deep.decision, selected: winner.value, reason: 'visual-quality-high-confidence' };
