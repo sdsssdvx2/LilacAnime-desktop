@@ -7,7 +7,7 @@ import { launchLilacForCompanion } from './lilac/launcher.mjs';
 import { normalizeTitle } from './normalize.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
-import { reverseResolveLocalAliases } from './subtitles/alias-fallback.mjs';
+import { reverseResolveLocalAliases, localAliasCandidates } from './subtitles/alias-fallback.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
@@ -72,24 +72,34 @@ function sourceEpisodeKey(context) {
 }
 
 async function collectVariants(bridge, anime) {
+  const synonyms = Array.isArray(anime.synonyms) ? anime.synonyms : String(anime.synonyms || '').split(/[,|]/);
   const seeds = [...new Set([
     anime.title,
     anime.title_english,
     anime.romaji,
-    anime.title_japanese
-  ].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 3);
-  const output = new Set();
-  for (const seed of seeds) {
+    anime.title_japanese,
+    ...synonyms
+  ].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 8);
+  const output = new Set(seeds);
+  for (const seed of seeds.slice(0, 4)) {
     try { for (const value of await bridge.titleVariants(seed)) output.add(value); }
     catch {}
   }
+  try {
+    const resolved = await bridge.resolveTitles([anime]);
+    for (const item of (Array.isArray(resolved) ? resolved : [])) {
+      if (item?.ko) output.add(item.ko);
+      if (item?.en) output.add(item.en);
+    }
+  } catch {}
   return [...output];
 }
 
 async function chooseLocalSubtitleWithFallback(bridge, { anime, episode, episodeMeta, aliases, files, manual }) {
   let effectiveAliases = aliases;
+  const candidates = localAliasCandidates({ anime, episode, episodeMeta, files }).map(item => item.query);
   let match = chooseSubtitleMatch({ anime, episode, episodeMeta, aliases: effectiveAliases, files, manual });
-  if (match.best || manual) return { match, aliases: effectiveAliases, fallback: [] };
+  if (match.best || manual) return { match, aliases: effectiveAliases, fallback: [], candidates };
 
   const fallback = await reverseResolveLocalAliases(bridge, {
     anime,
@@ -98,10 +108,10 @@ async function chooseLocalSubtitleWithFallback(bridge, { anime, episode, episode
     aliases: effectiveAliases,
     files
   }).catch(() => []);
-  if (!fallback.length) return { match, aliases: effectiveAliases, fallback: [] };
+  if (!fallback.length) return { match, aliases: effectiveAliases, fallback: [], candidates };
   effectiveAliases = [...new Set([...effectiveAliases, ...fallback])];
   match = chooseSubtitleMatch({ anime, episode, episodeMeta, aliases: effectiveAliases, files, manual });
-  return { match, aliases: effectiveAliases, fallback };
+  return { match, aliases: effectiveAliases, fallback, candidates };
 }
 
 async function doctor() {
@@ -125,6 +135,7 @@ async function doctor() {
         files: index.files,
         manual: null
       });
+      if (resolved.candidates.length) console.log('[companion] local alias candidates:', resolved.candidates);
       if (resolved.fallback.length) console.log('[companion] reverse-resolved local aliases:', resolved.fallback);
       const match = resolved.match;
       console.log('[companion] best local subtitle:', match.best ? { confidence: match.confidence, score: match.best.score, path: match.best.file.path, reasons: match.best.reasons } : null);
@@ -139,8 +150,10 @@ function printSourceScan(name, scan) {
     const probe = item.value.probe;
     if (!probe) { console.log(`  ${item.provider}: ${item.value.kind} · ${item.value.note || 'resolved'}`); continue; }
     const q = probe.quality, m = probe.metrics;
-    console.log(`  ${item.provider}: ${q.height ? `${q.height}p` : '?p'} · ${(q.bandwidth || 0) ? `${((q.averageBandwidth || q.bandwidth) / 1_000_000).toFixed(2)} Mbps` : '? Mbps'} · stability ${m.stability} · min ${m.minMbps == null ? '?' : m.minMbps.toFixed(2)} Mbps · TTFB95 ${m.p95TtfbMs == null ? '?' : Math.round(m.p95TtfbMs)} ms`);
+    const extra = item.value.note ? ` · ${item.value.note}` : '';
+    console.log(`  ${item.provider}: ${q.height ? `${q.height}p` : '?p'} · ${(q.bandwidth || q.averageBandwidth || 0) ? `${((q.averageBandwidth || q.bandwidth) / 1_000_000).toFixed(2)} Mbps` : '? Mbps'} · stability ${m.stability} · min ${m.minMbps == null ? '?' : m.minMbps.toFixed(2)} Mbps · TTFB95 ${m.p95TtfbMs == null ? '?' : Math.round(m.p95TtfbMs)} ms${extra}`);
   }
+  if (scan.visual) console.log(`[companion] visual compare: ${scan.visual.selectedProvider || 'none'} · ${scan.visual.confidence || 'none'} · ${scan.visual.reason || 'n/a'}`);
   const selected = scan.decision?.selected;
   console.log(`[companion] recommendation: ${selected?.provider || 'none'} (${scan.decision?.reason || 'n/a'})`);
 }
@@ -205,7 +218,9 @@ async function watch() {
       if (!start?.anime || sourceEpisodeKey(start) !== key) return;
       console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
       const quick = await scanSources(connection.bridge, start, { sampleCount: 1 });
+      printSourceScan('auto quick scan (all providers)', quick);
       const deep = await deepScanTop(connection.bridge, quick, { count: 3, sampleCount: 3 });
+      printSourceScan('auto deep scan (top providers)', deep);
       sourceDone.set(key, Date.now());
       const selected = deep.decision?.selected;
       const safety = safeAutoSwitchDecision(deep, start.episode.provider);
@@ -293,12 +308,13 @@ async function watch() {
       });
       const match = resolved.match;
       if (resolved.fallback.length) {
-        console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 6).join(' | ')}`);
+        console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 8).join(' | ')}`);
       }
 
       handledRef = ref;
       await state.touchRecent(stable.anime, stable.episode.number);
       if (!match.selected) {
+        if (resolved.candidates.length) console.log(`[companion] local alias candidates tried: ${resolved.candidates.slice(0, 10).join(' | ')}`);
         if (match.best) console.log(`[companion] local subtitle not auto-applied (${match.confidence}, score ${match.best.score}): ${match.best.file.path}`);
         else console.log('[companion] no local subtitle candidate; Lilac keeps its normal subtitle flow');
         continue;
