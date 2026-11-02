@@ -7,6 +7,12 @@ export class LilacBridge {
     return this.session.evaluate(`(() => ({
       lilac: Boolean(window.lilac),
       titleVariants: typeof window.lilac?.titleVariants === 'function',
+      catalogKoreanSearch: typeof window.lilac?.catalogKoreanSearch === 'function',
+      providerCatalog: typeof window.lilac?.providerCatalog === 'function',
+      providerDetail: typeof window.lilac?.providerDetail === 'function',
+      prepareEpisodeStream: typeof window.lilac?.prepareEpisodeStream === 'function',
+      linkkfSearch: typeof window.lilac?.linkkfSearch === 'function',
+      linkkfEpisodes: typeof window.lilac?.linkkfEpisodes === 'function',
       attachSubtitle: typeof attachSubtitle === 'function',
       playbackContext: typeof currentPlaybackContext !== 'undefined',
       preferAiSubtitle: typeof preferAiSubtitle === 'function'
@@ -30,9 +36,10 @@ export class LilacBridge {
         },
         episode: {
           provider: e.provider || '', id: e.id ?? null, number: Number(e.number || 0) || null,
-          name: e.name || '', url: e.url || '', animeId: e.animeId ?? null
+          name: e.name || '', url: e.url || '', animeId: e.animeId ?? null,
+          postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || ''
         },
-        stream: { url: s.url || '', server: s.server || '', kind: s.kind || '' },
+        stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
         playing: Boolean(document.querySelector('#video')),
         currentTime: Number(document.querySelector('#video')?.currentTime || 0)
@@ -46,6 +53,44 @@ export class LilacBridge {
       if (typeof window.lilac?.titleVariants !== 'function') return [];
       const result = await window.lilac.titleVariants(${value});
       return Array.isArray(result) ? result : [];
+    })()`);
+  }
+
+  async searchProvider(provider, query) {
+    const p = JSON.stringify(String(provider || ''));
+    const q = JSON.stringify(String(query || ''));
+    return this.session.evaluate(`(async () => {
+      const provider = ${p}, query = ${q};
+      const list = value => Array.isArray(value) ? value : Array.isArray(value?.data) ? value.data : Array.isArray(value?.results) ? value.results : Array.isArray(value?.items) ? value.items : [];
+      if (provider === 'linkkf' && typeof window.lilac?.linkkfSearch === 'function') return list(await window.lilac.linkkfSearch(query));
+      if (typeof window.lilac?.catalogKoreanSearch === 'function') {
+        const found = list(await window.lilac.catalogKoreanSearch(provider, query));
+        if (found.length) return found;
+      }
+      if (typeof window.lilac?.providerCatalog === 'function') return list(await window.lilac.providerCatalog(provider, query, 0, ''));
+      return [];
+    })()`);
+  }
+
+  async providerEpisodes(provider, anime) {
+    const payload = JSON.stringify({ provider: String(provider || ''), anime });
+    return this.session.evaluate(`(async () => {
+      const { provider, anime } = ${payload};
+      const list = value => Array.isArray(value) ? value : Array.isArray(value?.episodes) ? value.episodes : Array.isArray(value?.data?.episodes) ? value.data.episodes : Array.isArray(value?.data) ? value.data : [];
+      if (provider === 'linkkf') {
+        if (typeof window.lilac?.linkkfEpisodes !== 'function') return [];
+        return list(await window.lilac.linkkfEpisodes(anime.id || anime.postId));
+      }
+      if (typeof window.lilac?.providerDetail !== 'function') return [];
+      return list(await window.lilac.providerDetail(anime));
+    })()`);
+  }
+
+  async prepareEpisodeStream(episode) {
+    const payload = JSON.stringify(episode || {});
+    return this.session.evaluate(`(async () => {
+      if (typeof window.lilac?.prepareEpisodeStream !== 'function') throw new Error('prepareEpisodeStream is unavailable');
+      return await window.lilac.prepareEpisodeStream(${payload});
     })()`);
   }
 
