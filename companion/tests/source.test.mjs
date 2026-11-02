@@ -4,6 +4,7 @@ import { parseMasterPlaylist, parseMediaPlaylist } from '../src/source/hls-probe
 import { pickAnimeCandidate, pickEpisode } from '../src/source/provider-map.mjs';
 import { chooseBestSource, safeAutoSwitchDecision, scanSources } from '../src/source/scout.mjs';
 import { bestAlignedSequenceFrame } from '../src/source/visual-quality.mjs';
+import { codecEfficiencyFactor, visuallyComparableResolutions } from '../src/source/quality-policy.mjs';
 
 test('master playlist parses and ranks 1080p ahead of 720p', () => {
   const master = `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1"\n720/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1"\n1080/index.m3u8`;
@@ -40,14 +41,14 @@ test('episode mapping finds the requested episode without confusing resolution',
   assert.equal(pickEpisode(episodes, 9)?.name, 'Show - 09 [1080p]');
 });
 
-const source = (provider, height, bitrate, stability, failureRate = 0, mappingConfidence = 'high') => ({
+const source = (provider, height, bitrate, stability, failureRate = 0, mappingConfidence = 'high', codecs = '') => ({
   provider,
   ok: true,
   value: {
     provider,
     mappingConfidence,
     probe: {
-      quality: { height, bandwidth: bitrate },
+      quality: { height, width: height ? Math.round(height * 16 / 9) : null, bandwidth: bitrate, codecs },
       metrics: { stability, failureRate }
     }
   }
@@ -116,6 +117,32 @@ test('near-identical quality prefers the more stable source', () => {
   assert.equal(result.selected?.provider, 'miruro');
 });
 
+test('near resolutions can prefer materially higher bitrate instead of nominal height', () => {
+  const result = chooseBestSource([
+    source('reanime', 804, 1_500_000, 98),
+    source('miruro', 720, 3_000_000, 98)
+  ]);
+  assert.equal(result.selected?.provider, 'miruro');
+});
+
+test('large 1080p over 720p resolution advantage remains primary when bitrate is reasonable', () => {
+  const result = chooseBestSource([
+    source('reanime', 720, 3_500_000, 98),
+    source('miruro', 1080, 3_000_000, 96)
+  ]);
+  assert.equal(result.selected?.provider, 'miruro');
+});
+
+test('codec efficiency is considered conservatively for bitrate evidence', () => {
+  assert.ok(codecEfficiencyFactor('av01.0.08M.08') > codecEfficiencyFactor('avc1.640028'));
+  assert.ok(codecEfficiencyFactor('hvc1.1.6.L120') > codecEfficiencyFactor('avc1.640028'));
+});
+
+test('804p and 720p are close enough for aligned visual comparison, unlike 1080p and 720p', () => {
+  assert.equal(visuallyComparableResolutions(804, 720), true);
+  assert.equal(visuallyComparableResolutions(1080, 720), false);
+});
+
 test('safe auto switch allows a clear 1080p over 720p win', () => {
   const results = [
     source('reanime', 720, 3_000_000, 95),
@@ -128,6 +155,43 @@ test('safe auto switch allows a clear 1080p over 720p win', () => {
   assert.equal(decision.selected?.provider, 'miruro');
 });
 
+test('unknown current resolution is never treated as 0p for a fake resolution win', () => {
+  const results = [
+    source('reanime', null, null, 94),
+    source('miruro', 720, 2_470_000, 100)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, false);
+  assert.equal(decision.reason, 'quality-evidence-incomplete');
+});
+
+test('safe auto switch waits for visual evidence between near resolutions', () => {
+  const results = [
+    source('reanime', 804, 2_300_000, 98),
+    source('miruro', 720, 2_900_000, 99)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, false);
+  assert.ok(['near-resolution-needs-visual-evidence', 'same-resolution-needs-visual-compare'].includes(decision.reason));
+});
+
+test('safe auto switch accepts high-confidence visual winner between near resolutions', () => {
+  const results = [
+    source('reanime', 804, 2_300_000, 98),
+    source('miruro', 720, 2_900_000, 99)
+  ];
+  const scan = {
+    results,
+    decision: chooseBestSource(results),
+    visual: { confidence: 'high', selectedProvider: 'miruro', reason: 'consistent-visual-win' }
+  };
+  const decision = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(decision.switch, true);
+  assert.equal(decision.reason, 'visual-quality-win');
+});
+
 test('safe auto switch does not choose between stable 1080p sources without visual comparison', () => {
   const results = [
     source('reanime', 1080, 4_500_000, 90),
@@ -136,7 +200,7 @@ test('safe auto switch does not choose between stable 1080p sources without visu
   const scan = { results, decision: chooseBestSource(results) };
   const decision = safeAutoSwitchDecision(scan, 'reanime');
   assert.equal(decision.switch, false);
-  assert.equal(decision.reason, 'same-resolution-needs-visual-compare');
+  assert.equal(decision.reason, 'near-resolution-needs-visual-evidence');
 });
 
 test('safe auto switch replaces an unstable source at the same resolution', () => {
