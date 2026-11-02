@@ -36,14 +36,21 @@ function htmlEntities(text) {
 }
 
 function cleanCueText(text) {
-  const stripped = String(text || '')
+  // Match Lilac's SMI normalization order: physical source line breaks are formatting noise,
+  // while <br> / </p> are semantic subtitle line breaks. Flatten the source first so
+  // "first<br>\r\nsecond" becomes "first\nsecond", never "first\n\nsecond" (a blank
+  // line terminates a WebVTT cue and would make the second line disappear).
+  const flattened = String(text || '')
+    .replace(/\s*[\r\n]+\s*/g, ' ')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\r/g, '');
-  return htmlEntities(stripped)
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/<\/p\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  return htmlEntities(flattened)
+    .split(/\r?\n|\r/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n')
+    .replace(/-->/g, '→')
     .trim();
 }
 
