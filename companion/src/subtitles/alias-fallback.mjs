@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { normalizeTitle, extractSeason, extractYear, extractEpisodeKind } from '../normalize.mjs';
+import { normalizeTitle, extractSeason, extractEpisodeKind } from '../normalize.mjs';
 import { animeAliases } from './matcher.mjs';
 
 const uniq = values => [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
@@ -17,7 +17,7 @@ function cleanGroupTitle(value = '') {
     .trim();
 }
 
-function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [], limit = 8 } = {}) {
+function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [], limit = 6 } = {}) {
   const targetEpisode = Number(episode) || null;
   const targetYear = Number(anime.year || 0) || null;
   const targetSeason = extractSeason([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
@@ -58,8 +58,36 @@ function aliasesMatch(currentAliases, variants) {
   return variants.some(value => current.has(normalizeTitle(value)));
 }
 
+function candidateAliases(candidate = {}) {
+  const synonyms = Array.isArray(candidate.synonyms) ? candidate.synonyms : String(candidate.synonyms || '').split(/[,|]/);
+  return uniq([candidate.title, candidate.title_english, candidate.title_japanese, candidate.romaji, ...synonyms]);
+}
+
+function sameIdentity(anime = {}, candidate = {}, currentAliases = []) {
+  const currentAni = Number(anime.anilistId || 0) || null;
+  const currentMal = Number(anime.malId || anime.mal_id || 0) || null;
+  const candidateAni = Number(candidate.anilistId || candidate.anilist_id || 0) || null;
+  const candidateMal = Number(candidate.malId || candidate.mal_id || 0) || null;
+  if (currentAni && candidateAni && currentAni === candidateAni) return true;
+  if (currentMal && candidateMal && currentMal === candidateMal) return true;
+  return aliasesMatch(currentAliases, candidateAliases(candidate));
+}
+
+async function providerSearchResolves(bridge, query, anime, currentAliases) {
+  const providers = uniq([anime.provider, 'reanime', 'miruro', 'linkkf']).filter(Boolean).slice(0, 4);
+  for (const provider of providers) {
+    let found = [];
+    try { found = await bridge.searchProvider(provider, query); } catch {}
+    for (const candidate of (Array.isArray(found) ? found : []).slice(0, 8)) {
+      if (!sameIdentity(anime, candidate, currentAliases)) continue;
+      return candidateAliases(candidate);
+    }
+  }
+  return [];
+}
+
 export async function reverseResolveLocalAliases(bridge, {
-  anime = {}, episode, episodeMeta = {}, aliases = [], files = [], maxQueries = 8
+  anime = {}, episode, episodeMeta = {}, aliases = [], files = [], maxQueries = 6
 } = {}) {
   const currentAliases = animeAliases(anime, aliases);
   const candidates = localGroupCandidates({ anime, episode, episodeMeta, files, limit: maxQueries });
@@ -68,9 +96,13 @@ export async function reverseResolveLocalAliases(bridge, {
   for (const candidate of candidates) {
     let variants = [];
     try { variants = await bridge.titleVariants(candidate.query); } catch {}
-    if (!Array.isArray(variants) || !variants.length) continue;
-    if (!aliasesMatch(currentAliases, variants)) continue;
-    resolved.push(candidate.query, candidate.parent, ...variants);
+    if (Array.isArray(variants) && aliasesMatch(currentAliases, variants)) {
+      resolved.push(candidate.query, candidate.parent, ...variants);
+      continue;
+    }
+
+    const providerAliases = await providerSearchResolves(bridge, candidate.query, anime, currentAliases);
+    if (providerAliases.length) resolved.push(candidate.query, candidate.parent, ...providerAliases);
   }
 
   return uniq(resolved);
