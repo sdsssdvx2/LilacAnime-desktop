@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { connectLilacCdp } from './lilac/cdp.mjs';
 import { LilacBridge } from './lilac/bridge.mjs';
+import { launchLilacForCompanion } from './lilac/launcher.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
@@ -18,25 +18,13 @@ async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
 }
 
-async function maybeLaunchLilac() {
-  const executable = process.env.LILAC_EXE;
-  if (!executable) return false;
-  if (!(await exists(executable))) throw new Error(`LILAC_EXE does not exist: ${executable}`);
-  const child = spawn(executable, [`--remote-debugging-port=${cdpPort}`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false
-  });
-  child.unref();
-  return true;
-}
-
 async function connectBridge({ launch = true } = {}) {
   try {
     const { session, target } = await connectLilacCdp({ port: cdpPort });
     return { session, bridge: new LilacBridge(session), target };
   } catch (first) {
-    if (!launch || !(await maybeLaunchLilac())) throw first;
+    if (!launch) throw first;
+    await launchLilacForCompanion(cdpPort);
     let last = first;
     for (let i = 0; i < 40; i++) {
       await sleep(500);
