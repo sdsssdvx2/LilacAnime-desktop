@@ -1,0 +1,42 @@
+name: Lilac Companion CI
+
+on:
+  push:
+    branches: [companion-mvp]
+    paths:
+      - 'companion/**'
+      - '.github/workflows/companion-ci.yml'
+  pull_request:
+    paths:
+      - 'companion/**'
+      - '.github/workflows/companion-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: companion/package.json
+      - name: Syntax check
+        shell: bash
+        run: |
+          node --check src/main.mjs
+          node --check src/lilac/cdp.mjs
+          node --check src/lilac/bridge.mjs
+          node --check src/subtitles/indexer.mjs
+          node --check src/subtitles/matcher.mjs
+          node --check src/subtitles/prepare.mjs
+      - name: Tests
+        run: npm test
