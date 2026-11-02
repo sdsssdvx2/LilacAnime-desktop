@@ -11,6 +11,7 @@ import { reverseResolveLocalAliases, localAliasCandidates } from './subtitles/al
 import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
+import { SourceDecisionCache } from './source/decision-cache.mjs';
 import { StateStore } from './state.mjs';
 
 const VERSION = '0.1.0';
@@ -19,7 +20,8 @@ const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
 const cdpPort = Number(process.env.LILAC_CDP_PORT || 9223);
 const sourceAutoMode = String(process.env.LILAC_SOURCE_AUTO || 'safe').toLowerCase();
-const sourceCacheMs = Number(process.env.LILAC_SOURCE_CACHE_MS || 6 * 60 * 60 * 1000);
+const sourceDecisionCacheMs = Number(process.env.LILAC_SOURCE_DECISION_CACHE_MS || process.env.LILAC_SOURCE_CACHE_MS || 15 * 60 * 1000);
+const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 25);
 
 async function exists(file) {
@@ -197,8 +199,8 @@ async function watch() {
   let lastAttachedPath = '';
   let lastObservedUserSubtitleKey = '';
   const sourceTasks = new Map();
-  const sourceDone = new Map();
-  let sourceSwitchGuard = { episode: null, until: 0 };
+  const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
+  let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
 
@@ -207,14 +209,63 @@ async function watch() {
     subtitleChangedAt = Date.now();
   });
 
+  const switchSource = async (bridge, live, selected, reason, { cached = false } = {}) => {
+    if (!selected?.provider || selected.provider === live.episode?.provider) return false;
+    if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
+      if (!cached) console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
+      return false;
+    }
+    if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return false;
+    console.log(`[companion] ${cached ? 'cached ' : ''}auto-switching source: ${live.episode.provider} -> ${selected.provider} (${reason})`);
+    sourceSwitchGuard = { episode: Number(live.episode.number), provider: selected.provider, until: Date.now() + 60000 };
+    await bridge.switchToResolvedSource(selected, {
+      title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
+    });
+    handledRef = '';
+    lastAttachedPath = '';
+    lastObservedUserSubtitleKey = '';
+    return true;
+  };
+
   const startSourceDiagnosis = context => {
     if (sourceAutoMode === 'off' || !context?.anime || !context?.episode?.number) return;
-    if (sourceSwitchGuard.until > Date.now() && sourceSwitchGuard.episode === Number(context.episode.number)) return;
+    if (sourceSwitchGuard.until > Date.now()
+        && sourceSwitchGuard.episode === Number(context.episode.number)
+        && sourceSwitchGuard.provider === context.episode.provider) return;
     const key = sourceEpisodeKey(context);
     if (!key || sourceTasks.has(key)) return;
-    const doneAt = Number(sourceDone.get(key) || 0);
-    if (doneAt && Date.now() - doneAt < sourceCacheMs) return;
 
+    const cached = sourceDecisions.get(key);
+    if (cached) {
+      const cachedSafety = safeAutoSwitchDecision(cached.scan, context.episode.provider);
+      if (!cachedSafety.switch) return;
+      if (Number(context.currentTime || 0) > sourceAutoSwitchMaxSeconds) return;
+
+      const task = (async () => {
+        let cachedConnection = null;
+        try {
+          await sleep(350);
+          cachedConnection = await connectBridge({ launch: false });
+          const live = await cachedConnection.bridge.playbackContext();
+          if (!live?.anime || sourceEpisodeKey(live) !== key || live.episode?.provider !== context.episode?.provider) return;
+          const safety = safeAutoSwitchDecision(cached.scan, live.episode.provider);
+          const selected = cached.scan?.decision?.selected;
+          console.log(`[companion] cached source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
+          if (!safety.switch) return;
+          await switchSource(cachedConnection.bridge, live, safety.selected, safety.reason, { cached: true });
+        } catch (error) {
+          console.warn(`[companion] cached source switch failed; a fresh scan will be allowed later: ${error?.message || error}`);
+          sourceDecisions.clear(key);
+          sourceDecisions.defer(key);
+        } finally {
+          try { cachedConnection?.session?.close(); } catch {}
+        }
+      })().finally(() => sourceTasks.delete(key));
+      sourceTasks.set(key, task);
+      return;
+    }
+
+    if (!sourceDecisions.canScan(key)) return;
     const task = (async () => {
       let diagnosisConnection = null;
       try {
@@ -239,36 +290,23 @@ async function watch() {
         printSourceScan('auto deep scan (top providers)', deep);
         const selected = deep.decision?.selected;
         const safety = safeAutoSwitchDecision(deep, start.episode.provider);
-        const cacheTime = selected ? Date.now() : Date.now() - sourceCacheMs + 5 * 60 * 1000;
-        sourceDone.set(key, cacheTime);
+        if (selected) sourceDecisions.remember(key, deep);
+        else sourceDecisions.defer(key);
         console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
 
         const live = afterDeep;
         if (live.episode?.provider !== start.episode?.provider) {
-          console.log(`[companion] source switch skipped: provider changed during scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
+          console.log(`[companion] source switch skipped: provider changed during active scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
           return;
         }
         if (!safety.switch) return;
-        if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
-          console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
-          return;
-        }
-        if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return;
-
-        console.log(`[companion] auto-switching source: ${live.episode.provider} -> ${safety.selected.provider} (${safety.reason})`);
-        sourceSwitchGuard = { episode: Number(live.episode.number), until: Date.now() + 60000 };
-        await diagnosisConnection.bridge.switchToResolvedSource(safety.selected, {
-          title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
-        });
-        handledRef = '';
-        lastAttachedPath = '';
-        lastObservedUserSubtitleKey = '';
+        await switchSource(diagnosisConnection.bridge, live, safety.selected, safety.reason);
       } finally {
         try { diagnosisConnection?.session?.close(); } catch {}
       }
     })().catch(error => {
       console.warn(`[companion] source scan failed: ${error?.message || error}`);
-      sourceDone.set(key, Date.now() - sourceCacheMs + 5 * 60 * 1000);
+      sourceDecisions.defer(key);
     }).finally(() => sourceTasks.delete(key));
 
     sourceTasks.set(key, task);
