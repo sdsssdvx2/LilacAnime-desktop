@@ -11,6 +11,14 @@ test('source decision cache reuses a fresh winner and expires it later', () => {
   assert.equal(cache.get('show|1', 11_001), null);
 });
 
+test('a provisional quick decision can use a shorter TTL than a deep decision', () => {
+  const cache = new SourceDecisionCache({ ttlMs: 10_000, retryMs: 2_000 });
+  const scan = { decision: { selected: { provider: 'miruro' } }, results: [] };
+  cache.remember('show|1', scan, 1_000, 2_000);
+  assert.equal(cache.get('show|1', 2_999)?.scan?.decision?.selected?.provider, 'miruro');
+  assert.equal(cache.get('show|1', 3_000), null);
+});
+
 test('source decision cache delays only failed rescans', () => {
   const cache = new SourceDecisionCache({ ttlMs: 10_000, retryMs: 2_000 });
   cache.defer('show|1', 1_000);
