@@ -9,6 +9,7 @@ import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
 import { reverseResolveLocalAliases, localAliasCandidates } from './subtitles/alias-fallback.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
+import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
 
@@ -194,6 +195,7 @@ async function watch() {
   let connection = null;
   let handledRef = '';
   let lastAttachedPath = '';
+  let lastObservedUserSubtitleKey = '';
   const sourceTasks = new Map();
   const sourceDone = new Map();
   let sourceSwitchGuard = { episode: null, until: 0 };
@@ -260,6 +262,7 @@ async function watch() {
         });
         handledRef = '';
         lastAttachedPath = '';
+        lastObservedUserSubtitleKey = '';
       } finally {
         try { diagnosisConnection?.session?.close(); } catch {}
       }
@@ -279,6 +282,7 @@ async function watch() {
         console.log(`[companion] connected: ${connection.target.title || connection.target.url}`);
         console.log(`[companion] features: ${JSON.stringify(features)}`);
         handledRef = '';
+        lastObservedUserSubtitleKey = '';
       }
 
       const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
@@ -299,19 +303,30 @@ async function watch() {
         if (!context?.activePlayer) {
           handledRef = '';
           lastAttachedPath = '';
+          lastObservedUserSubtitleKey = '';
         }
         await sleep(900);
         continue;
       }
       const ref = playbackRef(state, context);
 
-      if (context.subtitle?.source === 'user' && context.subtitle.path && context.subtitle.path !== lastAttachedPath && await exists(context.subtitle.path)) {
-        await state.rememberSubtitle(context.anime, context.episode.number, { path: context.subtitle.path, kind: 'user' });
-        handledRef = ref;
-        console.log(`[companion] remembered user subtitle: ${context.subtitle.path}`);
-        startSourceDiagnosis(context);
-        await sleep(900);
-        continue;
+      const userSubtitlePath = context.subtitle?.source === 'user' ? String(context.subtitle.path || '') : '';
+      if (userSubtitlePath && userSubtitlePath !== lastAttachedPath && await exists(userSubtitlePath)) {
+        const userSelectionKey = `${ref}|${path.resolve(userSubtitlePath).toLowerCase()}`;
+        if (userSelectionKey !== lastObservedUserSubtitleKey) {
+          lastObservedUserSubtitleKey = userSelectionKey;
+          const compatibility = isUserSubtitleCompatibleWithEpisode(userSubtitlePath, context.episode.number);
+          if (!compatibility.compatible) {
+            console.log(`[companion] ignored stale user subtitle from E${compatibility.hintedEpisode} while playing E${context.episode.number}: ${userSubtitlePath}`);
+          } else {
+            const changed = await state.rememberSubtitle(context.anime, context.episode.number, { path: userSubtitlePath, kind: 'user' });
+            handledRef = ref;
+            if (changed) console.log(`[companion] remembered user subtitle: ${userSubtitlePath}`);
+            startSourceDiagnosis(context);
+            await sleep(900);
+            continue;
+          }
+        }
       }
 
       if (ref === handledRef) {
