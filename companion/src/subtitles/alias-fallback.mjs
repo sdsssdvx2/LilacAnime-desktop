@@ -39,43 +39,69 @@ function groupTitlesForFile(file = {}) {
   }));
 }
 
+function contextFilters(anime = {}, episodeMeta = {}) {
+  return {
+    targetYear: Number(anime.year || 0) || null,
+    targetSeason: extractSeason([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' ')),
+    targetKind: extractEpisodeKind([anime.title, anime.title_english, anime.romaji, anime.title_japanese, episodeMeta.name, episodeMeta.title, episodeMeta.kind, episodeMeta.type].filter(Boolean).join(' '))
+  };
+}
+
+function fileCompatible(file, { targetYear, targetSeason, targetKind }) {
+  if (targetYear && file.year && Number(file.year) !== targetYear) return false;
+  if (targetSeason && file.season && Number(file.season) !== targetSeason) return false;
+  if (targetKind !== 'main' && file.episodeKind && file.episodeKind !== 'main') {
+    const special = new Set(['special', 'ova', 'oad']);
+    if (!(special.has(targetKind) && special.has(file.episodeKind)) && file.episodeKind !== targetKind) return false;
+  }
+  return true;
+}
+
 function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [], limit = 10 } = {}) {
   const targetEpisode = Number(episode) || null;
-  const targetYear = Number(anime.year || 0) || null;
-  const targetSeason = extractSeason([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
-  const targetKind = extractEpisodeKind([anime.title, anime.title_english, anime.romaji, anime.title_japanese, episodeMeta.name, episodeMeta.title, episodeMeta.kind, episodeMeta.type].filter(Boolean).join(' '));
+  const filters = contextFilters(anime, episodeMeta);
   const groups = new Map();
 
   for (const file of files) {
-    if (targetEpisode && file.episode != null && Number(file.episode) !== targetEpisode) {
-      // Keep the file for episode-set fingerprints below, but do not give it current-episode points.
-    }
-    if (targetYear && file.year && Number(file.year) !== targetYear) continue;
-    if (targetSeason && file.season && Number(file.season) !== targetSeason) continue;
-    if (targetKind !== 'main' && file.episodeKind && file.episodeKind !== 'main') {
-      const special = new Set(['special', 'ova', 'oad']);
-      if (!(special.has(targetKind) && special.has(file.episodeKind)) && file.episodeKind !== targetKind) continue;
-    }
+    if (targetEpisode && file.episode != null && Number(file.episode) !== targetEpisode) continue;
+    if (!fileCompatible(file, filters)) continue;
 
     for (const query of groupTitlesForFile(file)) {
       const key = normalizeTitle(query);
-      const current = groups.get(key) || { query, parent: query, files: 0, score: 0, episodes: new Set(), seasons: new Set(), years: new Set() };
+      const current = groups.get(key) || { query, parent: query, files: 0, score: 0 };
       current.files++;
-      if (Number.isFinite(Number(file.episode)) && Number(file.episode) > 0) current.episodes.add(Number(file.episode));
-      if (Number.isFinite(Number(file.season)) && Number(file.season) > 0) current.seasons.add(Number(file.season));
-      if (Number.isFinite(Number(file.year)) && Number(file.year) >= 1900) current.years.add(Number(file.year));
       if (targetEpisode && Number(file.episode) === targetEpisode) current.score += 12;
-      if (targetYear && Number(file.year) === targetYear) current.score += 18;
-      if (targetSeason && Number(file.season) === targetSeason) current.score += 12;
-      if (file.episodeKind && file.episodeKind !== 'main') current.score += targetKind === 'main' ? -10 : 10;
+      if (filters.targetYear && Number(file.year) === filters.targetYear) current.score += 18;
+      if (filters.targetSeason && Number(file.season) === filters.targetSeason) current.score += 12;
+      if (file.episodeKind && file.episodeKind !== 'main') current.score += filters.targetKind === 'main' ? -10 : 10;
       current.score += Math.min(12, current.files * 2);
       groups.set(key, current);
     }
   }
 
   return [...groups.values()]
-    .map(item => ({ ...item, episodes: [...item.episodes].sort((a, b) => a - b), seasons: [...item.seasons], years: [...item.years] }))
     .sort((a, b) => b.score - a.score || b.files - a.files || a.query.localeCompare(b.query, 'ko'))
+    .slice(0, limit);
+}
+
+function localStructureGroups({ anime = {}, episodeMeta = {}, files = [], limit = 60 } = {}) {
+  const filters = contextFilters(anime, episodeMeta);
+  const groups = new Map();
+  for (const file of files) {
+    if (!fileCompatible(file, filters)) continue;
+    for (const query of groupTitlesForFile(file)) {
+      const key = normalizeTitle(query);
+      const current = groups.get(key) || { query, files: 0, episodes: new Set(), seasons: new Set(), years: new Set() };
+      current.files++;
+      if (Number.isFinite(Number(file.episode)) && Number(file.episode) > 0) current.episodes.add(Number(file.episode));
+      if (Number.isFinite(Number(file.season)) && Number(file.season) > 0) current.seasons.add(Number(file.season));
+      if (Number.isFinite(Number(file.year)) && Number(file.year) >= 1900) current.years.add(Number(file.year));
+      groups.set(key, current);
+    }
+  }
+  return [...groups.values()]
+    .map(item => ({ ...item, episodes: [...item.episodes].sort((a, b) => a - b), seasons: [...item.seasons], years: [...item.years] }))
+    .sort((a, b) => b.files - a.files || a.query.localeCompare(b.query, 'ko'))
     .slice(0, limit);
 }
 
@@ -127,7 +153,7 @@ export function inferStructuralLocalAlias({ anime = {}, episode, episodeMeta = {
   if (targetEpisodes.length < 8) return null;
   const target = new Set(targetEpisodes);
   const currentEpisode = Number(episode) || null;
-  const groups = localGroupCandidates({ anime, episode, episodeMeta, files, limit: 40 });
+  const groups = localStructureGroups({ anime, episodeMeta, files, limit: 60 });
   const scored = groups.map(group => {
     const local = new Set(group.episodes || []);
     if (currentEpisode && !local.has(currentEpisode)) return null;
@@ -138,7 +164,7 @@ export function inferStructuralLocalAlias({ anime = {}, episode, episodeMeta = {
     const sizeDelta = Math.abs(local.size - target.size);
     const score = overlap * 5 + coverage * 140 + precision * 140 - sizeDelta * 3 + Math.min(20, group.files);
     return { ...group, overlap, coverage, precision, sizeDelta, structureScore: score };
-  }).filter(Boolean).sort((a, b) => b.structureScore - a.structureScore || b.score - a.score);
+  }).filter(Boolean).sort((a, b) => b.structureScore - a.structureScore || b.files - a.files);
 
   const best = scored[0] || null, second = scored[1] || null;
   if (!best) return null;
