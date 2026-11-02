@@ -65,6 +65,53 @@ try {
     console.error('Companion could not distinguish re-entering the same episode as a new playback entry');
     process.exitCode = 4;
   }
+
+  const patched = await session.evaluate(`(() => {
+    try {
+      window.__companionOriginalResolveIntoPlayer = resolveIntoPlayer;
+      resolveIntoPlayer = async (...args) => { window.__companionSwitchArgs = args; return true; };
+      window.__companionOriginalProviderResolve = window.lilac.providerResolve;
+      window.lilac.providerResolve = async episode => ({ url: 'https://example.invalid/video.m3u8', episode });
+      return true;
+    } catch (error) {
+      return { error: String(error?.message || error) };
+    }
+  })()`);
+  if (patched !== true) {
+    console.error(`Could not install source-switch integration shim: ${JSON.stringify(patched)}`);
+    process.exitCode = 5;
+  } else {
+    await bridge.switchToResolvedSource({
+      provider: 'miruro',
+      anime: { title: 'Sword of Coming' },
+      episode: { provider: 'miruro', id: 'episode-1', number: 1, name: '1화' },
+      seriesEpisodes: [{ number: 1 }, { number: 2 }]
+    }, { title: 'Sword of Coming', resumeSeconds: 600, resumeDuration: 1200 });
+    const captured = await session.evaluate(`(() => {
+      const args = window.__companionSwitchArgs || [];
+      const context = args[2] || {};
+      return { resumeSeconds: context.resumeSeconds, resumeProgress: context.resumeProgress, provider: context.episode?.provider, seriesEpisodes: context.seriesEpisodes?.length || 0 };
+    })()`);
+    console.log(JSON.stringify({ sourceSwitchResume: captured }, null, 2));
+    const resumeOk = Number(captured?.resumeSeconds) === 600
+      && Math.abs(Number(captured?.resumeProgress) - 50) < 0.001
+      && captured?.provider === 'miruro'
+      && Number(captured?.seriesEpisodes) === 2;
+    if (!resumeOk) {
+      console.error('Companion source switch did not preserve the current playback position through Lilac resolveIntoPlayer context');
+      process.exitCode = 6;
+    }
+  }
 } finally {
+  try {
+    await session.evaluate(`(() => {
+      if (window.__companionOriginalResolveIntoPlayer) resolveIntoPlayer = window.__companionOriginalResolveIntoPlayer;
+      if (window.__companionOriginalProviderResolve) window.lilac.providerResolve = window.__companionOriginalProviderResolve;
+      delete window.__companionOriginalResolveIntoPlayer;
+      delete window.__companionOriginalProviderResolve;
+      delete window.__companionSwitchArgs;
+      return true;
+    })()`);
+  } catch {}
   session.close();
 }
