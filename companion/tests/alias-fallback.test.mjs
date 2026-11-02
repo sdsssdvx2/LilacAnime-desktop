@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { stripEpisodeNoise } from '../src/normalize.mjs';
 import { reverseResolveLocalAliases, localAliasCandidates } from '../src/subtitles/alias-fallback.mjs';
 import { chooseSubtitleMatch } from '../src/subtitles/matcher.mjs';
 
@@ -16,11 +17,16 @@ const nestedFile = {
   part: null,
   year: null,
   episodeKind: 'main',
-  titleHints: ['팬자막', '검래 1기', '01']
+  titleHints: ['팬자막', stripEpisodeNoise('검래 1기'), '01']
 };
 
 const anime = { title: 'Sword of Coming', title_english: 'Sword of Coming', year: 2024 };
 const episodeMeta = { number: 1, name: 'Although The Rain Is Gentle' };
+
+test('season metadata is stripped from short Korean subtitle folder titles', () => {
+  assert.equal(stripEpisodeNoise('검래 1기'), '검래');
+  assert.equal(stripEpisodeNoise('검래 2기 2026'), '검래');
+});
 
 test('nested subtitle folders expose the series ancestor instead of only the immediate parent', () => {
   const candidates = localAliasCandidates({ anime, episode: 1, episodeMeta, files: [nestedFile] });
