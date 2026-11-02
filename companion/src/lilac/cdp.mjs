@@ -4,6 +4,7 @@ export class CdpSession {
     this.socket = null;
     this.nextId = 1;
     this.pending = new Map();
+    this.listeners = new Map();
   }
 
   async connect({ timeoutMs = 2500, enableRuntime = true } = {}) {
@@ -39,6 +40,7 @@ export class CdpSession {
         reject(new Error('CDP connection closed'));
       }
       this.pending.clear();
+      this.listeners.clear();
     });
     if (enableRuntime) await this.send('Runtime.enable');
     return this;
@@ -48,13 +50,29 @@ export class CdpSession {
     let message;
     try { message = JSON.parse(String(raw)); }
     catch { return; }
-    if (!message.id) return;
+    if (!message.id) {
+      const listeners = this.listeners.get(message.method);
+      if (listeners) for (const listener of [...listeners]) {
+        try { listener(message.params || {}); } catch {}
+      }
+      return;
+    }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
     clearTimeout(pending.timer);
     if (message.error) pending.reject(new Error(message.error.message || 'CDP command failed'));
     else pending.resolve(message.result);
+  }
+
+  on(method, listener) {
+    if (!this.listeners.has(method)) this.listeners.set(method, new Set());
+    this.listeners.get(method).add(listener);
+    return () => {
+      const listeners = this.listeners.get(method);
+      listeners?.delete(listener);
+      if (listeners && !listeners.size) this.listeners.delete(method);
+    };
   }
 
   send(method, params = {}, { timeoutMs = 4000 } = {}) {
@@ -89,22 +107,6 @@ export class CdpSession {
   }
 }
 
-function debuggerHttpBase(webSocketUrl) {
-  const parsed = new URL(webSocketUrl);
-  const protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
-  return `${protocol}//${parsed.host}`;
-}
-
-async function connectBrowserCdp(base, timeoutMs) {
-  const response = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(1500) });
-  if (!response.ok) throw new Error(`CDP browser discovery HTTP ${response.status}`);
-  const version = await response.json();
-  if (!version?.webSocketDebuggerUrl) throw new Error('CDP browser websocket is unavailable');
-  const session = new CdpSession(version.webSocketDebuggerUrl);
-  await session.connect({ timeoutMs, enableRuntime: false });
-  return session;
-}
-
 async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
   const chunks = [];
   try {
@@ -119,45 +121,20 @@ async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
   return Buffer.concat(chunks);
 }
 
-async function findDebuggerTarget(base, targetId, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    const response = await fetch(`${base}/json/list`, { signal: AbortSignal.timeout(1500) });
-    if (response.ok) {
-      const targets = await response.json();
-      const found = targets.find(target => target.id === targetId && target.webSocketDebuggerUrl);
-      if (found) return found;
-    }
-    await new Promise(resolve => setTimeout(resolve, 50));
-  } while (Date.now() < deadline);
-  throw new Error('CDP auxiliary target did not expose a debugger endpoint');
+function headerEntries(original = {}, additions = {}, userAgent = '') {
+  const merged = new Map();
+  for (const [name, value] of Object.entries(original || {})) merged.set(name.toLowerCase(), { name, value: String(value) });
+  for (const [name, value] of Object.entries(additions || {})) merged.set(name.toLowerCase(), { name, value: String(value) });
+  if (userAgent) merged.set('user-agent', { name: 'User-Agent', value: String(userAgent) });
+  return [...merged.values()];
 }
 
-export async function createAuxiliaryCdpTarget(parentSession, { url = 'about:blank', timeoutMs = 2500 } = {}) {
-  const base = debuggerHttpBase(parentSession.webSocketUrl);
-  const browser = await connectBrowserCdp(base, timeoutMs);
-  let targetId = '';
+function fetchPatternFor(url) {
   try {
-    const created = await browser.send('Target.createTarget', {
-      url,
-      background: true,
-      newWindow: false
-    }, { timeoutMs });
-    targetId = created?.targetId || '';
-    if (!targetId) throw new Error('CDP Target.createTarget returned no target id');
-    const target = await findDebuggerTarget(base, targetId, timeoutMs);
-    const session = new CdpSession(target.webSocketDebuggerUrl);
-    await session.connect({ timeoutMs });
-    const close = async () => {
-      session.close();
-      await browser.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
-      browser.close();
-    };
-    return { session, target, close };
-  } catch (error) {
-    if (targetId) await browser.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
-    browser.close();
-    throw error;
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}/*`;
+  } catch {
+    return url;
   }
 }
 
@@ -167,35 +144,52 @@ export async function loadCdpNetworkResource(session, url, {
   timeoutMs = 8000
 } = {}) {
   await session.send('Network.enable', {}, { timeoutMs: 2000 });
-  if (headers && Object.keys(headers).length) {
-    await session.send('Network.setExtraHTTPHeaders', { headers }, { timeoutMs: 2000 });
+  const protectedHeaders = { ...(headers || {}) };
+  let removePaused = null;
+  let fetchEnabled = false;
+  if (Object.keys(protectedHeaders).length || userAgent) {
+    removePaused = session.on('Fetch.requestPaused', params => {
+      const requestUrl = String(params.request?.url || '');
+      const matches = requestUrl === url;
+      const nextHeaders = matches
+        ? headerEntries(params.request?.headers, protectedHeaders, userAgent)
+        : headerEntries(params.request?.headers);
+      session.send('Fetch.continueRequest', { requestId: params.requestId, headers: nextHeaders }, { timeoutMs: 1500 }).catch(() => {});
+    });
+    await session.send('Fetch.enable', {
+      patterns: [{ urlPattern: fetchPatternFor(url), requestStage: 'Request' }]
+    }, { timeoutMs: 2000 });
+    fetchEnabled = true;
   }
-  if (userAgent) {
-    await session.send('Network.setUserAgentOverride', { userAgent }, { timeoutMs: 2000 });
-  }
+
   const frameTree = await session.send('Page.getFrameTree', {}, { timeoutMs: 2000 });
   const frameId = frameTree?.frameTree?.frame?.id;
   const started = performance.now();
-  const result = await session.send('Network.loadNetworkResource', {
-    ...(frameId ? { frameId } : {}),
-    url,
-    options: { disableCache: true, includeCredentials: true }
-  }, { timeoutMs });
-  const ended = performance.now();
-  const resource = result?.resource || {};
-  const status = Number(resource.httpStatusCode || 0);
-  if (!resource.success || status < 200 || status >= 300) {
-    throw new Error(status ? `HTTP ${status}` : (resource.netErrorName || 'CDP network resource load failed'));
+  try {
+    const result = await session.send('Network.loadNetworkResource', {
+      ...(frameId ? { frameId } : {}),
+      url,
+      options: { disableCache: true, includeCredentials: true }
+    }, { timeoutMs });
+    const ended = performance.now();
+    const resource = result?.resource || {};
+    const status = Number(resource.httpStatusCode || 0);
+    if (!resource.success || status < 200 || status >= 300) {
+      throw new Error(status ? `HTTP ${status}` : (resource.netErrorName || 'CDP network resource load failed'));
+    }
+    const body = resource.stream ? await readCdpStream(session, resource.stream, { timeoutMs }) : Buffer.alloc(0);
+    return {
+      body,
+      status,
+      headers: resource.headers || {},
+      bytes: body.length,
+      totalMs: ended - started,
+      mbps: body.length > 0 && ended > started ? (body.length * 8) / ((ended - started) / 1000) / 1_000_000 : 0
+    };
+  } finally {
+    removePaused?.();
+    if (fetchEnabled) await session.send('Fetch.disable', {}, { timeoutMs: 1500 }).catch(() => {});
   }
-  const body = resource.stream ? await readCdpStream(session, resource.stream, { timeoutMs }) : Buffer.alloc(0);
-  return {
-    body,
-    status,
-    headers: resource.headers || {},
-    bytes: body.length,
-    totalMs: ended - started,
-    mbps: body.length > 0 && ended > started ? (body.length * 8) / ((ended - started) / 1000) / 1_000_000 : 0
-  };
 }
 
 export async function discoverLilacTarget({ host = '127.0.0.1', port = 9223 } = {}) {
