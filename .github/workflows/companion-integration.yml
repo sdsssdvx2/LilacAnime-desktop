@@ -1,0 +1,64 @@
+name: Lilac Companion Upstream Integration
+
+on:
+  push:
+    branches: [companion-mvp]
+    paths:
+      - 'companion/**'
+      - '.github/workflows/companion-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  latest-upstream-cdp:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout companion branch
+        uses: actions/checkout@v4
+      - name: Checkout latest official Lilac
+        uses: actions/checkout@v4
+        with:
+          repository: whispelyn-byte/LilacAnime-desktop
+          ref: main
+          path: _upstream
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: _upstream/package-lock.json
+      - name: Install official Lilac dependencies
+        working-directory: _upstream
+        run: npm ci --no-audit --no-fund
+      - name: Build official Lilac renderer vendors
+        working-directory: _upstream
+        run: npm run vendor
+      - name: Launch official Lilac with local CDP
+        id: launch
+        shell: pwsh
+        run: |
+          $electron = Join-Path $PWD '_upstream\node_modules\electron\dist\electron.exe'
+          if (!(Test-Path $electron)) { throw "Electron runtime missing: $electron" }
+          $proc = Start-Process -FilePath $electron -ArgumentList '.', '--remote-debugging-port=9223' -WorkingDirectory (Join-Path $PWD '_upstream') -PassThru
+          "pid=$($proc.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $ready = $false
+          for ($i = 0; $i -lt 80; $i++) {
+            Start-Sleep -Milliseconds 500
+            try {
+              $targets = Invoke-RestMethod -Uri 'http://127.0.0.1:9223/json/list' -TimeoutSec 2
+              if ($targets) { $ready = $true; break }
+            } catch {}
+            if ($proc.HasExited) { throw "Official Lilac exited before CDP became ready (exit $($proc.ExitCode))" }
+          }
+          if (!$ready) { throw 'Official Lilac CDP did not become ready' }
+      - name: Probe latest official Lilac bridge surface
+        env:
+          LILAC_CDP_PORT: '9223'
+        run: node companion/tests/integration-probe.mjs
+      - name: Stop official Lilac
+        if: always()
+        shell: pwsh
+        run: |
+          $pidText = '${{ steps.launch.outputs.pid }}'
+          if ($pidText -match '^\d+$') {
+            Stop-Process -Id ([int]$pidText) -Force -ErrorAction SilentlyContinue
+          }
+          Get-Process LilacAnime,electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
