@@ -40,6 +40,31 @@ test('modest bitrate win between near resolutions still waits for visual evidenc
   assert.equal(allowQuickAutoSwitch(scan, safety), false);
 });
 
+test('deep policy can switch on a large stability win at comparable quality', () => {
+  const results = [
+    source('reanime', 720, 2_500_000, 82),
+    source('miruro', 720, 2_600_000, 98)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  const safety = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(scan.decision.selected?.provider, 'miruro');
+  assert.equal(safety.switch, true);
+  assert.equal(safety.reason, 'decisive-stability-win');
+  assert.equal(allowQuickAutoSwitch(scan, safety), false, 'stability-only wins wait for deep evidence');
+});
+
+test('stability win does not override a decisive current-source quality edge', () => {
+  const results = [
+    source('reanime', 1080, 5_000_000, 84),
+    source('miruro', 720, 2_800_000, 99)
+  ];
+  const scan = { results, decision: chooseBestSource(results) };
+  assert.equal(scan.decision.selected?.provider, 'reanime', 'large resolution edge remains primary');
+  const safety = safeAutoSwitchDecision(scan, 'reanime');
+  assert.equal(safety.switch, false);
+  assert.equal(safety.reason, 'already-best');
+});
+
 test('quick switch refuses decisive quality evidence when winner stability is below 90', () => {
   const results = [
     source('reanime', 720, 2_000_000, 82),
