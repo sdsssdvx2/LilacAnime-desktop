@@ -7,6 +7,7 @@ import { launchLilacForCompanion } from './lilac/launcher.mjs';
 import { normalizeTitle } from './normalize.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
+import { reverseResolveLocalAliases } from './subtitles/alias-fallback.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
@@ -85,6 +86,24 @@ async function collectVariants(bridge, anime) {
   return [...output];
 }
 
+async function chooseLocalSubtitleWithFallback(bridge, { anime, episode, episodeMeta, aliases, files, manual }) {
+  let effectiveAliases = aliases;
+  let match = chooseSubtitleMatch({ anime, episode, episodeMeta, aliases: effectiveAliases, files, manual });
+  if (match.best || manual) return { match, aliases: effectiveAliases, fallback: [] };
+
+  const fallback = await reverseResolveLocalAliases(bridge, {
+    anime,
+    episode,
+    episodeMeta,
+    aliases: effectiveAliases,
+    files
+  }).catch(() => []);
+  if (!fallback.length) return { match, aliases: effectiveAliases, fallback: [] };
+  effectiveAliases = [...new Set([...effectiveAliases, ...fallback])];
+  match = chooseSubtitleMatch({ anime, episode, episodeMeta, aliases: effectiveAliases, files, manual });
+  return { match, aliases: effectiveAliases, fallback };
+}
+
 async function doctor() {
   const index = await indexSubtitleRoot(subtitleRoot);
   console.log(`[companion] subtitle root: ${subtitleRoot}`);
@@ -98,7 +117,16 @@ async function doctor() {
     if (context?.anime && context?.episode?.number) {
       const aliases = await collectVariants(bridge, context.anime);
       console.log('[companion] title variants:', aliases);
-      const match = chooseSubtitleMatch({ anime: context.anime, episode: context.episode.number, episodeMeta: context.episode, aliases, files: index.files });
+      const resolved = await chooseLocalSubtitleWithFallback(bridge, {
+        anime: context.anime,
+        episode: context.episode.number,
+        episodeMeta: context.episode,
+        aliases,
+        files: index.files,
+        manual: null
+      });
+      if (resolved.fallback.length) console.log('[companion] reverse-resolved local aliases:', resolved.fallback);
+      const match = resolved.match;
       console.log('[companion] best local subtitle:', match.best ? { confidence: match.confidence, score: match.best.score, path: match.best.file.path, reasons: match.best.reasons } : null);
     }
   } finally { session.close(); }
@@ -255,7 +283,7 @@ async function watch() {
       const aliases = await collectVariants(connection.bridge, stable.anime);
       const preference = state.subtitlePreference(stable.anime, stable.episode.number);
       const manual = preference?.kind === 'user' ? preference : null;
-      const match = chooseSubtitleMatch({
+      const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
         anime: stable.anime,
         episode: stable.episode.number,
         episodeMeta: stable.episode,
@@ -263,6 +291,10 @@ async function watch() {
         files: index.files,
         manual
       });
+      const match = resolved.match;
+      if (resolved.fallback.length) {
+        console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 6).join(' | ')}`);
+      }
 
       handledRef = ref;
       await state.touchRecent(stable.anime, stable.episode.number);
