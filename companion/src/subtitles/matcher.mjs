@@ -95,15 +95,27 @@ export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, alias
     const title = titleScore(names, file.titleHints || []);
     const manualExact = Boolean(manual?.path && path.resolve(manual.path) === path.resolve(file.path));
     const manualRoot = Boolean(manual?.root && path.resolve(file.path).startsWith(path.resolve(manual.root) + path.sep));
+    const fileKind = file.episodeKind || 'main';
+    const specialFamilyMatch = Boolean(targetKind && kindFamily(targetKind) === 'special' && kindFamily(fileKind) === 'special');
 
     if (!title.score && !manualExact && !manualRoot) return null;
     score += title.score;
     if (title.score) reasons.push(`title:${title.score}`);
 
     if (targetEpisode != null) {
-      if (file.episode === targetEpisode) { score += 180; reasons.push('episode:exact'); }
-      else if (file.episode == null) { score -= 35; reasons.push('episode:missing'); }
-      else { score -= 420; reasons.push(`episode:mismatch:${file.episode}`); }
+      if (file.episode === targetEpisode) {
+        score += 180;
+        reasons.push('episode:exact');
+      } else if (file.episode == null && specialFamilyMatch) {
+        score += 60;
+        reasons.push('episode:special-unnumbered');
+      } else if (file.episode == null) {
+        score -= 35;
+        reasons.push('episode:missing');
+      } else {
+        score -= 420;
+        reasons.push(`episode:mismatch:${file.episode}`);
+      }
     }
 
     if (targetSeason != null) {
@@ -121,12 +133,11 @@ export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, alias
       else { score -= 360; reasons.push(`year:mismatch:${file.year}`); }
     }
 
-    const fileKind = file.episodeKind || 'main';
     if (targetKind) {
       if (fileKind === targetKind) {
         score += 140;
         reasons.push(`kind:exact:${targetKind}`);
-      } else if (kindFamily(fileKind) === kindFamily(targetKind) && kindFamily(targetKind) === 'special') {
+      } else if (specialFamilyMatch) {
         score += 120;
         reasons.push(`kind:equivalent:${fileKind}->${targetKind}`);
       } else {
@@ -156,6 +167,8 @@ export function chooseSubtitleMatch(input = {}) {
   if (!first) return { selected: null, confidence: 'none', ranked };
 
   const exactEpisode = !input.episode || first.file.episode === Number(input.episode);
+  const specialUnnumbered = first.reasons.includes('episode:special-unnumbered');
+  const episodeCompatible = exactEpisode || specialUnnumbered;
   const manual = first.reasons.some(reason => reason.startsWith('manual:'));
   const titleStrong = first.title.score >= 145;
   const hardMismatch = first.reasons.some(reason => /^(season|year|kind):mismatch/.test(reason));
@@ -164,8 +177,8 @@ export function chooseSubtitleMatch(input = {}) {
 
   let confidence = 'low';
   if (manual) confidence = 'user';
-  else if (!hardMismatch && !specialUnconfirmed && exactEpisode && titleStrong && first.score >= 360 && gap >= 70) confidence = 'high';
-  else if (!hardMismatch && !specialUnconfirmed && exactEpisode && titleStrong && first.score >= 300 && gap >= 25) confidence = 'medium';
+  else if (!hardMismatch && !specialUnconfirmed && episodeCompatible && titleStrong && first.score >= 360 && gap >= 70) confidence = 'high';
+  else if (!hardMismatch && !specialUnconfirmed && episodeCompatible && titleStrong && first.score >= 300 && gap >= 25) confidence = 'medium';
 
   const selected = ['user', 'high'].includes(confidence) ? first.file : null;
   return { selected, confidence, best: first, second, ranked };
