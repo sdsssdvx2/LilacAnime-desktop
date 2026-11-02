@@ -36,14 +36,26 @@ export class LilacBridge {
 
   async playbackContext() {
     return this.session.evaluate(`(() => {
-      if (typeof currentPlaybackContext === 'undefined' || !currentPlaybackContext) return null;
-      const c = currentPlaybackContext;
+      if (typeof currentPlaybackContext === 'undefined') return null;
+      const c = currentPlaybackContext || {};
       const a = c.anime || {};
       const e = c.episode || {};
       const s = c.stream || {};
       const sub = typeof currentSubtitle !== 'undefined' && currentSubtitle ? currentSubtitle : {};
       const seriesEpisodes = Array.isArray(c.seriesEpisodes) ? c.seriesEpisodes : [];
       const video = document.querySelector('#video');
+      const playerTitle = String(document.querySelector('#playerTitle')?.textContent || '').trim();
+      const activePlayer = Boolean(document.querySelector('#playerView')?.classList.contains('active') || document.body?.classList.contains('player-mode'));
+      const titleParts = playerTitle.split('·').map(v => v.trim()).filter(Boolean);
+      const titleFromDom = titleParts.length > 1 ? titleParts.slice(0, -1).join(' · ') : playerTitle;
+      const epText = [e.number, e.name, e.title, titleParts.at(-1)].filter(Boolean).join(' ');
+      const epMatch = epText.match(/(?:episode|ep\.?|제\s*)?\s*(\d+(?:\.\d+)?)\s*(?:화|회|$)/i);
+      const episodeNumber = Number(e.number || epMatch?.[1] || 0) || null;
+      const provider = e.provider || a.provider || String(localStorage.getItem('contentSource') || '');
+      const fallbackTitle = a.title || a.title_english || a.romaji || c.subtitleTitle || titleFromDom || '';
+      const hasPlaybackIdentity = Boolean((a.title || a.title_english || a.romaji || c.subtitleTitle || titleFromDom) && episodeNumber);
+      if (!hasPlaybackIdentity && !activePlayer) return null;
+
       let quality = {};
       try { quality = typeof video?.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : {}; } catch {}
       let bufferedAhead = 0;
@@ -59,21 +71,24 @@ export class LilacBridge {
       try { currentSrc = String(video?.currentSrc || video?.src || ''); } catch {}
       return {
         anime: {
-          provider: a.provider || '', id: a.id ?? null, mal_id: a.mal_id ?? null,
+          provider: a.provider || provider, id: a.id ?? null, mal_id: a.mal_id ?? null,
           anilistId: a.anilistId ?? null, malId: a.malId ?? null,
-          title: a.title || '', title_english: a.title_english || '', title_japanese: a.title_japanese || '',
+          title: a.title || fallbackTitle, title_english: a.title_english || '', title_japanese: a.title_japanese || '',
           romaji: a.romaji || '', synonyms: a.synonyms || '', season: a.season || '', year: a.year || '', type: a.type || ''
         },
         episode: {
-          provider: e.provider || '', id: e.id ?? null, number: Number(e.number || 0) || null,
-          name: e.name || '', title: e.title || '', url: e.url || '', animeId: e.animeId ?? null,
+          provider, id: e.id ?? null, number: episodeNumber,
+          name: e.name || titleParts.at(-1) || '', title: e.title || '', url: e.url || '', animeId: e.animeId ?? null,
           postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || '',
           kind: e.kind || '', type: e.type || ''
         },
         seriesEpisodes,
-        stream: { url: s.url || currentSrc || '', currentSrc, server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
+        stream: { url: s.url || c.currentUrl || currentSrc || '', currentSrc, server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
-        playing: Boolean(video),
+        playing: Boolean(activePlayer && video),
+        activePlayer,
+        resolving: Boolean(c.resolving),
+        playerTitle,
         currentTime: Number(video?.currentTime || 0),
         playback: {
           width: Number(video?.videoWidth || 0) || null,
