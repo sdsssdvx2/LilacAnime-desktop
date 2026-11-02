@@ -147,6 +147,7 @@ export async function compareVisualSources(entries, {
   alignmentFps = 1,
   alignmentThreshold = 0.80,
   similarityThreshold = 0.82,
+  maxResolutionRatio = 1.18,
   timeoutMs = 8500
 } = {}) {
   const candidates = entries
@@ -156,8 +157,12 @@ export async function compareVisualSources(entries, {
   if (candidates.length < 2) return { available: false, confidence: 'none', reason: 'not-enough-comparable-sources' };
 
   const heights = candidates.map(entry => Number(entry.probe?.quality?.height || 0)).filter(Boolean);
-  if (heights.length < candidates.length || Math.max(...heights) !== Math.min(...heights)) {
-    return { available: false, confidence: 'none', reason: 'resolution-not-equal' };
+  if (heights.length < candidates.length) {
+    return { available: false, confidence: 'none', reason: 'resolution-unknown' };
+  }
+  const resolutionRatio = Math.max(...heights) / Math.min(...heights);
+  if (resolutionRatio > maxResolutionRatio) {
+    return { available: false, confidence: 'none', reason: 'resolution-gap-too-large' };
   }
 
   const anchor = candidates.find(entry => entry.provider === currentProvider) || candidates[0];
@@ -258,6 +263,7 @@ export async function compareVisualSources(entries, {
     selectedProvider: best.provider,
     margin,
     times,
-    providers: providerResults
+    providers: providerResults,
+    resolutionRatio
   };
 }
