@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { watch as watchFs } from 'node:fs';
 import path from 'node:path';
 import { connectLilacCdp } from './lilac/cdp.mjs';
 import { LilacBridge } from './lilac/bridge.mjs';
@@ -32,17 +33,21 @@ async function readyConnection() {
 }
 
 async function connectBridge({ launch = true } = {}) {
+  if (launch) console.log(`[companion] checking for Companion-enabled Lilac on CDP ${cdpPort}...`);
   try {
     return await readyConnection();
   } catch (first) {
     if (!launch) throw first;
+    console.log(`[companion] no ready Lilac on CDP ${cdpPort}; locating LilacAnime.exe...`);
     const resolved = await launchLilacForCompanion(cdpPort);
     console.log(`[companion] launching Lilac (${resolved.source}): ${resolved.path}`);
+    console.log('[companion] waiting for Lilac renderer to become ready...');
     let last = first;
     for (let i = 0; i < 40; i++) {
       await sleep(500);
       try { return await readyConnection(); }
       catch (error) { last = error; }
+      if ((i + 1) % 10 === 0) console.log(`[companion] still waiting for Lilac... ${Math.round((i + 1) / 2)}s`);
     }
     throw last;
   }
@@ -115,14 +120,33 @@ async function sourceDoctor() {
   } finally { session.close(); }
 }
 
+function startSubtitleWatcher(onDirty) {
+  try {
+    const watcher = watchFs(subtitleRoot, { recursive: true }, (_eventType, filename) => onDirty(filename));
+    watcher.on('error', error => console.warn(`[companion] subtitle watcher error; periodic rescan remains active: ${error?.message || error}`));
+    console.log(`[companion] watching subtitle folder for changes: ${subtitleRoot}`);
+    return watcher;
+  } catch (error) {
+    console.warn(`[companion] live subtitle watching unavailable; using periodic rescan: ${error?.message || error}`);
+    return null;
+  }
+}
+
 async function watch() {
   const state = await new StateStore().load();
   let index = await indexSubtitleRoot(subtitleRoot);
   let indexedAt = Date.now();
+  let subtitlesDirty = false;
+  let subtitleChangedAt = 0;
   let connection = null;
   let handledRef = '';
   let lastAttachedPath = '';
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
+
+  startSubtitleWatcher(() => {
+    subtitlesDirty = true;
+    subtitleChangedAt = Date.now();
+  });
 
   for (;;) {
     try {
@@ -134,9 +158,17 @@ async function watch() {
         handledRef = '';
       }
 
-      if (Date.now() - indexedAt > 60000) {
+      const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
+      const shouldSafetyRefresh = Date.now() - indexedAt > 60000;
+      if (shouldRefreshForChange || shouldSafetyRefresh) {
+        const before = index.files.length;
         index = await indexSubtitleRoot(subtitleRoot);
         indexedAt = Date.now();
+        if (shouldRefreshForChange || index.files.length !== before) {
+          console.log(`[companion] subtitle index refreshed: ${before} -> ${index.files.length} files`);
+          handledRef = '';
+        }
+        subtitlesDirty = false;
       }
 
       const context = await connection.bridge.playbackContext();
