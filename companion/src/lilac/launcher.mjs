@@ -5,6 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+let pickerAttempted = false;
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -15,21 +16,30 @@ function configPath() {
   return path.join(base, 'LilacCompanion', 'config.json');
 }
 
+function normalizeExecutablePath(value) {
+  return String(value || '')
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .replace(/^['\"]|['\"]$/g, '')
+    .trim();
+}
+
 async function readRememberedExecutable() {
   try {
     const json = JSON.parse(await fs.readFile(configPath(), 'utf8'));
-    const value = String(json?.lilacExe || '').trim();
+    const value = normalizeExecutablePath(json?.lilacExe);
     return value && await exists(value) ? value : '';
   } catch { return ''; }
 }
 
 async function rememberExecutable(file) {
-  if (!file || !(await exists(file))) return;
+  const normalized = normalizeExecutablePath(file);
+  if (!normalized || !(await exists(normalized))) return;
   const target = configPath();
   await fs.mkdir(path.dirname(target), { recursive: true });
   let current = {};
   try { current = JSON.parse(await fs.readFile(target, 'utf8')); } catch {}
-  await fs.writeFile(target, JSON.stringify({ ...current, lilacExe: file }, null, 2), 'utf8');
+  await fs.writeFile(target, JSON.stringify({ ...current, lilacExe: normalized }, null, 2), 'utf8');
 }
 
 async function powershell(script, timeout = 7000) {
@@ -44,10 +54,14 @@ async function powershell(script, timeout = 7000) {
   } catch { return ''; }
 }
 
+function psLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 export async function runningLilacExecutable() {
   if (process.platform !== 'win32') return '';
   const value = await powershell("$p=Get-CimInstance Win32_Process -Filter \"Name='LilacAnime.exe'\" | Select-Object -First 1 -ExpandProperty ExecutablePath; if($p){$p}");
-  return value.split(/\r?\n/).map(x => x.trim()).find(Boolean) || '';
+  return value.split(/\r?\n/).map(normalizeExecutablePath).find(Boolean) || '';
 }
 
 async function shortcutCandidates() {
@@ -70,7 +84,7 @@ foreach($root in $roots){
     }
 }`;
   const output = await powershell(script, 10000);
-  return output.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  return output.split(/\r?\n/).map(normalizeExecutablePath).filter(Boolean);
 }
 
 async function registryCandidates() {
@@ -94,40 +108,52 @@ foreach($root in $roots){
     }
 }`;
   const output = await powershell(script);
-  return output.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  return output.split(/\r?\n/).map(normalizeExecutablePath).filter(Boolean);
 }
 
 async function chooseLilacExecutable() {
-  if (process.platform !== 'win32' || process.env.CI) return '';
+  if (process.platform !== 'win32' || process.env.CI || pickerAttempted) return '';
+  pickerAttempted = true;
+
+  const resultFile = path.join(os.tmpdir(), `lilac-companion-picker-${process.pid}-${Date.now()}.txt`);
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
+$outPath = ${psLiteral(resultFile)}
 $dlg = New-Object System.Windows.Forms.OpenFileDialog
 $dlg.Title = 'Lilac Companion - LilacAnime.exe 위치를 한 번만 선택하세요'
 $dlg.Filter = 'LilacAnime 실행 파일 (LilacAnime.exe)|LilacAnime.exe|실행 파일 (*.exe)|*.exe'
 $dlg.FileName = 'LilacAnime.exe'
 $dlg.CheckFileExists = $true
 $dlg.Multiselect = $false
-if($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ $dlg.FileName }
+if($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){
+  [System.IO.File]::WriteAllText($outPath, $dlg.FileName, (New-Object System.Text.UTF8Encoding($false)))
+}
 `;
-  const output = await powershell(script, 120000);
-  return output.split(/\r?\n/).map(x => x.trim()).find(Boolean) || '';
+  try {
+    await powershell(script, 120000);
+    const picked = normalizeExecutablePath(await fs.readFile(resultFile, 'utf8').catch(() => ''));
+    return picked;
+  } finally {
+    await fs.unlink(resultFile).catch(() => {});
+  }
 }
 
 async function firstExisting(candidates) {
-  for (const candidate of candidates) {
+  for (const rawCandidate of candidates) {
+    const candidate = normalizeExecutablePath(rawCandidate);
     if (candidate && /LilacAnime\.exe$/i.test(candidate) && await exists(candidate)) return candidate;
   }
   return '';
 }
 
 export async function discoverLilacExecutable({ allowPicker = true } = {}) {
-  const explicit = String(process.env.LILAC_EXE || '').trim();
+  const explicit = normalizeExecutablePath(process.env.LILAC_EXE);
   if (explicit && await exists(explicit)) {
     await rememberExecutable(explicit);
     return { path: explicit, source: 'env', running: false };
   }
 
-  const running = await runningLilacExecutable();
+  const running = normalizeExecutablePath(await runningLilacExecutable());
   if (running && await exists(running)) {
     await rememberExecutable(running);
     return { path: running, source: 'running-process', running: true };
@@ -165,7 +191,7 @@ export async function discoverLilacExecutable({ allowPicker = true } = {}) {
   }
 
   if (allowPicker) {
-    const picked = await chooseLilacExecutable();
+    const picked = normalizeExecutablePath(await chooseLilacExecutable());
     if (picked && /LilacAnime\.exe$/i.test(picked) && await exists(picked)) {
       await rememberExecutable(picked);
       return { path: picked, source: 'picker', running: false };
