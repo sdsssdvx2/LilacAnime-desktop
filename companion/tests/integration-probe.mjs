@@ -5,6 +5,7 @@ const port = Number(process.env.LILAC_CDP_PORT || 9223);
 const required = [
   'lilac',
   'titleVariants',
+  'resolveTitles',
   'catalogKoreanSearch',
   'providerCatalog',
   'providerDetail',
