@@ -49,8 +49,8 @@ export class LilacBridge {
       const titleParts = playerTitle.split('·').map(v => v.trim()).filter(Boolean);
       const titleFromDom = titleParts.length > 1 ? titleParts.slice(0, -1).join(' · ') : playerTitle;
       const epText = [e.number, e.name, e.title, titleParts.at(-1)].filter(Boolean).join(' ');
-      const epMatch = epText.match(/(?:episode|ep\.?|제\s*)?\s*(\d+(?:\.\d+)?)\s*(?:화|회|$)/i);
-      const episodeNumber = Number(e.number || epMatch?.[1] || 0) || null;
+      const epMatch = epText.match(/([0-9]+(?:[.][0-9]+)?)[ ]*(?:화|회|$)/i);
+      const episodeNumber = c.resolving ? null : (Number(e.number || epMatch?.[1] || 0) || null);
       const provider = e.provider || a.provider || String(localStorage.getItem('contentSource') || '');
       const fallbackTitle = a.title || a.title_english || a.romaji || c.subtitleTitle || titleFromDom || '';
       const hasPlaybackIdentity = Boolean((a.title || a.title_english || a.romaji || c.subtitleTitle || titleFromDom) && episodeNumber);
