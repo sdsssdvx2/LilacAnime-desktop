@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function decodeBuffer(buffer) {
   if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer.subarray(2));
@@ -122,13 +123,22 @@ export function assToVtt(source) {
   return `WEBVTT\n\n${cues.join('\n\n')}\n`;
 }
 
+async function adjacentFonts(filePath) {
+  const dir = path.dirname(filePath);
+  let names = [];
+  try { names = await fs.readdir(dir); } catch { return []; }
+  return names
+    .filter(name => /\.(ttf|otf|ttc|woff2?)$/i.test(name))
+    .map(name => pathToFileURL(path.join(dir, name)).href);
+}
+
 export async function prepareSubtitle(filePath) {
   const buffer = await fs.readFile(filePath);
   const text = decodeBuffer(buffer);
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.vtt') return { path: filePath, vtt: /^WEBVTT/i.test(text.trimStart()) ? text : `WEBVTT\n\n${text}`, ass: null };
-  if (ext === '.srt') return { path: filePath, vtt: srtToVtt(text), ass: null };
-  if (ext === '.smi' || ext === '.sami') return { path: filePath, vtt: smiToVtt(text), ass: null };
-  if (ext === '.ass' || ext === '.ssa') return { path: filePath, vtt: assToVtt(text), ass: text };
+  if (ext === '.vtt') return { path: filePath, vtt: /^WEBVTT/i.test(text.trimStart()) ? text : `WEBVTT\n\n${text}`, ass: null, fonts: [] };
+  if (ext === '.srt') return { path: filePath, vtt: srtToVtt(text), ass: null, fonts: [] };
+  if (ext === '.smi' || ext === '.sami') return { path: filePath, vtt: smiToVtt(text), ass: null, fonts: [] };
+  if (ext === '.ass' || ext === '.ssa') return { path: filePath, vtt: assToVtt(text), ass: text, fonts: await adjacentFonts(filePath) };
   throw new Error(`Unsupported subtitle format: ${ext}`);
 }
