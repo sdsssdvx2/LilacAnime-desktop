@@ -109,22 +109,43 @@ async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
   return Buffer.concat(chunks);
 }
 
+async function findDebuggerTarget(base, targetId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const response = await fetch(`${base}/json/list`, { signal: AbortSignal.timeout(1500) });
+    if (response.ok) {
+      const targets = await response.json();
+      const found = targets.find(target => target.id === targetId && target.webSocketDebuggerUrl);
+      if (found) return found;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  throw new Error('CDP auxiliary target did not expose a debugger endpoint');
+}
+
 export async function createAuxiliaryCdpTarget(parentSession, { url = 'about:blank', timeoutMs = 2500 } = {}) {
   const base = debuggerHttpBase(parentSession.webSocketUrl);
-  const response = await fetch(`${base}/json/new?${encodeURIComponent(url)}`, {
-    method: 'PUT',
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-  if (!response.ok) throw new Error(`CDP auxiliary target HTTP ${response.status}`);
-  const target = await response.json();
-  if (!target?.id || !target?.webSocketDebuggerUrl) throw new Error('CDP auxiliary target is missing debugger metadata');
-  const session = new CdpSession(target.webSocketDebuggerUrl);
-  await session.connect({ timeoutMs });
-  const close = async () => {
-    session.close();
-    await fetch(`${base}/json/close/${encodeURIComponent(target.id)}`, { signal: AbortSignal.timeout(1500) }).catch(() => {});
-  };
-  return { session, target, close };
+  const created = await parentSession.send('Target.createTarget', {
+    url,
+    background: true,
+    newWindow: false
+  }, { timeoutMs });
+  const targetId = created?.targetId;
+  if (!targetId) throw new Error('CDP Target.createTarget returned no target id');
+  let target;
+  try {
+    target = await findDebuggerTarget(base, targetId, timeoutMs);
+    const session = new CdpSession(target.webSocketDebuggerUrl);
+    await session.connect({ timeoutMs });
+    const close = async () => {
+      session.close();
+      await parentSession.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+    };
+    return { session, target, close };
+  } catch (error) {
+    await parentSession.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function loadCdpNetworkResource(session, url, {
