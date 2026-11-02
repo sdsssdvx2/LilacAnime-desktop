@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": "src/main.mjs",
   "description": "External companion for LilacAnime Desktop: local subtitle memory/matching and source diagnostics without patching Lilac.",
   "scripts": {
     "start": "node src/main.mjs watch",
     "doctor": "node src/main.mjs doctor",
     "source-doctor": "node src/main.mjs source-doctor",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "build:win": "pkg . --sea --targets node22-win-x64 --compress Brotli --output dist/LilacCompanion.exe"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "6.24.0"
   },
   "engines": {
     "node": ">=22.0.0"
