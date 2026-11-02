@@ -326,17 +326,19 @@ async function watch() {
 
       const preference = state.subtitlePreference(stable.anime, stable.episode.number);
       const manual = preference?.kind === 'user' ? preference : null;
+      const cachedAliases = state.titleAliases(stable.anime);
       const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
         anime: stable.anime,
         episode: stable.episode.number,
         episodeMeta: stable.episode,
-        aliases: [],
+        aliases: cachedAliases,
         files: index.files,
         manual
       });
       const match = resolved.match;
       if (resolved.fallback.length) {
         console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 8).join(' | ')}`);
+        await state.rememberTitleAliases(stable.anime, resolved.fallback);
       }
 
       handledRef = ref;
