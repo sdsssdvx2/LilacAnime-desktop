@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractEpisode, extractSeason, extractYear, extractEpisodeKind } from '../src/normalize.mjs';
 import { chooseSubtitleMatch, rankSubtitleFiles } from '../src/subtitles/matcher.mjs';
+import { reverseResolveLocalAliases } from '../src/subtitles/alias-fallback.mjs';
 
-const file = (path, { episode = null, season = null, part = null, year = null, episodeKind = 'main', titleHints = [] } = {}) => ({
+const file = (path, { episode = null, season = null, part = null, year = null, episodeKind = 'main', titleHints = [], parent = '' } = {}) => ({
   path, name: path.split(/[\\/]/).pop(), ext: '.smi', size: 1000, mtimeMs: 1,
-  parent: '', grandparent: '', episode, season, part, year, episodeKind, titleHints
+  parent, grandparent: '', episode, season, part, year, episodeKind, titleHints
 });
 
 test('episode parser ignores resolution and accepts common anime naming forms', () => {
@@ -39,6 +40,37 @@ test('Lilac-provided English/romaji alias can match a differently named local fo
   });
   assert.equal(result.confidence, 'high');
   assert.equal(result.selected?.path, files[0].path);
+});
+
+test('reverse Lilac title lookup can bridge Sword of Coming to a Korean local folder', async () => {
+  const local = file('D:\\Utility\\자막\\검래 2024\\검래 01.smi', {
+    episode: 1, year: 2024, parent: '검래 2024', titleHints: ['검래 2024', '검래']
+  });
+  const bridge = {
+    titleVariants: async query => query === '검래' ? ['Sword of Coming', 'Jian Lai'] : [],
+    searchProvider: async () => []
+  };
+  const anime = { title: 'Sword of Coming', year: 2024, provider: 'reanime' };
+  const aliases = await reverseResolveLocalAliases(bridge, { anime, episode: 1, files: [local] });
+  assert.ok(aliases.includes('검래'));
+  const result = chooseSubtitleMatch({ anime, episode: 1, aliases, files: [local] });
+  assert.equal(result.confidence, 'high');
+  assert.equal(result.selected?.path, local.path);
+});
+
+test('provider search can bridge a romaji local folder when titleVariants cannot', async () => {
+  const local = file('D:\\Utility\\자막\\Jian Lai 2024\\Jian Lai - 01.smi', {
+    episode: 1, year: 2024, parent: 'Jian Lai 2024', titleHints: ['Jian Lai 2024', 'Jian Lai']
+  });
+  const bridge = {
+    titleVariants: async () => [],
+    searchProvider: async (_provider, query) => query === 'Jian Lai' ? [{ title: 'Sword of Coming', romaji: 'Jian Lai', year: 2024 }] : []
+  };
+  const anime = { title: 'Sword of Coming', year: 2024, provider: 'reanime' };
+  const aliases = await reverseResolveLocalAliases(bridge, { anime, episode: 1, files: [local] });
+  assert.ok(aliases.includes('Jian Lai'));
+  const result = chooseSubtitleMatch({ anime, episode: 1, aliases, files: [local] });
+  assert.equal(result.selected?.path, local.path);
 });
 
 test('season mismatch is heavily penalized', () => {
