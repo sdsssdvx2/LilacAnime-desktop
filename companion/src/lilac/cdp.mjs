@@ -107,20 +107,6 @@ export class CdpSession {
   }
 }
 
-async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
-  const chunks = [];
-  try {
-    while (true) {
-      const part = await session.send('IO.read', { handle }, { timeoutMs });
-      if (part.data) chunks.push(part.base64Encoded ? Buffer.from(part.data, 'base64') : Buffer.from(part.data));
-      if (part.eof) break;
-    }
-  } finally {
-    await session.send('IO.close', { handle }, { timeoutMs: 1500 }).catch(() => {});
-  }
-  return Buffer.concat(chunks);
-}
-
 function headerEntries(original = {}, additions = {}, userAgent = '') {
   const merged = new Map();
   for (const [name, value] of Object.entries(original || {})) merged.set(name.toLowerCase(), { name, value: String(value) });
@@ -141,9 +127,9 @@ function fetchPatternFor(url) {
 export async function loadCdpNetworkResource(session, url, {
   headers = {},
   userAgent = '',
-  timeoutMs = 8000
+  timeoutMs = 8000,
+  text = false
 } = {}) {
-  await session.send('Network.enable', {}, { timeoutMs: 2000 });
   const protectedHeaders = { ...(headers || {}) };
   let removePaused = null;
   let fetchEnabled = false;
@@ -162,29 +148,34 @@ export async function loadCdpNetworkResource(session, url, {
     fetchEnabled = true;
   }
 
-  const frameTree = await session.send('Page.getFrameTree', {}, { timeoutMs: 2000 });
-  const frameId = frameTree?.frameTree?.frame?.id;
-  const started = performance.now();
+  const expression = `(async()=>{
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),${Math.max(1000, Number(timeoutMs) || 8000)});
+    const started=performance.now();
+    try{
+      const response=await fetch(${JSON.stringify(url)},{cache:'no-store',credentials:'omit',signal:controller.signal});
+      const headers=Object.fromEntries(response.headers.entries());
+      if(!response.ok)return {ok:false,status:response.status,headers,totalMs:performance.now()-started};
+      ${text
+        ? "const body=await response.text();return {ok:true,status:response.status,headers,body,bytes:new TextEncoder().encode(body).byteLength,totalMs:performance.now()-started};"
+        : "const body=await response.arrayBuffer();return {ok:true,status:response.status,headers,bytes:body.byteLength,totalMs:performance.now()-started};"}
+    }catch(error){return {ok:false,status:0,error:String(error?.name||'Error')+': '+String(error?.message||error),totalMs:performance.now()-started}}
+    finally{clearTimeout(timer)}
+  })()`;
+
   try {
-    const result = await session.send('Network.loadNetworkResource', {
-      ...(frameId ? { frameId } : {}),
-      url,
-      options: { disableCache: true, includeCredentials: true }
-    }, { timeoutMs });
-    const ended = performance.now();
-    const resource = result?.resource || {};
-    const status = Number(resource.httpStatusCode || 0);
-    if (!resource.success || status < 200 || status >= 300) {
-      throw new Error(status ? `HTTP ${status}` : (resource.netErrorName || 'CDP network resource load failed'));
-    }
-    const body = resource.stream ? await readCdpStream(session, resource.stream, { timeoutMs }) : Buffer.alloc(0);
+    const result = await session.evaluate(expression, { timeoutMs: timeoutMs + 1500 });
+    const status = Number(result?.status || 0);
+    if (!result?.ok) throw new Error(status ? `HTTP ${status}` : (result?.error || 'CDP renderer fetch failed'));
+    const bytes = Number(result.bytes || 0);
+    const totalMs = Number(result.totalMs || 0);
     return {
-      body,
+      body: text ? Buffer.from(String(result.body || ''), 'utf8') : Buffer.alloc(0),
       status,
-      headers: resource.headers || {},
-      bytes: body.length,
-      totalMs: ended - started,
-      mbps: body.length > 0 && ended > started ? (body.length * 8) / ((ended - started) / 1000) / 1_000_000 : 0
+      headers: result.headers || {},
+      bytes,
+      totalMs,
+      mbps: bytes > 0 && totalMs > 0 ? (bytes * 8) / (totalMs / 1000) / 1_000_000 : 0
     };
   } finally {
     removePaused?.();
