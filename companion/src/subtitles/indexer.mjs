@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { extractEpisode, extractSeason, extractPart, stripEpisodeNoise } from '../normalize.mjs';
+import { extractEpisode, extractSeason, extractPart, extractYear, extractEpisodeKind, stripEpisodeNoise } from '../normalize.mjs';
 
 export const SUBTITLE_EXTENSIONS = new Set(['.smi', '.sami', '.srt', '.ass', '.ssa', '.vtt']);
 
@@ -19,9 +19,12 @@ async function walk(root, output) {
     const parent = path.basename(path.dirname(full));
     const grandparent = path.basename(path.dirname(path.dirname(full)));
     const stem = path.basename(entry.name, ext);
+    const contextText = `${grandparent} ${parent} ${stem}`;
     const episode = extractEpisode(stem);
     const season = extractSeason(`${parent} ${stem}`);
     const part = extractPart(`${parent} ${stem}`);
+    const year = extractYear(contextText);
+    const episodeKind = extractEpisodeKind(contextText);
     const titleHints = [...new Set([
       stripEpisodeNoise(parent),
       stripEpisodeNoise(grandparent),
@@ -38,6 +41,8 @@ async function walk(root, output) {
       episode,
       season,
       part,
+      year,
+      episodeKind,
       titleHints
     });
   }));
