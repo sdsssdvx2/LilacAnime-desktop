@@ -83,6 +83,38 @@ export function chooseBestSource(results = []) {
   return { selected: pool[0]?.value || null, reason: stable.length ? 'stable-quality-first' : 'fallback-no-stable-source', ranked };
 }
 
+export function safeAutoSwitchDecision(scan, currentProvider) {
+  const selected = scan?.decision?.selected || null;
+  if (!selected) return { switch: false, reason: 'no-selection', selected: null };
+  if (!selected.provider || selected.provider === currentProvider) return { switch: false, reason: 'already-best', selected };
+  if (selected.mappingConfidence !== 'high') return { switch: false, reason: 'mapping-not-high-confidence', selected };
+
+  const ranked = scan.decision?.ranked || rankSourceResults(scan.results || []);
+  const bestItem = ranked.find(item => item.ok && item.value?.provider === selected.provider);
+  const currentItem = ranked.find(item => item.ok && item.value?.provider === currentProvider);
+  const bestProbe = bestItem?.value?.probe;
+  const currentProbe = currentItem?.value?.probe;
+  if (!bestProbe) return { switch: false, reason: 'selected-not-probed', selected };
+
+  const bestHeight = Number(bestProbe.quality?.height || 0);
+  const currentHeight = Number(currentProbe?.quality?.height || 0);
+  const bestStable = Boolean(bestItem?.stable);
+  const currentStable = Boolean(currentItem?.stable);
+  const bestStability = Number(bestProbe.metrics?.stability || 0);
+
+  if (!bestStable || bestStability < 80) return { switch: false, reason: 'winner-not-stable-enough', selected };
+
+  // Safe mode only changes source when the win is obvious without subjective frame-quality analysis:
+  // clearly higher resolution, or the current source is measurably unstable while the winner is at least as sharp.
+  if (bestHeight >= 720 && bestHeight >= currentHeight + 180) {
+    return { switch: true, reason: 'clear-resolution-win', selected };
+  }
+  if (currentProbe && !currentStable && bestHeight >= currentHeight) {
+    return { switch: true, reason: 'current-unstable', selected };
+  }
+  return { switch: false, reason: 'same-resolution-needs-visual-compare', selected };
+}
+
 export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS } = {}) {
   const aliases = await bridge.titleVariants(context.anime.title || context.anime.title_english || '').catch(() => []);
   const settled = await Promise.all(providers.map(async provider => {
