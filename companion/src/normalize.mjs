@@ -65,6 +65,21 @@ export function extractPart(value = '') {
   return null;
 }
 
+export function extractYear(value = '') {
+  const text = String(value).normalize('NFKC');
+  const years = [...text.matchAll(/(?:^|\D)((?:19|20)\d{2})(?=\D|$)/g)].map(match => Number(match[1]));
+  return years.length ? years[years.length - 1] : null;
+}
+
+export function extractEpisodeKind(value = '') {
+  const text = String(value).normalize('NFKC').toLowerCase();
+  if (/(?:^|[^a-z0-9])ova(?:[^a-z0-9]|$)|오브이에이/i.test(text)) return 'ova';
+  if (/(?:^|[^a-z0-9])oad(?:[^a-z0-9]|$)/i.test(text)) return 'oad';
+  if (/(?:^|[^a-z0-9])movie(?:[^a-z0-9]|$)|극장판|영화판/i.test(text)) return 'movie';
+  if (/(?:^|[^a-z0-9])specials?(?:[^a-z0-9]|$)|(?:^|[^a-z0-9])sp\s*\d*(?:[^a-z0-9]|$)|스페셜|특별편|특별판|번외편|외전/i.test(text)) return 'special';
+  return 'main';
+}
+
 export function extractEpisode(value = '') {
   const text = String(value).normalize('NFKC');
   const explicit = [
