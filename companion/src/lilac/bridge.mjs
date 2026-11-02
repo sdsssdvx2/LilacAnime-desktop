@@ -55,6 +55,8 @@ export class LilacBridge {
           }
         }
       } catch {}
+      let currentSrc = '';
+      try { currentSrc = String(video?.currentSrc || video?.src || ''); } catch {}
       return {
         anime: {
           provider: a.provider || '', id: a.id ?? null, mal_id: a.mal_id ?? null,
@@ -69,7 +71,7 @@ export class LilacBridge {
           kind: e.kind || '', type: e.type || ''
         },
         seriesEpisodes,
-        stream: { url: s.url || '', server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
+        stream: { url: s.url || currentSrc || '', currentSrc, server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
         subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
         playing: Boolean(video),
         currentTime: Number(video?.currentTime || 0),
@@ -93,7 +95,7 @@ export class LilacBridge {
       if (typeof window.lilac?.titleVariants !== 'function') return [];
       const result = await window.lilac.titleVariants(${value});
       return Array.isArray(result) ? result : [];
-    })()`);
+    })()`, { timeoutMs: 8000 });
   }
 
   async resolveTitles(items = []) {
@@ -102,7 +104,7 @@ export class LilacBridge {
       if (typeof window.lilac?.resolveTitles !== 'function') return [];
       const result = await window.lilac.resolveTitles(${payload});
       return Array.isArray(result) ? result : [];
-    })()`);
+    })()`, { timeoutMs: 12000 });
   }
 
   async searchProvider(provider, query) {
@@ -118,7 +120,7 @@ export class LilacBridge {
       }
       if (typeof window.lilac?.providerCatalog === 'function') return list(await window.lilac.providerCatalog(provider, query, 0, ''));
       return [];
-    })()`);
+    })()`, { timeoutMs: 12000 });
   }
 
   async providerEpisodes(provider, anime) {
@@ -138,7 +140,7 @@ export class LilacBridge {
       }
       if (typeof window.lilac?.providerDetail !== 'function') return [];
       return list(await window.lilac.providerDetail(anime));
-    })()`);
+    })()`, { timeoutMs: 12000 });
   }
 
   async prepareEpisodeStream(episode) {
@@ -146,7 +148,7 @@ export class LilacBridge {
     return this.session.evaluate(`(async () => {
       if (typeof window.lilac?.prepareEpisodeStream !== 'function') throw new Error('prepareEpisodeStream is unavailable');
       return await window.lilac.prepareEpisodeStream(${payload});
-    })()`);
+    })()`, { timeoutMs: 12000 });
   }
 
   async attachPreparedSubtitle(prepared, { label = 'Lilac Companion · 내 자막' } = {}) {
@@ -215,6 +217,6 @@ export class LilacBridge {
         : window.lilac.providerResolve(ep);
       await resolveIntoPlayer(resolver, displayTitle + ' · ' + (ep.name || number + '화'), context, displayTitle, number);
       return { ok: true, provider: data.provider, episode: number, seriesEpisodes: context.seriesEpisodes.length };
-    })()`);
+    })()`, { timeoutMs: 20000 });
   }
 }
