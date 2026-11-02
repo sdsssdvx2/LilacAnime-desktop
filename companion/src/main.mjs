@@ -4,10 +4,11 @@ import path from 'node:path';
 import { connectLilacCdp } from './lilac/cdp.mjs';
 import { LilacBridge } from './lilac/bridge.mjs';
 import { launchLilacForCompanion } from './lilac/launcher.mjs';
+import { normalizeTitle } from './normalize.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
 import { prepareSubtitle } from './subtitles/prepare.mjs';
-import { scanSources, deepScanTop } from './source/scout.mjs';
+import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { StateStore } from './state.mjs';
 
 const VERSION = '0.1.0';
@@ -15,6 +16,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
 const cdpPort = Number(process.env.LILAC_CDP_PORT || 9223);
+const sourceAutoMode = String(process.env.LILAC_SOURCE_AUTO || 'safe').toLowerCase();
+const sourceCacheMs = Number(process.env.LILAC_SOURCE_CACHE_MS || 6 * 60 * 60 * 1000);
+const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 25);
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -57,6 +61,13 @@ function playbackRef(store, context) {
   const anime = store.animeKey(context.anime);
   const ep = context.episode?.number || context.episode?.id || context.episode?.url || '';
   return `${anime}|${ep}|${context.episode?.provider || ''}|${context.stream?.server || ''}`;
+}
+
+function sourceEpisodeKey(context) {
+  const anime = context?.anime || {};
+  const identity = anime.anilistId || anime.malId || anime.mal_id || normalizeTitle(anime.title_english || anime.romaji || anime.title || '');
+  const episode = Number(context?.episode?.number || 0) || context?.episode?.id || '';
+  return identity && episode ? `${identity}|${episode}` : '';
 }
 
 async function collectVariants(bridge, anime) {
@@ -141,12 +152,60 @@ async function watch() {
   let connection = null;
   let handledRef = '';
   let lastAttachedPath = '';
+  const sourceTasks = new Map();
+  const sourceDone = new Map();
+  let sourceSwitchGuard = { episode: null, until: 0 };
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
+  console.log(`[companion] source auto mode: ${sourceAutoMode}`);
 
   startSubtitleWatcher(() => {
     subtitlesDirty = true;
     subtitleChangedAt = Date.now();
   });
+
+  const startSourceDiagnosis = context => {
+    if (sourceAutoMode === 'off' || !context?.anime || !context?.episode?.number) return;
+    if (sourceSwitchGuard.until > Date.now() && sourceSwitchGuard.episode === Number(context.episode.number)) return;
+    const key = sourceEpisodeKey(context);
+    if (!key || sourceTasks.has(key)) return;
+    const doneAt = Number(sourceDone.get(key) || 0);
+    if (doneAt && Date.now() - doneAt < sourceCacheMs) return;
+
+    const task = (async () => {
+      await sleep(800);
+      const start = await connection.bridge.playbackContext();
+      if (!start?.anime || sourceEpisodeKey(start) !== key) return;
+      console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
+      const quick = await scanSources(connection.bridge, start, { sampleCount: 1 });
+      const deep = await deepScanTop(connection.bridge, quick, { count: 3, sampleCount: 3 });
+      sourceDone.set(key, Date.now());
+      const selected = deep.decision?.selected;
+      const safety = safeAutoSwitchDecision(deep, start.episode.provider);
+      console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
+
+      const live = await connection.bridge.playbackContext();
+      if (!live?.anime || sourceEpisodeKey(live) !== key) return;
+      if (!safety.switch) return;
+      if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
+        console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
+        return;
+      }
+      if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return;
+
+      console.log(`[companion] auto-switching source: ${live.episode.provider} -> ${safety.selected.provider} (${safety.reason})`);
+      sourceSwitchGuard = { episode: Number(live.episode.number), until: Date.now() + 60000 };
+      await connection.bridge.switchToResolvedSource(safety.selected, {
+        title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
+      });
+      handledRef = '';
+      lastAttachedPath = '';
+    })().catch(error => {
+      console.warn(`[companion] source scan failed: ${error?.message || error}`);
+      sourceDone.set(key, Date.now());
+    }).finally(() => sourceTasks.delete(key));
+
+    sourceTasks.set(key, task);
+  };
 
   for (;;) {
     try {
@@ -174,6 +233,7 @@ async function watch() {
       const context = await connection.bridge.playbackContext();
       if (!context?.anime || !context?.episode?.number) { await sleep(900); continue; }
       const ref = playbackRef(state, context);
+      startSourceDiagnosis(context);
 
       if (context.subtitle?.source === 'user' && context.subtitle.path && context.subtitle.path !== lastAttachedPath && await exists(context.subtitle.path)) {
         await state.rememberSubtitle(context.anime, context.episode.number, { path: context.subtitle.path, kind: 'user' });
