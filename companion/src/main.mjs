@@ -72,7 +72,9 @@ function playbackRef(store, context) {
 
 function sourceEpisodeKey(context) {
   const anime = context?.anime || {};
-  const identity = anime.anilistId || anime.malId || anime.mal_id || normalizeTitle(anime.title_english || anime.romaji || anime.title || '');
+  const externalIdentity = anime.anilistId || anime.malId || (/^\d+$/.test(String(anime.mal_id || '')) ? anime.mal_id : '');
+  const titleIdentity = normalizeTitle(anime.title_english || anime.romaji || anime.title || '');
+  const identity = externalIdentity || (titleIdentity ? `${titleIdentity}|season:${String(anime.season || '')}|year:${String(anime.year || '')}` : '');
   const episode = Number(context?.episode?.number || 0) || context?.episode?.id || '';
   return identity && episode ? `${identity}|${episode}` : '';
 }
@@ -211,17 +213,19 @@ async function watch() {
     subtitleChangedAt = Date.now();
   });
 
-  const switchSource = async (bridge, live, selected, reason, { cached = false } = {}) => {
+  const switchSource = async (bridge, live, selected, reason, { cached = false, early = false } = {}) => {
     if (!selected?.provider || selected.provider === live.episode?.provider) return false;
-    if (Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
-      if (!cached) console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
+    if (!early && Number(live.currentTime || 0) > sourceAutoSwitchMaxSeconds) {
+      console.log(`[companion] source switch skipped: already ${Math.round(live.currentTime)}s into playback`);
       return false;
     }
     if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return false;
     console.log(`[companion] ${cached ? 'cached ' : ''}auto-switching source: ${live.episode.provider} -> ${selected.provider} (${reason})`);
     sourceSwitchGuard = { episode: Number(live.episode.number), provider: selected.provider, until: Date.now() + 60000 };
     await bridge.switchToResolvedSource(selected, {
-      title: live.anime.title || live.anime.title_english || live.anime.romaji || ''
+      title: live.anime.title || live.anime.title_english || live.anime.romaji || '',
+      resumeSeconds: Number(live.currentTime || 0),
+      resumeDuration: Number(live.playback?.duration || 0)
     });
     handledRef = '';
     lastAttachedPath = '';
@@ -241,7 +245,6 @@ async function watch() {
     if (cached) {
       const cachedSafety = safeAutoSwitchDecision(cached.scan, context.episode.provider);
       if (!cachedSafety.switch) return;
-      if (Number(context.currentTime || 0) > sourceAutoSwitchMaxSeconds) return;
 
       const task = (async () => {
         let cachedConnection = null;
@@ -254,7 +257,7 @@ async function watch() {
           const selected = cached.scan?.decision?.selected;
           console.log(`[companion] cached source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
           if (!safety.switch) return;
-          await switchSource(cachedConnection.bridge, live, safety.selected, safety.reason, { cached: true });
+          await switchSource(cachedConnection.bridge, live, safety.selected, safety.reason, { cached: true, early: true });
         } catch (error) {
           console.warn(`[companion] cached source switch failed; a fresh scan will be allowed later: ${error?.message || error}`);
           sourceDecisions.clear(key);
@@ -288,7 +291,7 @@ async function watch() {
         if (afterQuick.episode?.provider === start.episode?.provider && allowQuickAutoSwitch(quick, quickSafety)) {
           console.log(`[companion] source recommendation (quick): ${quick.decision?.selected?.provider || 'none'} · ${quickSafety.reason}`);
           sourceDecisions.remember(key, quick, Date.now(), sourceQuickDecisionCacheMs);
-          if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason)) return;
+          if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason, { early: true })) return;
         }
 
         const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3 });
