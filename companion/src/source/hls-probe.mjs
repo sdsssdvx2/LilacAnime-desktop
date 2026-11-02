@@ -88,6 +88,7 @@ export async function probeHls(url, { headers = {}, timeoutMs = 8000, sampleCoun
     mediaText = mediaProbe.body;
   }
   const segments = parseMediaPlaylist(mediaText, playlistUrl);
+  const duration = segments.reduce((sum, segment) => sum + (Number(segment.duration) || 0), 0) || null;
   const samples = [];
   for (const index of sampleIndices(segments.length, sampleCount)) {
     const segment = segments[index];
@@ -123,7 +124,8 @@ export async function probeHls(url, { headers = {}, timeoutMs = 8000, sampleCoun
       codecs: chosen?.codecs || '',
       frameRate: chosen?.frameRate || null,
       bandwidth: chosen?.bandwidth || null,
-      averageBandwidth: chosen?.averageBandwidth || null
+      averageBandwidth: chosen?.averageBandwidth || null,
+      duration
     },
     manifest: { ttfbMs: first.ttfbMs, totalMs: first.totalMs },
     segmentCount: segments.length,
