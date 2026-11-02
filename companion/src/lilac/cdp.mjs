@@ -6,20 +6,38 @@ export class CdpSession {
     this.pending = new Map();
   }
 
-  async connect() {
+  async connect({ timeoutMs = 2500 } = {}) {
     if (this.socket?.readyState === WebSocket.OPEN) return this;
     const socket = new WebSocket(this.webSocketUrl);
     this.socket = socket;
     await new Promise((resolve, reject) => {
-      const onOpen = () => { cleanup(); resolve(); };
-      const onError = event => { cleanup(); reject(event?.error || new Error('CDP WebSocket connection failed')); };
-      const cleanup = () => { socket.removeEventListener('open', onOpen); socket.removeEventListener('error', onError); };
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(value);
+      };
+      const onOpen = () => finish(resolve);
+      const onError = event => finish(reject, event?.error || new Error('CDP WebSocket connection failed'));
+      const timer = setTimeout(() => {
+        try { socket.close(); } catch {}
+        finish(reject, new Error(`CDP WebSocket connection timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeEventListener('open', onOpen);
+        socket.removeEventListener('error', onError);
+      };
       socket.addEventListener('open', onOpen, { once: true });
       socket.addEventListener('error', onError, { once: true });
     });
     socket.addEventListener('message', event => this.#message(event.data));
     socket.addEventListener('close', () => {
-      for (const { reject } of this.pending.values()) reject(new Error('CDP connection closed'));
+      for (const { reject, timer } of this.pending.values()) {
+        clearTimeout(timer);
+        reject(new Error('CDP connection closed'));
+      }
       this.pending.clear();
     });
     await this.send('Runtime.enable');
@@ -34,15 +52,20 @@ export class CdpSession {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
+    clearTimeout(pending.timer);
     if (message.error) pending.reject(new Error(message.error.message || 'CDP command failed'));
     else pending.resolve(message.result);
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, { timeoutMs = 4000 } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('CDP is not connected'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP command timed out after ${timeoutMs}ms: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
