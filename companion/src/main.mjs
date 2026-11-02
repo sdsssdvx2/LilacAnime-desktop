@@ -87,7 +87,7 @@ async function doctor() {
     if (context?.anime && context?.episode?.number) {
       const aliases = await collectVariants(bridge, context.anime);
       console.log('[companion] title variants:', aliases);
-      const match = chooseSubtitleMatch({ anime: context.anime, episode: context.episode.number, aliases, files: index.files });
+      const match = chooseSubtitleMatch({ anime: context.anime, episode: context.episode.number, episodeMeta: context.episode, aliases, files: index.files });
       console.log('[companion] best local subtitle:', match.best ? { confidence: match.confidence, score: match.best.score, path: match.best.file.path, reasons: match.best.reasons } : null);
     }
   } finally { session.close(); }
@@ -194,6 +194,7 @@ async function watch() {
       const match = chooseSubtitleMatch({
         anime: stable.anime,
         episode: stable.episode.number,
+        episodeMeta: stable.episode,
         aliases,
         files: index.files,
         manual
