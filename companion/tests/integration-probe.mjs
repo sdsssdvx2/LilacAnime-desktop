@@ -18,6 +18,7 @@ const required = [
 const { session, target } = await connectLilacCdp({ port });
 try {
   const bridge = new LilacBridge(session);
+  await bridge.waitUntilReady({ timeoutMs: 20000, intervalMs: 200 });
   const features = await bridge.features();
   console.log(JSON.stringify({ target: { title: target.title || '', url: target.url || '' }, features }, null, 2));
   const missing = required.filter(key => features[key] !== true);
