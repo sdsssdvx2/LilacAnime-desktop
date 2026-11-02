@@ -16,7 +16,8 @@ function streamHeaders(stream = {}) {
 async function resolveProviderEpisode(bridge, provider, context, aliases) {
   const wanted = context.episode.number;
   if (provider === context.episode.provider) {
-    const stream = await bridge.prepareEpisodeStream(context.episode);
+    let stream = context.stream?.url ? context.stream : null;
+    if (!stream) stream = await bridge.prepareEpisodeStream(context.episode);
     return {
       provider,
       anime: context.anime,
@@ -29,7 +30,7 @@ async function resolveProviderEpisode(bridge, provider, context, aliases) {
     };
   }
 
-  const queries = [...new Set([context.anime.title, context.anime.title_english, context.anime.romaji, ...aliases].filter(Boolean))].slice(0, 5);
+  const queries = animeAliases(context.anime, aliases).slice(0, 10);
   let candidates = [];
   for (const query of queries) {
     try {
@@ -97,7 +98,7 @@ async function probeResolved(resolved, sampleCount) {
   const url = resolved.stream?.url || '';
   if (!/^https?:\/\//i.test(url)) {
     const fallback = liveFallbackProbe(resolved);
-    if (fallback) return { ...resolved, probe: fallback, kind: 'live' };
+    if (fallback) return { ...resolved, probe: fallback, kind: 'live', note: `live playback fallback for ${url ? 'non-http stream' : 'missing stream URL'}` };
     throw new Error('unsupported stream URL');
   }
   const headers = streamHeaders(resolved.stream);
@@ -194,8 +195,24 @@ export function safeAutoSwitchDecision(scan, currentProvider) {
   return { switch: false, reason: scan.visual?.reason || 'same-resolution-needs-visual-compare', selected };
 }
 
+async function collectSourceAliases(bridge, anime = {}) {
+  const seeds = animeAliases(anime, []).slice(0, 6);
+  const output = new Set(seeds);
+  for (const seed of seeds.slice(0, 4)) {
+    try { for (const value of await bridge.titleVariants(seed)) output.add(value); } catch {}
+  }
+  try {
+    const resolved = await bridge.resolveTitles([anime]);
+    for (const item of (Array.isArray(resolved) ? resolved : [])) {
+      if (item?.ko) output.add(item.ko);
+      if (item?.en) output.add(item.en);
+    }
+  } catch {}
+  return [...output].filter(Boolean);
+}
+
 export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS } = {}) {
-  const aliases = await bridge.titleVariants(context.anime.title || context.anime.title_english || '').catch(() => []);
+  const aliases = await collectSourceAliases(bridge, context.anime);
   const settled = await Promise.all(providers.map(async provider => {
     try {
       const resolved = await resolveProviderEpisode(bridge, provider, context, aliases);
