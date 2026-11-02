@@ -6,7 +6,7 @@ export class CdpSession {
     this.pending = new Map();
   }
 
-  async connect({ timeoutMs = 2500 } = {}) {
+  async connect({ timeoutMs = 2500, enableRuntime = true } = {}) {
     if (this.socket?.readyState === WebSocket.OPEN) return this;
     const socket = new WebSocket(this.webSocketUrl);
     this.socket = socket;
@@ -40,7 +40,7 @@ export class CdpSession {
       }
       this.pending.clear();
     });
-    await this.send('Runtime.enable');
+    if (enableRuntime) await this.send('Runtime.enable');
     return this;
   }
 
@@ -95,6 +95,16 @@ function debuggerHttpBase(webSocketUrl) {
   return `${protocol}//${parsed.host}`;
 }
 
+async function connectBrowserCdp(base, timeoutMs) {
+  const response = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(1500) });
+  if (!response.ok) throw new Error(`CDP browser discovery HTTP ${response.status}`);
+  const version = await response.json();
+  if (!version?.webSocketDebuggerUrl) throw new Error('CDP browser websocket is unavailable');
+  const session = new CdpSession(version.webSocketDebuggerUrl);
+  await session.connect({ timeoutMs, enableRuntime: false });
+  return session;
+}
+
 async function readCdpStream(session, handle, { timeoutMs = 8000 } = {}) {
   const chunks = [];
   try {
@@ -125,25 +135,28 @@ async function findDebuggerTarget(base, targetId, timeoutMs) {
 
 export async function createAuxiliaryCdpTarget(parentSession, { url = 'about:blank', timeoutMs = 2500 } = {}) {
   const base = debuggerHttpBase(parentSession.webSocketUrl);
-  const created = await parentSession.send('Target.createTarget', {
-    url,
-    background: true,
-    newWindow: false
-  }, { timeoutMs });
-  const targetId = created?.targetId;
-  if (!targetId) throw new Error('CDP Target.createTarget returned no target id');
-  let target;
+  const browser = await connectBrowserCdp(base, timeoutMs);
+  let targetId = '';
   try {
-    target = await findDebuggerTarget(base, targetId, timeoutMs);
+    const created = await browser.send('Target.createTarget', {
+      url,
+      background: true,
+      newWindow: false
+    }, { timeoutMs });
+    targetId = created?.targetId || '';
+    if (!targetId) throw new Error('CDP Target.createTarget returned no target id');
+    const target = await findDebuggerTarget(base, targetId, timeoutMs);
     const session = new CdpSession(target.webSocketDebuggerUrl);
     await session.connect({ timeoutMs });
     const close = async () => {
       session.close();
-      await parentSession.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+      await browser.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+      browser.close();
     };
     return { session, target, close };
   } catch (error) {
-    await parentSession.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+    if (targetId) await browser.send('Target.closeTarget', { targetId }, { timeoutMs: 1500 }).catch(() => {});
+    browser.close();
     throw error;
   }
 }
