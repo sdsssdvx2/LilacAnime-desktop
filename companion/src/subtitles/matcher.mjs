@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { normalizeTitle, diceSimilarity, extractSeason, extractPart } from '../normalize.mjs';
+import { normalizeTitle, diceSimilarity, extractSeason, extractPart, extractYear, extractEpisodeKind } from '../normalize.mjs';
 
 function unique(values) {
   return [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
@@ -54,16 +54,45 @@ function inferCurrentPart(anime = {}) {
   return extractPart([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
 }
 
-export function rankSubtitleFiles({ anime = {}, episode, aliases = [], files = [], manual = null } = {}) {
+function inferCurrentYear(anime = {}) {
+  const direct = Number(anime.year || anime.seasonYear || anime.season_year || anime.startDate?.year || 0);
+  if (direct >= 1900 && direct <= 2099) return direct;
+  return extractYear([anime.title, anime.title_english, anime.romaji, anime.title_japanese].filter(Boolean).join(' '));
+}
+
+function inferCurrentKind(anime = {}, episodeMeta = {}, aliases = []) {
+  if (/movie/i.test(String(anime.type || ''))) return 'movie';
+  const values = [
+    anime.title, anime.title_english, anime.title_japanese, anime.romaji,
+    ...(Array.isArray(anime.synonyms) ? anime.synonyms : [anime.synonyms]),
+    ...aliases,
+    episodeMeta.name, episodeMeta.title, episodeMeta.slug, episodeMeta.url,
+    episodeMeta.kind, episodeMeta.type, episodeMeta.resolveKind
+  ].filter(Boolean);
+  for (const value of values) {
+    const kind = extractEpisodeKind(value);
+    if (kind !== 'main') return kind;
+  }
+  return null;
+}
+
+export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, aliases = [], files = [], manual = null } = {}) {
   const targetEpisode = Number(episode) || null;
   const targetSeason = inferCurrentSeason(anime);
   const targetPart = inferCurrentPart(anime);
+  const targetYear = inferCurrentYear(anime);
+  const targetKind = inferCurrentKind(anime, episodeMeta, aliases);
   const names = animeAliases(anime, aliases);
 
   return files.map(file => {
     let score = 0;
     const reasons = [];
     const title = titleScore(names, file.titleHints || []);
+    const manualExact = Boolean(manual?.path && path.resolve(manual.path) === path.resolve(file.path));
+    const manualRoot = Boolean(manual?.root && path.resolve(file.path).startsWith(path.resolve(manual.root) + path.sep));
+
+    // Unrelated titles must never become a candidate just because the episode number matches.
+    if (!title.score && !manualExact && !manualRoot) return null;
     score += title.score;
     if (title.score) reasons.push(`title:${title.score}`);
 
@@ -74,25 +103,41 @@ export function rankSubtitleFiles({ anime = {}, episode, aliases = [], files = [
     }
 
     if (targetSeason != null) {
-      if (file.season === targetSeason) { score += 70; reasons.push('season:exact'); }
-      else if (file.season != null) { score -= 260; reasons.push(`season:mismatch:${file.season}`); }
+      if (file.season === targetSeason) { score += 80; reasons.push('season:exact'); }
+      else if (file.season != null) { score -= 360; reasons.push(`season:mismatch:${file.season}`); }
     }
 
     if (targetPart != null) {
       if (file.part === targetPart) { score += 35; reasons.push('part:exact'); }
-      else if (file.part != null) { score -= 120; reasons.push(`part:mismatch:${file.part}`); }
+      else if (file.part != null) { score -= 160; reasons.push(`part:mismatch:${file.part}`); }
     }
 
-    if (manual?.path && path.resolve(manual.path) === path.resolve(file.path)) {
+    if (targetYear != null && file.year != null) {
+      if (file.year === targetYear) { score += 80; reasons.push('year:exact'); }
+      else { score -= 360; reasons.push(`year:mismatch:${file.year}`); }
+    }
+
+    const fileKind = file.episodeKind || 'main';
+    if (targetKind) {
+      if (fileKind === targetKind) { score += 140; reasons.push(`kind:exact:${targetKind}`); }
+      else { score -= 650; reasons.push(`kind:mismatch:${fileKind}->${targetKind}`); }
+    } else if (fileKind !== 'main') {
+      // If Lilac did not give enough evidence that this is a special, be conservative:
+      // never auto-apply a special/OVA just because its numeric episode matches.
+      score -= 120;
+      reasons.push(`kind:unconfirmed:${fileKind}`);
+    }
+
+    if (manualExact) {
       score += 2000;
       reasons.push('manual:exact');
-    } else if (manual?.root && path.resolve(file.path).startsWith(path.resolve(manual.root) + path.sep)) {
+    } else if (manualRoot) {
       score += 450;
       reasons.push('manual:root');
     }
 
-    return { file, score, reasons, title };
-  }).sort((a, b) => b.score - a.score || b.file.mtimeMs - a.file.mtimeMs);
+    return { file, score, reasons, title, targetKind, targetYear };
+  }).filter(Boolean).sort((a, b) => b.score - a.score || b.file.mtimeMs - a.file.mtimeMs);
 }
 
 export function chooseSubtitleMatch(input = {}) {
@@ -103,12 +148,14 @@ export function chooseSubtitleMatch(input = {}) {
   const exactEpisode = !input.episode || first.file.episode === Number(input.episode);
   const manual = first.reasons.some(reason => reason.startsWith('manual:'));
   const titleStrong = first.title.score >= 145;
+  const hardMismatch = first.reasons.some(reason => /^(season|year|kind):mismatch/.test(reason));
+  const specialUnconfirmed = first.reasons.some(reason => reason.startsWith('kind:unconfirmed:'));
   const gap = first.score - (second?.score ?? -Infinity);
 
   let confidence = 'low';
   if (manual) confidence = 'user';
-  else if (exactEpisode && titleStrong && first.score >= 360 && gap >= 70) confidence = 'high';
-  else if (exactEpisode && titleStrong && first.score >= 300 && gap >= 25) confidence = 'medium';
+  else if (!hardMismatch && !specialUnconfirmed && exactEpisode && titleStrong && first.score >= 360 && gap >= 70) confidence = 'high';
+  else if (!hardMismatch && !specialUnconfirmed && exactEpisode && titleStrong && first.score >= 300 && gap >= 25) confidence = 'medium';
 
   const selected = ['user', 'high'].includes(confidence) ? first.file : null;
   return { selected, confidence, best: first, second, ranked };
