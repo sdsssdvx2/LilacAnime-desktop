@@ -3,7 +3,17 @@ import { normalizeTitle, extractSeason, extractEpisodeKind } from '../normalize.
 import { animeAliases } from './matcher.mjs';
 
 const uniq = values => [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
-const GENERIC_DIRS = new Set(['자막', 'subtitle', 'subtitles', 'subs', 'download', 'downloads']);
+const GENERIC_DIRS = new Set([
+  '자막', 'subtitle', 'subtitles', 'subs', 'download', 'downloads',
+  'utility', 'program files', 'program files (x86)', 'programdata', 'users', 'temp', '팬자막'
+]);
+
+// Small, conservative seeds for titles whose common Korean/local-library name is not reliably returned by
+// the public metadata services Lilac already uses. These only participate when the playing title is already
+// one member of the same group; they do not fuzzy-match arbitrary shows.
+const KNOWN_ALIAS_GROUPS = [
+  ['Sword of Coming', 'Jian Lai', '剑来', '劍來', '검래']
+];
 
 function cleanGroupTitle(value = '') {
   return String(value)
@@ -37,7 +47,9 @@ function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [
   const groups = new Map();
 
   for (const file of files) {
-    if (targetEpisode && file.episode != null && Number(file.episode) !== targetEpisode) continue;
+    if (targetEpisode && file.episode != null && Number(file.episode) !== targetEpisode) {
+      // Keep the file for episode-set fingerprints below, but do not give it current-episode points.
+    }
     if (targetYear && file.year && Number(file.year) !== targetYear) continue;
     if (targetSeason && file.season && Number(file.season) !== targetSeason) continue;
     if (targetKind !== 'main' && file.episodeKind && file.episodeKind !== 'main') {
@@ -47,8 +59,11 @@ function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [
 
     for (const query of groupTitlesForFile(file)) {
       const key = normalizeTitle(query);
-      const current = groups.get(key) || { query, parent: query, files: 0, score: 0 };
+      const current = groups.get(key) || { query, parent: query, files: 0, score: 0, episodes: new Set(), seasons: new Set(), years: new Set() };
       current.files++;
+      if (Number.isFinite(Number(file.episode)) && Number(file.episode) > 0) current.episodes.add(Number(file.episode));
+      if (Number.isFinite(Number(file.season)) && Number(file.season) > 0) current.seasons.add(Number(file.season));
+      if (Number.isFinite(Number(file.year)) && Number(file.year) >= 1900) current.years.add(Number(file.year));
       if (targetEpisode && Number(file.episode) === targetEpisode) current.score += 12;
       if (targetYear && Number(file.year) === targetYear) current.score += 18;
       if (targetSeason && Number(file.season) === targetSeason) current.score += 12;
@@ -59,6 +74,7 @@ function localGroupCandidates({ anime = {}, episode, episodeMeta = {}, files = [
   }
 
   return [...groups.values()]
+    .map(item => ({ ...item, episodes: [...item.episodes].sort((a, b) => a - b), seasons: [...item.seasons], years: [...item.years] }))
     .sort((a, b) => b.score - a.score || b.files - a.files || a.query.localeCompare(b.query, 'ko'))
     .slice(0, limit);
 }
@@ -83,22 +99,69 @@ function sameIdentity(anime = {}, candidate = {}, currentAliases = []) {
   return aliasesMatch(currentAliases, candidateAliases(candidate));
 }
 
-async function lilacResolvedAliases(bridge, query, currentAliases) {
-  try {
-    const id = `companion:${normalizeTitle(query)}`;
-    const resolved = await bridge.resolveTitles([{ provider: 'companion', id, title: query }]);
-    const values = uniq((Array.isArray(resolved) ? resolved : []).flatMap(item => [item?.ko, item?.en]));
-    return aliasesMatch(currentAliases, values) ? values : [];
-  } catch {
-    return [];
+function knownAliasHit(currentAliases, query) {
+  const current = new Set(currentAliases.map(normalizeTitle).filter(Boolean));
+  const q = normalizeTitle(query);
+  for (const group of KNOWN_ALIAS_GROUPS) {
+    const normalized = group.map(normalizeTitle);
+    if (!normalized.some(value => current.has(value))) continue;
+    if (!normalized.includes(q)) continue;
+    return group;
   }
+  return [];
+}
+
+function episodeNumber(item = {}) {
+  const direct = Number(item.number ?? item.episodeNumber ?? item.episode ?? 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const text = [item.name, item.title, item.label].filter(Boolean).join(' ');
+  const match = text.match(/(?:^|[^0-9])([0-9]{1,3})(?:[.]([0-9]+))?\s*(?:화|회|episode|ep\.?|$)/i);
+  if (!match) return null;
+  const value = Number(match[2] ? `${match[1]}.${match[2]}` : match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+export function inferStructuralLocalAlias({ anime = {}, episode, episodeMeta = {}, files = [] } = {}) {
+  const series = Array.isArray(anime.companionSeriesEpisodes) ? anime.companionSeriesEpisodes : [];
+  const targetEpisodes = [...new Set(series.map(episodeNumber).filter(value => Number.isFinite(value) && value > 0))].sort((a, b) => a - b);
+  if (targetEpisodes.length < 8) return null;
+  const target = new Set(targetEpisodes);
+  const currentEpisode = Number(episode) || null;
+  const groups = localGroupCandidates({ anime, episode, episodeMeta, files, limit: 40 });
+  const scored = groups.map(group => {
+    const local = new Set(group.episodes || []);
+    if (currentEpisode && !local.has(currentEpisode)) return null;
+    if (local.size < 5) return null;
+    const overlap = [...local].filter(value => target.has(value)).length;
+    const coverage = overlap / target.size;
+    const precision = overlap / local.size;
+    const sizeDelta = Math.abs(local.size - target.size);
+    const score = overlap * 5 + coverage * 140 + precision * 140 - sizeDelta * 3 + Math.min(20, group.files);
+    return { ...group, overlap, coverage, precision, sizeDelta, structureScore: score };
+  }).filter(Boolean).sort((a, b) => b.structureScore - a.structureScore || b.score - a.score);
+
+  const best = scored[0] || null, second = scored[1] || null;
+  if (!best) return null;
+  const enough = best.overlap >= Math.min(8, target.size) && best.coverage >= 0.9 && best.precision >= 0.9;
+  const unique = !second || best.structureScore - second.structureScore >= 30 || (best.coverage >= 0.98 && best.precision >= 0.98 && (second.coverage < 0.9 || second.precision < 0.9));
+  if (!enough || !unique) return null;
+  return {
+    query: best.query,
+    confidence: 'high',
+    overlap: best.overlap,
+    targetCount: target.size,
+    localCount: best.episodes.length,
+    coverage: best.coverage,
+    precision: best.precision
+  };
 }
 
 async function providerSearchResolves(bridge, query, anime, currentAliases) {
-  const providers = uniq([anime.provider, 'reanime', 'miruro', 'linkkf', 'ohli24', 'linkani', 'animenosub']).filter(Boolean).slice(0, 7);
-  for (const provider of providers) {
-    let found = [];
-    try { found = await bridge.searchProvider(provider, query); } catch {}
+  const providers = uniq([anime.provider, 'reanime', 'miruro', 'ohli24', 'linkani', 'animenosub', 'linkkf']).filter(Boolean).slice(0, 5);
+  const batches = await Promise.all(providers.map(async provider => {
+    try { return await bridge.searchProvider(provider, query); } catch { return []; }
+  }));
+  for (const found of batches) {
     for (const candidate of (Array.isArray(found) ? found : []).slice(0, 10)) {
       if (!sameIdentity(anime, candidate, currentAliases)) continue;
       return candidateAliases(candidate);
@@ -112,27 +175,56 @@ export async function reverseResolveLocalAliases(bridge, {
 } = {}) {
   const currentAliases = animeAliases(anime, aliases);
   const candidates = localGroupCandidates({ anime, episode, episodeMeta, files, limit: maxQueries });
-  const resolved = [];
 
+  // Instant, conservative seeds first. This avoids network lookup for known metadata gaps.
+  const known = [];
   for (const candidate of candidates) {
-    let variants = [];
-    try { variants = await bridge.titleVariants(candidate.query); } catch {}
-    if (Array.isArray(variants) && aliasesMatch(currentAliases, variants)) {
-      resolved.push(candidate.query, ...variants);
-      continue;
-    }
-
-    const displayAliases = await lilacResolvedAliases(bridge, candidate.query, currentAliases);
-    if (displayAliases.length) {
-      resolved.push(candidate.query, ...displayAliases);
-      continue;
-    }
-
-    const providerAliases = await providerSearchResolves(bridge, candidate.query, anime, currentAliases);
-    if (providerAliases.length) resolved.push(candidate.query, ...providerAliases);
+    const group = knownAliasHit(currentAliases, candidate.query);
+    if (group.length) known.push(candidate.query, ...group);
   }
+  if (known.length) return uniq(known);
 
-  return uniq(resolved);
+  // A unique season-wide episode fingerprint is useful when translated titles have no textual overlap.
+  const structural = inferStructuralLocalAlias({ anime, episode, episodeMeta, files });
+  if (structural?.query) return [structural.query];
+
+  // Run title-variant lookups in parallel instead of serially. One slow metadata service now costs one timeout,
+  // not maxQueries multiplied by that timeout.
+  const variantHits = await Promise.all(candidates.map(async candidate => {
+    try {
+      const variants = await bridge.titleVariants(candidate.query);
+      return Array.isArray(variants) && aliasesMatch(currentAliases, variants) ? [candidate.query, ...variants] : [];
+    } catch { return []; }
+  }));
+  const variantResolved = uniq(variantHits.flat());
+  if (variantResolved.length) return variantResolved;
+
+  // Lilac's resolveTitles API already accepts up to 60 items and resolves them concurrently internally.
+  try {
+    const requests = candidates.map((candidate, index) => ({
+      provider: 'companion',
+      id: `local-alias-${index}-${normalizeTitle(candidate.query)}`,
+      title: candidate.query
+    }));
+    const results = await bridge.resolveTitles(requests);
+    const resolved = [];
+    for (const item of (Array.isArray(results) ? results : [])) {
+      const values = uniq([item?.ko, item?.en]);
+      if (!values.length || !aliasesMatch(currentAliases, values)) continue;
+      const key = String(item?.key || '');
+      const request = requests.find(entry => key.includes(String(entry.id)));
+      if (request) resolved.push(request.title, ...values);
+    }
+    if (resolved.length) return uniq(resolved);
+  } catch {}
+
+  // Provider search is the expensive last resort. Limit it to the strongest three local groups and run those
+  // candidates concurrently; each candidate also queries a small provider set concurrently.
+  const providerHits = await Promise.all(candidates.slice(0, 3).map(async candidate => {
+    const variants = await providerSearchResolves(bridge, candidate.query, anime, currentAliases);
+    return variants.length ? [candidate.query, ...variants] : [];
+  }));
+  return uniq(providerHits.flat());
 }
 
 export function localAliasCandidates(input = {}) {
