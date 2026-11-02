@@ -76,6 +76,11 @@ function inferCurrentKind(anime = {}, episodeMeta = {}, aliases = []) {
   return null;
 }
 
+function kindFamily(kind) {
+  if (['special', 'ova', 'oad'].includes(kind)) return 'special';
+  return kind || 'main';
+}
+
 export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, aliases = [], files = [], manual = null } = {}) {
   const targetEpisode = Number(episode) || null;
   const targetSeason = inferCurrentSeason(anime);
@@ -91,7 +96,6 @@ export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, alias
     const manualExact = Boolean(manual?.path && path.resolve(manual.path) === path.resolve(file.path));
     const manualRoot = Boolean(manual?.root && path.resolve(file.path).startsWith(path.resolve(manual.root) + path.sep));
 
-    // Unrelated titles must never become a candidate just because the episode number matches.
     if (!title.score && !manualExact && !manualRoot) return null;
     score += title.score;
     if (title.score) reasons.push(`title:${title.score}`);
@@ -119,11 +123,17 @@ export function rankSubtitleFiles({ anime = {}, episode, episodeMeta = {}, alias
 
     const fileKind = file.episodeKind || 'main';
     if (targetKind) {
-      if (fileKind === targetKind) { score += 140; reasons.push(`kind:exact:${targetKind}`); }
-      else { score -= 650; reasons.push(`kind:mismatch:${fileKind}->${targetKind}`); }
-    } else if (fileKind !== 'main') {
-      // If Lilac did not give enough evidence that this is a special, be conservative:
-      // never auto-apply a special/OVA just because its numeric episode matches.
+      if (fileKind === targetKind) {
+        score += 140;
+        reasons.push(`kind:exact:${targetKind}`);
+      } else if (kindFamily(fileKind) === kindFamily(targetKind) && kindFamily(targetKind) === 'special') {
+        score += 120;
+        reasons.push(`kind:equivalent:${fileKind}->${targetKind}`);
+      } else {
+        score -= 650;
+        reasons.push(`kind:mismatch:${fileKind}->${targetKind}`);
+      }
+    } else if (kindFamily(fileKind) === 'special') {
       score -= 120;
       reasons.push(`kind:unconfirmed:${fileKind}`);
     }
