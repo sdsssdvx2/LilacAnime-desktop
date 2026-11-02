@@ -7,6 +7,7 @@ export class LilacBridge {
     return this.session.evaluate(`(() => ({
       lilac: Boolean(window.lilac),
       titleVariants: typeof window.lilac?.titleVariants === 'function',
+      resolveTitles: typeof window.lilac?.resolveTitles === 'function',
       catalogKoreanSearch: typeof window.lilac?.catalogKoreanSearch === 'function',
       providerCatalog: typeof window.lilac?.providerCatalog === 'function',
       providerDetail: typeof window.lilac?.providerDetail === 'function',
@@ -91,6 +92,15 @@ export class LilacBridge {
     return this.session.evaluate(`(async () => {
       if (typeof window.lilac?.titleVariants !== 'function') return [];
       const result = await window.lilac.titleVariants(${value});
+      return Array.isArray(result) ? result : [];
+    })()`);
+  }
+
+  async resolveTitles(items = []) {
+    const payload = JSON.stringify((Array.isArray(items) ? items : []).slice(0, 60));
+    return this.session.evaluate(`(async () => {
+      if (typeof window.lilac?.resolveTitles !== 'function') return [];
+      const result = await window.lilac.resolveTitles(${payload});
       return Array.isArray(result) ? result : [];
     })()`);
   }
