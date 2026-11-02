@@ -43,6 +43,7 @@ export class LilacBridge {
       const s = c.stream || {};
       const sub = typeof currentSubtitle !== 'undefined' && currentSubtitle ? currentSubtitle : {};
       const seriesEpisodes = Array.isArray(c.seriesEpisodes) ? c.seriesEpisodes : [];
+      const playbackSessionId = Number(typeof playbackRequestId !== 'undefined' ? playbackRequestId : 0) || 0;
       const video = document.querySelector('#video');
       const playerTitle = String(document.querySelector('#playerTitle')?.textContent || '').trim();
       const activePlayer = Boolean(document.querySelector('#playerView')?.classList.contains('active') || document.body?.classList.contains('player-mode'));
@@ -69,12 +70,20 @@ export class LilacBridge {
       } catch {}
       let currentSrc = '';
       try { currentSrc = String(video?.currentSrc || video?.src || ''); } catch {}
+      const compactSeriesEpisodes = seriesEpisodes.slice(0, 300).map(item => ({
+        number: item?.number ?? null,
+        name: item?.name || '',
+        title: item?.title || '',
+        special: Boolean(item?.special),
+        kind: item?.kind || item?.type || ''
+      }));
       return {
         anime: {
           provider: a.provider || provider, id: a.id ?? null, mal_id: a.mal_id ?? null,
           anilistId: a.anilistId ?? null, malId: a.malId ?? null,
           title: a.title || fallbackTitle, title_english: a.title_english || '', title_japanese: a.title_japanese || '',
-          romaji: a.romaji || '', synonyms: a.synonyms || '', season: a.season || '', year: a.year || '', type: a.type || ''
+          romaji: a.romaji || '', synonyms: a.synonyms || '', season: a.season || '', year: a.year || '', type: a.type || '',
+          companionSeriesEpisodes: compactSeriesEpisodes
         },
         episode: {
           provider, id: e.id ?? null, number: episodeNumber,
@@ -82,12 +91,13 @@ export class LilacBridge {
           postId: e.postId ?? null, token: e.token ?? null, slug: e.slug || '', resolveKind: e.resolveKind || '',
           kind: e.kind || '', type: e.type || ''
         },
-        seriesEpisodes,
+        seriesEpisodes: compactSeriesEpisodes,
         stream: { url: s.url || c.currentUrl || currentSrc || '', currentSrc, server: s.server || '', kind: s.kind || '', headers: s.headers || null, referer: s.referer || '' },
-        subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '' },
+        subtitle: { source: sub.source || '', path: sub.path || '', label: sub.label || '', companion: Boolean(sub.companion) },
         playing: Boolean(activePlayer && video),
         activePlayer,
         resolving: Boolean(c.resolving),
+        playbackSessionId,
         playerTitle,
         currentTime: Number(video?.currentTime || 0),
         playback: {
