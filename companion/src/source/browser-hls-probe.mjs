@@ -27,12 +27,18 @@ export async function probeHlsViaCdp(session, url, {
 } = {}) {
   if (!session?.webSocketUrl) throw new Error('browser HLS probe requires a Lilac CDP session');
   const request = cleanHeaders(headers);
-  const load = address => loadCdpNetworkResource(session, address, {
+  const loadText = address => loadCdpNetworkResource(session, address, {
     ...request,
-    timeoutMs
+    timeoutMs,
+    text: true
+  });
+  const loadBinary = address => loadCdpNetworkResource(session, address, {
+    ...request,
+    timeoutMs,
+    text: false
   });
 
-  const first = await load(url);
+  const first = await loadText(url);
   const masterText = first.body.toString('utf8');
   const variants = parseMasterPlaylist(masterText, url);
   const chosen = variants[0] || null;
@@ -40,7 +46,7 @@ export async function probeHlsViaCdp(session, url, {
   let mediaText = masterText;
   if (chosen) {
     playlistUrl = chosen.url;
-    const media = await load(chosen.url);
+    const media = await loadText(chosen.url);
     mediaText = media.body.toString('utf8');
   }
 
@@ -51,7 +57,7 @@ export async function probeHlsViaCdp(session, url, {
   for (const index of sampleIndices(segments.length, sampleCount)) {
     const segment = segments[index];
     try {
-      const loaded = await load(segment.url);
+      const loaded = await loadBinary(segment.url);
       samples.push({
         index,
         duration: segment.duration,
