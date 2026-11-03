@@ -1,23 +1,25 @@
-# Lilac Companion (MVP)
+# Lilac Companion 1.0
 
-External companion for **LilacAnime Desktop**. It does not patch Lilac files and does not replace Lilac's existing online subtitle/translation logic.
+External companion for **LilacAnime Desktop**. It keeps official Lilac files untouched and attaches through the local Chrome DevTools Protocol (CDP) bridge.
 
-## Current scope
+## What 1.0 does
 
 ### Local subtitle automation
 
 - Default subtitle library: `D:\Utility\자막`
-- Supported local formats: `.smi`, `.sami`, `.srt`, `.ass`, `.ssa`, `.vtt`
-- Reads the current anime/episode from Lilac through Chrome DevTools Protocol (CDP).
-- Uses Lilac's own `titleVariants()` bridge first, so Korean/English/romaji title matching follows the same title-resolution path that Lilac already uses.
-- Matches local files conservatively by title aliases + season + part + episode.
-- A previously chosen Lilac `user` subtitle wins over automatic matching and is remembered in `%LOCALAPPDATA%\LilacCompanion\state.json`.
-- If no high-confidence local match exists, Companion does nothing and Lilac keeps its normal online subtitle / translation flow.
-- SRT/SMI/ASS are prepared outside Lilac and injected as a VTT/ASS Blob into the renderer; no file picker is required for a confident automatic match.
+- Supported formats: `.smi`, `.sami`, `.srt`, `.ass`, `.ssa`, `.vtt`
+- Conservative title/season/episode matching using Lilac's own title/catalog resolution plus local folder structure.
+- Remembers real user-selected local subtitles and reuses them safely.
+- Rejects stale previous-episode user subtitles when a strong episode number disagrees.
+- Converts SMI/SAMI to WebVTT while preserving `<br>`, physical line breaks and common SMI class variants.
+- Reapplies local subtitles after a safe provider switch.
+- If no high-confidence local match exists, Companion does nothing and Lilac keeps its normal online subtitle/translation flow.
 
-### Source diagnostics
+State is stored outside Lilac in `%LOCALAPPDATA%\LilacCompanion\state.json`.
 
-The source scout currently supports the six Lilac providers:
+### Source diagnosis and safe automatic selection
+
+The source scout supports all six Lilac providers:
 
 - Linkkf
 - 애니24 (`ohli24`)
@@ -26,39 +28,63 @@ The source scout currently supports the six Lilac providers:
 - RE:Anime
 - Miruro
 
-It uses Lilac's own catalog/detail/episode/`prepareEpisodeStream()` bridge instead of duplicating provider site parsers.
+The scout uses Lilac's own provider/catalog/episode/stream resolution instead of maintaining a second set of site parsers.
 
-`source-doctor` performs:
+Diagnosis uses:
 
 1. all-provider quick mapping/probe,
-2. HLS master/variant inspection,
-3. segment TTFB / throughput / failure measurement,
+2. resolution, declared bitrate and codec-aware quality evidence,
+3. HLS segment TTFB / throughput / failure measurement,
 4. top-provider deep probe,
-5. recommendation using **stability gate first, quality second**.
+5. conservative visual-frame comparison only when metadata evidence is ambiguous,
+6. stability gates before automatic switching.
 
-Automatic provider switching is intentionally **not enabled yet**. Runtime mapping/probe results need to be validated on real Lilac playback before the companion is allowed to change the selected provider.
+Unknown resolution/bitrate stays unknown and is never treated as `0p` or `0 Mbps`.
 
-## Runtime requirement
+Recent deep decisions are cached for 15 minutes, quick decisions for 2 minutes, provider mappings for 30 minutes and provider misses for 10 minutes. A cached winner can therefore be applied quickly when the same episode is reopened from a different provider, while network quality is still periodically re-evaluated rather than permanently pinned.
 
-For full automation, Lilac must be started with a local CDP port, currently `9223`.
+Automatic switches preserve the current playback position through Lilac's `resumeSeconds` / `resumeProgress` path. Manual provider changes made while an active scan is running are treated as a user override and are not fought by the scanner.
 
-If `LILAC_EXE` is set, Companion can launch Lilac itself with:
+For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP 403), Companion first uses the fast Node probe, then falls back only when needed to a protected-HLS probe through Lilac's Chromium renderer. If the currently playing stream is the only reliable evidence, live playback metrics are used instead of falsely marking the source unavailable.
+
+### Resource policy
+
+- Normal watch mode polls lightweight playback state about once per second.
+- Source decisions are cached; full scans do not run continuously.
+- Provider mapping is cached across episodes.
+- Quick scans use bounded concurrency and deep scans are limited to the top providers.
+- FFmpeg frame analysis is bounded by time/output limits and is used only for close quality comparisons.
+- Subtitle filesystem changes are watched directly. When watching works, the full safety re-index defaults to once every 10 minutes; if watching is unavailable, it falls back to a 60-second safety scan.
+
+## Windows installation
+
+Use `LilacCompanion-Setup-1.0.0.exe` from the Windows build artifact. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
 
 ```text
---remote-debugging-port=9223
+%LOCALAPPDATA%\Programs\LilacCompanion
 ```
 
-Environment variables:
+A portable `LilacCompanion.exe` is included in the same artifact for users who prefer it.
+
+The installer does not modify or replace LilacAnime files and does not delete Companion state when updating the executable.
+
+## Runtime
+
+Companion normally launches the remembered/discovered `LilacAnime.exe` with local CDP port `9223`. If Lilac is already running without that port, Companion does not kill or reset it automatically.
+
+Optional environment overrides:
 
 ```text
 LILAC_EXE=C:\path\to\LilacAnime.exe
 LILAC_SUBTITLE_ROOT=D:\Utility\자막
 LILAC_CDP_PORT=9223
+LILAC_SOURCE_AUTO=safe
+LILAC_SOURCE_DECISION_CACHE_MS=900000
+LILAC_SOURCE_QUICK_CACHE_MS=120000
+LILAC_SOURCE_RETRY_MS=300000
+LILAC_SOURCE_SWITCH_MAX_SECONDS=120
+LILAC_SUBTITLE_SAFETY_SCAN_MS=600000
 ```
-
-The CDP endpoint is bound to the local machine by Chromium/Electron defaults; do not expose it to other machines.
-
-If Lilac was already started normally, `doctor` / `source-doctor` cannot attach until Lilac is restarted with the debugging port.
 
 ## Commands
 
@@ -71,25 +97,19 @@ npm run source-doctor
 npm start
 ```
 
-- `doctor`: feature probe + current playback + title aliases + best local subtitle candidate.
-- `source-doctor`: current episode, six-provider quick scan, top-provider deep scan, recommendation only.
-- `npm start`: continuous local-subtitle watcher/auto-attach.
+The packaged EXE uses `watch` by default. `LilacCompanion.exe version` prints the installed build version.
 
-## Safety rules in the MVP
+## Safety model
 
-- Never modify Lilac application files.
-- Never write to Lilac's own subtitle database.
-- Never replace an already selected real local `user` subtitle automatically.
-- Never auto-apply an ambiguous local subtitle.
-- Never auto-switch video provider yet.
-- If Companion cannot confidently help, fall back to Lilac unchanged.
+- Never patch official Lilac application files.
+- Never reset/uninstall Lilac or clear its profile to recover Companion.
+- Never auto-apply ambiguous local subtitles.
+- Never replace an explicitly selected real local user subtitle with an uncertain match.
+- Never auto-switch on weak/unknown quality evidence.
+- Preserve playback position when Companion changes provider.
+- Treat an in-scan manual provider change as a user override.
+- Fall back to normal Lilac behavior when Companion cannot establish high-confidence evidence.
 
-## Next implementation steps
+## Validation gates
 
-1. Windows Lilac executable auto-discovery and one-click launcher/tray EXE.
-2. Real runtime validation of CDP access against the currently installed Lilac build.
-3. Validate six-provider cross-mapping with representative shows, including the known RE:Anime-vs-Miruro buffering cases.
-4. Add persistent static-quality cache and short-lived network-stability cache.
-5. Add rolling look-ahead: current episode final probe, next episode deep prep, following episode quick prep.
-6. Only after runtime evidence is clean, enable automatic source selection with manual override priority.
-7. Add UI for ambiguous subtitle candidates and per-anime "forget all companion data".
+The branch CI covers Windows and Ubuntu unit/syntax tests. The Windows artifact workflow builds and runs the portable EXE, builds the installer, performs a silent install into a temporary directory, runs the installed EXE, runs the generated uninstaller and verifies removal. A separate integration workflow launches the latest official Lilac build and probes the CDP bridge, playback-entry identity, source-switch resume context and protected-HLS Chromium fallback.
