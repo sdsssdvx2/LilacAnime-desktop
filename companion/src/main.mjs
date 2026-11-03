@@ -16,7 +16,7 @@ import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '1.0.0';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
@@ -26,6 +26,7 @@ const sourceDecisionCacheMs = Number(process.env.LILAC_SOURCE_DECISION_CACHE_MS 
 const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_MS || 2 * 60 * 1000);
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 120);
+const subtitleSafetyScanMs = Math.max(60_000, Number(process.env.LILAC_SUBTITLE_SAFETY_SCAN_MS || 10 * 60 * 1000));
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -206,10 +207,11 @@ async function watch() {
   const sourceTasks = new Map();
   const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
   let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
+  console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
 
-  startSubtitleWatcher(() => {
+  const subtitleWatcher = startSubtitleWatcher(() => {
     subtitlesDirty = true;
     subtitleChangedAt = Date.now();
   });
@@ -339,7 +341,8 @@ async function watch() {
       }
 
       const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
-      const shouldSafetyRefresh = Date.now() - indexedAt > 60000;
+      const safetyInterval = subtitleWatcher ? subtitleSafetyScanMs : 60_000;
+      const shouldSafetyRefresh = Date.now() - indexedAt > safetyInterval;
       if (shouldRefreshForChange || shouldSafetyRefresh) {
         const before = index.files.length;
         index = await indexSubtitleRoot(subtitleRoot);
