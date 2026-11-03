@@ -1,10 +1,10 @@
 {
   "name": "lilac-companion",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "bin": "src/main.mjs",
-  "description": "External companion for LilacAnime Desktop: local subtitle memory/matching and safe source diagnostics/selection without patching Lilac.",
+  "description": "External companion for LilacAnime Desktop: local subtitle memory/matching and source diagnostics without patching Lilac.",
   "scripts": {
     "start": "node src/main.mjs watch",
     "doctor": "node src/main.mjs doctor",
