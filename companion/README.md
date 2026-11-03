@@ -1,8 +1,8 @@
-# Lilac Companion 1.0
+# Lilac Companion 1.0.1
 
 External companion for **LilacAnime Desktop**. It keeps official Lilac files untouched and attaches through the local Chrome DevTools Protocol (CDP) bridge.
 
-## What 1.0 does
+## What 1.0.1 does
 
 ### Local subtitle automation
 
@@ -58,7 +58,7 @@ For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP
 
 ## Windows installation
 
-Use `LilacCompanion-Setup-1.0.0.exe` from the Windows build artifact. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
+Use `LilacCompanion-Setup-1.0.1.exe` from the Windows build artifact. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
 
 ```text
 %LOCALAPPDATA%\Programs\LilacCompanion
@@ -68,9 +68,11 @@ A portable `LilacCompanion.exe` is included in the same artifact for users who p
 
 The installer does not modify or replace LilacAnime files and does not delete Companion state when updating the executable.
 
-## Runtime
+## Runtime and shutdown behavior
 
-Companion normally launches the remembered/discovered `LilacAnime.exe` with local CDP port `9223`. If Lilac is already running without that port, Companion does not kill or reset it automatically.
+Companion initially launches the remembered/discovered `LilacAnime.exe` with local CDP port `9223` when needed. If Lilac is already running without that port, Companion does not kill or reset it automatically.
+
+After Companion has successfully connected to Lilac once, it never automatically relaunches Lilac during that Companion session. If the Lilac process is still alive but CDP temporarily disconnects, Companion retries the CDP attachment without restarting Lilac. If the Lilac process has actually exited, Companion exits too. This means closing Lilac normally also closes Companion shortly afterward instead of reopening Lilac.
 
 Optional environment overrides:
 
@@ -108,8 +110,9 @@ The packaged EXE uses `watch` by default. `LilacCompanion.exe version` prints th
 - Never auto-switch on weak/unknown quality evidence.
 - Preserve playback position when Companion changes provider.
 - Treat an in-scan manual provider change as a user override.
+- Do not relaunch Lilac after a previously connected Lilac process has been closed.
 - Fall back to normal Lilac behavior when Companion cannot establish high-confidence evidence.
 
 ## Validation gates
 
-The branch CI covers Windows and Ubuntu unit/syntax tests. The Windows artifact workflow builds and runs the portable EXE, builds the installer, performs a silent install into a temporary directory, runs the installed EXE, runs the generated uninstaller and verifies removal. A separate integration workflow launches the latest official Lilac build and probes the CDP bridge, playback-entry identity, source-switch resume context and protected-HLS Chromium fallback.
+The branch CI covers Windows and Ubuntu unit/syntax tests, including the lifecycle policy for initial launch, transient reattach and user shutdown. The Windows artifact workflow builds and runs the portable EXE, builds the installer, performs a silent install into a temporary directory, runs the installed EXE, runs the generated uninstaller and verifies removal. A separate integration workflow launches the latest official Lilac build and probes the CDP bridge, playback-entry identity, source-switch resume context and protected-HLS Chromium fallback.
