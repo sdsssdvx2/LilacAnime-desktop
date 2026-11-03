@@ -1,8 +1,8 @@
-# Lilac Companion 1.0.1
+# Lilac Companion 1.0.2
 
 External companion for **LilacAnime Desktop**. It keeps official Lilac files untouched and attaches through the local Chrome DevTools Protocol (CDP) bridge.
 
-## What 1.0.1 does
+## What 1.0.2 does
 
 ### Local subtitle automation
 
@@ -58,21 +58,23 @@ For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP
 
 ## Windows installation
 
-Use `LilacCompanion-Setup-1.0.1.exe` from the Windows build artifact. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
+Use `LilacCompanion-Setup-1.0.2.exe`. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
 
 ```text
 %LOCALAPPDATA%\Programs\LilacCompanion
 ```
 
-A portable `LilacCompanion.exe` is included in the same artifact for users who prefer it.
+A portable `LilacCompanion.exe` is included for users who prefer it.
 
 The installer does not modify or replace LilacAnime files and does not delete Companion state when updating the executable.
+
+Build artifacts are uploaded to GitHub Actions for CI inspection, and stable versioned binaries are also published as GitHub Release assets so the final installer is not dependent on temporary Actions artifact retention.
 
 ## Runtime and shutdown behavior
 
 Companion initially launches the remembered/discovered `LilacAnime.exe` with local CDP port `9223` when needed. If Lilac is already running without that port, Companion does not kill or reset it automatically.
 
-After Companion has successfully connected to Lilac once, it never automatically relaunches Lilac during that Companion session. If the Lilac process is still alive but CDP temporarily disconnects, Companion retries the CDP attachment without restarting Lilac. If the Lilac process has actually exited, Companion exits too. This means closing Lilac normally also closes Companion shortly afterward instead of reopening Lilac.
+After Companion has successfully connected to Lilac once, it never automatically relaunches Lilac during that Companion session. If the Lilac process is still alive but CDP temporarily disconnects, Companion retries the CDP attachment without restarting Lilac. If the Lilac process has actually exited, Companion closes its subtitle watcher and CDP session, then terminates its own process. This means closing Lilac normally also closes the Companion terminal instead of reopening Lilac or leaving an idle terminal process behind.
 
 Optional environment overrides:
 
@@ -115,4 +117,4 @@ The packaged EXE uses `watch` by default. `LilacCompanion.exe version` prints th
 
 ## Validation gates
 
-The branch CI covers Windows and Ubuntu unit/syntax tests, including the lifecycle policy for initial launch, transient reattach and user shutdown. The Windows artifact workflow builds and runs the portable EXE, builds the installer, performs a silent install into a temporary directory, runs the installed EXE, runs the generated uninstaller and verifies removal. A separate integration workflow launches the latest official Lilac build and probes the CDP bridge, playback-entry identity, source-switch resume context and protected-HLS Chromium fallback.
+The branch CI covers Windows and Ubuntu unit/syntax tests, including the lifecycle policy for initial launch, transient reattach and user shutdown. The Windows workflow builds and runs the portable EXE, builds the installer, performs a silent install into a temporary directory, runs the installed EXE, runs the generated uninstaller and verifies removal. Stable binaries are then published to a versioned GitHub Release. A separate integration workflow launches the latest official Lilac build and probes the CDP bridge, playback-entry identity, source-switch resume context and protected-HLS Chromium fallback.
