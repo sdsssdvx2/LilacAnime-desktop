@@ -1,5 +1,5 @@
 #define MyAppName "Lilac Companion"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Lilac Companion"
 #define MyAppExeName "LilacCompanion.exe"
 
@@ -18,7 +18,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 OutputDir=..\dist
-OutputBaseFilename=LilacCompanion-Setup-1.0.0
+OutputBaseFilename=LilacCompanion-Setup-1.0.1
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
 RestartApplications=no
