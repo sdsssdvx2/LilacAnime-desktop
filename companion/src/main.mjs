@@ -17,7 +17,7 @@ import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
@@ -186,6 +186,7 @@ async function sourceDoctor() {
 function startSubtitleWatcher(onDirty) {
   try {
     const watcher = watchFs(subtitleRoot, { recursive: true }, (_eventType, filename) => onDirty(filename));
+    watcher.unref?.();
     watcher.on('error', error => console.warn(`[companion] subtitle watcher error; periodic rescan remains active: ${error?.message || error}`));
     console.log(`[companion] watching subtitle folder for changes: ${subtitleRoot}`);
     return watcher;
@@ -217,6 +218,12 @@ async function watch() {
     subtitlesDirty = true;
     subtitleChangedAt = Date.now();
   });
+
+  const stopRuntime = () => {
+    try { subtitleWatcher?.close(); } catch {}
+    try { connection?.session?.close(); } catch {}
+    connection = null;
+  };
 
   const switchSource = async (bridge, live, selected, reason, { cached = false, early = false, entryStartedAt = 0 } = {}) => {
     if (!selected?.provider || selected.provider === live.episode?.provider) return false;
@@ -331,148 +338,154 @@ async function watch() {
     sourceTasks.set(key, task);
   };
 
-  for (;;) {
-    try {
-      if (!connection) {
+  try {
+    for (;;) {
+      try {
+        if (!connection) {
+          if (everConnected) {
+            const running = Boolean(await runningLilacExecutable());
+            const action = lilacRecoveryAction({ everConnected, lilacRunning: running });
+            if (action === 'exit') {
+              console.log('[companion] Lilac has been closed; Companion is exiting too.');
+              return;
+            }
+          }
+          connection = await connectBridge({ launch: !everConnected });
+          everConnected = true;
+          const features = await connection.bridge.features();
+          console.log(`[companion] connected: ${connection.target.title || connection.target.url}`);
+          console.log(`[companion] features: ${JSON.stringify(features)}`);
+          handledRef = '';
+          lastObservedUserSubtitleKey = '';
+        }
+
+        const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
+        const safetyInterval = subtitleWatcher ? subtitleSafetyScanMs : 60_000;
+        const shouldSafetyRefresh = Date.now() - indexedAt > safetyInterval;
+        if (shouldRefreshForChange || shouldSafetyRefresh) {
+          const before = index.files.length;
+          index = await indexSubtitleRoot(subtitleRoot);
+          indexedAt = Date.now();
+          if (shouldRefreshForChange || index.files.length !== before) {
+            console.log(`[companion] subtitle index refreshed: ${before} -> ${index.files.length} files`);
+            handledRef = '';
+          }
+          subtitlesDirty = false;
+        }
+
+        const context = await connection.bridge.playbackContext();
+        if (!context?.anime || !context?.episode?.number) {
+          if (!context?.activePlayer) {
+            handledRef = '';
+            lastAttachedPath = '';
+            lastObservedUserSubtitleKey = '';
+          }
+          await sleep(900);
+          continue;
+        }
+        const ref = playbackRef(state, context);
+
+        const userSubtitlePath = context.subtitle?.source === 'user' ? String(context.subtitle.path || '') : '';
+        if (userSubtitlePath && userSubtitlePath !== lastAttachedPath && await exists(userSubtitlePath)) {
+          const userSelectionKey = `${ref}|${path.resolve(userSubtitlePath).toLowerCase()}`;
+          if (userSelectionKey !== lastObservedUserSubtitleKey) {
+            lastObservedUserSubtitleKey = userSelectionKey;
+            const compatibility = isUserSubtitleCompatibleWithEpisode(userSubtitlePath, context.episode.number);
+            if (!compatibility.compatible) {
+              console.log(`[companion] ignored stale user subtitle from E${compatibility.hintedEpisode} while playing E${context.episode.number}: ${userSubtitlePath}`);
+            } else {
+              const changed = await state.rememberSubtitle(context.anime, context.episode.number, { path: userSubtitlePath, kind: 'user' });
+              handledRef = ref;
+              if (changed) console.log(`[companion] remembered user subtitle: ${userSubtitlePath}`);
+              startSourceDiagnosis(context);
+              await sleep(900);
+              continue;
+            }
+          }
+        }
+
+        if (ref === handledRef) {
+          startSourceDiagnosis(context);
+          await sleep(900);
+          continue;
+        }
+        console.log(`[companion] playback detected: ${context.anime.title || context.anime.title_english || context.anime.romaji || 'unknown'} · E${context.episode.number} · entry ${context.playbackSessionId || 0}`);
+        await sleep(650);
+        const stable = await connection.bridge.playbackContext();
+        if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
+
+        let preference = state.subtitlePreference(stable.anime, stable.episode.number);
+        let manual = preference?.kind === 'user' ? preference : null;
+        if (manual?.path) {
+          const compatibility = isUserSubtitleCompatibleWithEpisode(manual.path, stable.episode.number);
+          if (!compatibility.compatible) {
+            await state.forgetSubtitle(stable.anime, stable.episode.number);
+            console.log(`[companion] removed stale remembered subtitle for E${stable.episode.number} (file looks like E${compatibility.hintedEpisode}): ${manual.path}`);
+            preference = null;
+            manual = null;
+          }
+        }
+        const cachedAliases = state.titleAliases(stable.anime);
+        const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
+          anime: stable.anime,
+          episode: stable.episode.number,
+          episodeMeta: stable.episode,
+          aliases: cachedAliases,
+          files: index.files,
+          manual
+        });
+        const match = resolved.match;
+        if (resolved.fallback.length) {
+          console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 8).join(' | ')}`);
+          await state.rememberTitleAliases(stable.anime, resolved.fallback);
+        }
+
+        handledRef = ref;
+        await state.touchRecent(stable.anime, stable.episode.number);
+        if (!match.selected) {
+          if (resolved.candidates.length) console.log(`[companion] local alias candidates tried: ${resolved.candidates.slice(0, 10).join(' | ')}`);
+          if (match.best) console.log(`[companion] local subtitle not auto-applied (${match.confidence}, score ${match.best.score}): ${match.best.file.path}`);
+          else console.log('[companion] no local subtitle candidate; Lilac keeps its normal subtitle flow');
+          startSourceDiagnosis(stable);
+          continue;
+        }
+
+        if (stable.subtitle?.source === 'user' && path.resolve(stable.subtitle.path || '') === path.resolve(match.selected.path)) {
+          startSourceDiagnosis(stable);
+          continue;
+        }
+        const prepared = await prepareSubtitle(match.selected.path);
+        await connection.bridge.attachPreparedSubtitle(prepared, { label: `Lilac Companion · ${path.basename(match.selected.path)}` });
+        lastAttachedPath = match.selected.path;
+        console.log(`[companion] auto-applied local subtitle (${match.confidence}): ${match.selected.path}`);
+        startSourceDiagnosis(stable);
+      } catch (error) {
+        console.error(`[companion] ${error?.message || error}`);
+        try { connection?.session?.close(); } catch {}
+        connection = null;
         if (everConnected) {
+          await sleep(1200);
           const running = Boolean(await runningLilacExecutable());
           const action = lilacRecoveryAction({ everConnected, lilacRunning: running });
           if (action === 'exit') {
             console.log('[companion] Lilac has been closed; Companion is exiting too.');
             return;
           }
+          console.warn('[companion] Lilac is still running; retrying CDP attach without relaunching Lilac.');
+        } else {
+          await sleep(1500);
         }
-        connection = await connectBridge({ launch: !everConnected });
-        everConnected = true;
-        const features = await connection.bridge.features();
-        console.log(`[companion] connected: ${connection.target.title || connection.target.url}`);
-        console.log(`[companion] features: ${JSON.stringify(features)}`);
-        handledRef = '';
-        lastObservedUserSubtitleKey = '';
-      }
-
-      const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
-      const safetyInterval = subtitleWatcher ? subtitleSafetyScanMs : 60_000;
-      const shouldSafetyRefresh = Date.now() - indexedAt > safetyInterval;
-      if (shouldRefreshForChange || shouldSafetyRefresh) {
-        const before = index.files.length;
-        index = await indexSubtitleRoot(subtitleRoot);
-        indexedAt = Date.now();
-        if (shouldRefreshForChange || index.files.length !== before) {
-          console.log(`[companion] subtitle index refreshed: ${before} -> ${index.files.length} files`);
-          handledRef = '';
-        }
-        subtitlesDirty = false;
-      }
-
-      const context = await connection.bridge.playbackContext();
-      if (!context?.anime || !context?.episode?.number) {
-        if (!context?.activePlayer) {
-          handledRef = '';
-          lastAttachedPath = '';
-          lastObservedUserSubtitleKey = '';
-        }
-        await sleep(900);
-        continue;
-      }
-      const ref = playbackRef(state, context);
-
-      const userSubtitlePath = context.subtitle?.source === 'user' ? String(context.subtitle.path || '') : '';
-      if (userSubtitlePath && userSubtitlePath !== lastAttachedPath && await exists(userSubtitlePath)) {
-        const userSelectionKey = `${ref}|${path.resolve(userSubtitlePath).toLowerCase()}`;
-        if (userSelectionKey !== lastObservedUserSubtitleKey) {
-          lastObservedUserSubtitleKey = userSelectionKey;
-          const compatibility = isUserSubtitleCompatibleWithEpisode(userSubtitlePath, context.episode.number);
-          if (!compatibility.compatible) {
-            console.log(`[companion] ignored stale user subtitle from E${compatibility.hintedEpisode} while playing E${context.episode.number}: ${userSubtitlePath}`);
-          } else {
-            const changed = await state.rememberSubtitle(context.anime, context.episode.number, { path: userSubtitlePath, kind: 'user' });
-            handledRef = ref;
-            if (changed) console.log(`[companion] remembered user subtitle: ${userSubtitlePath}`);
-            startSourceDiagnosis(context);
-            await sleep(900);
-            continue;
-          }
-        }
-      }
-
-      if (ref === handledRef) {
-        startSourceDiagnosis(context);
-        await sleep(900);
-        continue;
-      }
-      console.log(`[companion] playback detected: ${context.anime.title || context.anime.title_english || context.anime.romaji || 'unknown'} · E${context.episode.number} · entry ${context.playbackSessionId || 0}`);
-      await sleep(650);
-      const stable = await connection.bridge.playbackContext();
-      if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
-
-      let preference = state.subtitlePreference(stable.anime, stable.episode.number);
-      let manual = preference?.kind === 'user' ? preference : null;
-      if (manual?.path) {
-        const compatibility = isUserSubtitleCompatibleWithEpisode(manual.path, stable.episode.number);
-        if (!compatibility.compatible) {
-          await state.forgetSubtitle(stable.anime, stable.episode.number);
-          console.log(`[companion] removed stale remembered subtitle for E${stable.episode.number} (file looks like E${compatibility.hintedEpisode}): ${manual.path}`);
-          preference = null;
-          manual = null;
-        }
-      }
-      const cachedAliases = state.titleAliases(stable.anime);
-      const resolved = await chooseLocalSubtitleWithFallback(connection.bridge, {
-        anime: stable.anime,
-        episode: stable.episode.number,
-        episodeMeta: stable.episode,
-        aliases: cachedAliases,
-        files: index.files,
-        manual
-      });
-      const match = resolved.match;
-      if (resolved.fallback.length) {
-        console.log(`[companion] local title alias resolved: ${resolved.fallback.slice(0, 8).join(' | ')}`);
-        await state.rememberTitleAliases(stable.anime, resolved.fallback);
-      }
-
-      handledRef = ref;
-      await state.touchRecent(stable.anime, stable.episode.number);
-      if (!match.selected) {
-        if (resolved.candidates.length) console.log(`[companion] local alias candidates tried: ${resolved.candidates.slice(0, 10).join(' | ')}`);
-        if (match.best) console.log(`[companion] local subtitle not auto-applied (${match.confidence}, score ${match.best.score}): ${match.best.file.path}`);
-        else console.log('[companion] no local subtitle candidate; Lilac keeps its normal subtitle flow');
-        startSourceDiagnosis(stable);
-        continue;
-      }
-
-      if (stable.subtitle?.source === 'user' && path.resolve(stable.subtitle.path || '') === path.resolve(match.selected.path)) {
-        startSourceDiagnosis(stable);
-        continue;
-      }
-      const prepared = await prepareSubtitle(match.selected.path);
-      await connection.bridge.attachPreparedSubtitle(prepared, { label: `Lilac Companion · ${path.basename(match.selected.path)}` });
-      lastAttachedPath = match.selected.path;
-      console.log(`[companion] auto-applied local subtitle (${match.confidence}): ${match.selected.path}`);
-      startSourceDiagnosis(stable);
-    } catch (error) {
-      console.error(`[companion] ${error?.message || error}`);
-      try { connection?.session?.close(); } catch {}
-      connection = null;
-      if (everConnected) {
-        await sleep(1200);
-        const running = Boolean(await runningLilacExecutable());
-        const action = lilacRecoveryAction({ everConnected, lilacRunning: running });
-        if (action === 'exit') {
-          console.log('[companion] Lilac has been closed; Companion is exiting too.');
-          return;
-        }
-        console.warn('[companion] Lilac is still running; retrying CDP attach without relaunching Lilac.');
-      } else {
-        await sleep(1500);
       }
     }
+  } finally {
+    stopRuntime();
   }
 }
 
 if (command === 'version' || command === '--version' || command === '-v') console.log(`Lilac Companion ${VERSION}`);
 else if (command === 'doctor') await doctor();
 else if (command === 'source-doctor') await sourceDoctor();
-else if (command === 'watch') await watch();
-else throw new Error(`Unknown command: ${command}`);
+else if (command === 'watch') {
+  await watch();
+  process.exit(0);
+} else throw new Error(`Unknown command: ${command}`);
