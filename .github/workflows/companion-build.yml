@@ -23,6 +23,13 @@ jobs:
           cache-dependency-path: companion/package.json
       - name: Install packager
         run: npm install --no-audit --no-fund
+      - name: Final syntax and unit tests
+        shell: pwsh
+        run: |
+          node --check .\src\main.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'main.mjs syntax check failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Companion tests failed' }
       - name: Build Windows x64 single executable
         run: npm run build:win
       - name: Smoke-test packaged executable
@@ -31,18 +38,64 @@ jobs:
           $output = & .\dist\LilacCompanion.exe version
           Write-Host $output
           if ($LASTEXITCODE -ne 0) { throw "Executable exited with $LASTEXITCODE" }
-          if ($output -notmatch 'Lilac Companion 0\.1\.0') { throw "Unexpected version output: $output" }
+          if ($output -notmatch 'Lilac Companion 1\.0\.0') { throw "Unexpected version output: $output" }
+      - name: Locate Inno Setup compiler
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup' }
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe not found' }
+          "INNO_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using $iscc"
+      - name: Build installer EXE
+        shell: pwsh
+        run: |
+          & $env:INNO_ISCC .\installer\LilacCompanion.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup exited with $LASTEXITCODE" }
+          if (!(Test-Path .\dist\LilacCompanion-Setup-1.0.0.exe)) { throw 'Installer EXE was not produced' }
+      - name: Smoke-test installed executable and uninstaller
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'LilacCompanion-Install-Smoke'
+          Remove-Item -Recurse -Force $installDir -ErrorAction SilentlyContinue
+          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.0.0.exe).Path
+          $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$installDir" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "Installer exited with $($proc.ExitCode)" }
+          $installed = Join-Path $installDir 'LilacCompanion.exe'
+          if (!(Test-Path $installed)) { throw 'Installed LilacCompanion.exe missing' }
+          $output = & $installed version
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Lilac Companion 1\.0\.0') { throw "Installed executable smoke test failed: $output" }
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'unins*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw 'Uninstaller was not created' }
+          $un = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($un.ExitCode -ne 0) { throw "Uninstaller exited with $($un.ExitCode)" }
+          Start-Sleep -Milliseconds 500
+          if (Test-Path $installed) { throw 'Uninstaller left the installed executable behind' }
       - name: Record SHA-256
         shell: pwsh
         run: |
-          $hash = (Get-FileHash .\dist\LilacCompanion.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  LilacCompanion.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion.exe.sha256
-          Get-Item .\dist\LilacCompanion.exe | Select-Object Name,Length
+          $portable = (Get-FileHash .\dist\LilacCompanion.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installer = (Get-FileHash .\dist\LilacCompanion-Setup-1.0.0.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$portable  LilacCompanion.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion.exe.sha256
+          "$installer  LilacCompanion-Setup-1.0.0.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion-Setup-1.0.0.exe.sha256
+          Get-Item .\dist\LilacCompanion.exe,.\dist\LilacCompanion-Setup-1.0.0.exe | Select-Object Name,Length
           Get-Content .\dist\LilacCompanion.exe.sha256
+          Get-Content .\dist\LilacCompanion-Setup-1.0.0.exe.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: LilacCompanion-win-x64
+          name: LilacCompanion-1.0.0-win-x64
           path: |
             companion/dist/LilacCompanion.exe
             companion/dist/LilacCompanion.exe.sha256
+            companion/dist/LilacCompanion-Setup-1.0.0.exe
+            companion/dist/LilacCompanion-Setup-1.0.0.exe.sha256
           if-no-files-found: error
