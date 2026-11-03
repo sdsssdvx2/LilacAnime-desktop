@@ -3,7 +3,8 @@ import { watch as watchFs } from 'node:fs';
 import path from 'node:path';
 import { connectLilacCdp } from './lilac/cdp.mjs';
 import { LilacBridge } from './lilac/bridge.mjs';
-import { launchLilacForCompanion } from './lilac/launcher.mjs';
+import { launchLilacForCompanion, runningLilacExecutable } from './lilac/launcher.mjs';
+import { lilacRecoveryAction } from './lilac/lifecycle.mjs';
 import { normalizeTitle } from './normalize.mjs';
 import { indexSubtitleRoot } from './subtitles/indexer.mjs';
 import { chooseSubtitleMatch } from './subtitles/matcher.mjs';
@@ -16,7 +17,7 @@ import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
@@ -201,6 +202,7 @@ async function watch() {
   let subtitlesDirty = false;
   let subtitleChangedAt = 0;
   let connection = null;
+  let everConnected = false;
   let handledRef = '';
   let lastAttachedPath = '';
   let lastObservedUserSubtitleKey = '';
@@ -332,7 +334,16 @@ async function watch() {
   for (;;) {
     try {
       if (!connection) {
-        connection = await connectBridge({ launch: true });
+        if (everConnected) {
+          const running = Boolean(await runningLilacExecutable());
+          const action = lilacRecoveryAction({ everConnected, lilacRunning: running });
+          if (action === 'exit') {
+            console.log('[companion] Lilac has been closed; Companion is exiting too.');
+            return;
+          }
+        }
+        connection = await connectBridge({ launch: !everConnected });
+        everConnected = true;
         const features = await connection.bridge.features();
         console.log(`[companion] connected: ${connection.target.title || connection.target.url}`);
         console.log(`[companion] features: ${JSON.stringify(features)}`);
@@ -444,7 +455,18 @@ async function watch() {
       console.error(`[companion] ${error?.message || error}`);
       try { connection?.session?.close(); } catch {}
       connection = null;
-      await sleep(1500);
+      if (everConnected) {
+        await sleep(1200);
+        const running = Boolean(await runningLilacExecutable());
+        const action = lilacRecoveryAction({ everConnected, lilacRunning: running });
+        if (action === 'exit') {
+          console.log('[companion] Lilac has been closed; Companion is exiting too.');
+          return;
+        }
+        console.warn('[companion] Lilac is still running; retrying CDP attach without relaunching Lilac.');
+      } else {
+        await sleep(1500);
+      }
     }
   }
 }
