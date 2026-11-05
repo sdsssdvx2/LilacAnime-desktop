@@ -162,7 +162,11 @@ export class SourceRegistry {
     for (const result of results) {
       const record = this.data.providers[String(result?.provider || '')];
       if (!record || this.mode(result.provider) === 'off') continue;
-      const status = result.ok && result.value?.probe ? 'ok' : result.ok ? 'unknown' : 'failed';
+      // A series not offered by a provider is not a provider outage.
+      // Only failed transport/probe attempts count toward a temporary cooldown.
+      const error = String(result?.error || '');
+      const contentMiss = /^anime mapping(?: |$)|^episode .+ not found$/i.test(error);
+      const status = result.ok && result.value?.probe ? 'ok' : result.ok || contentMiss ? 'unknown' : 'failed';
       if (status === 'unknown') continue;
       record.lastDiagnosis = status; record.lastDiagnosedAt = at;
       record.failures = status === 'ok' ? 0 : Math.min(RETRY_AFTER_FAILURES, record.failures + 1);
