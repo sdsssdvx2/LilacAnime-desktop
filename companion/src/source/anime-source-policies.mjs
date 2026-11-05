@@ -209,3 +209,50 @@ export function policySwitchDecision(scan, currentProvider, policy, safeAutoSwit
   }
   return baseline;
 }
+
+export function animeSourceRecentPath() {
+  return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'LilacCompanion', 'recent-anime-sources.json');
+}
+export class RecentAnimeSources {
+  constructor(file = animeSourceRecentPath()) {
+    this.file = file;
+  }
+  async list() {
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.items)) return [];
+      return parsed.items.filter(item =>
+        item && animeSourceIdentity(item) && episodeKey(item?.episode?.number))
+        .slice(0, 20);
+    } catch { return []; }
+  }
+  async record(context) {
+    if (!context?.activePlayer || !animeSourceIdentity(context) || !episodeKey(context?.episode?.number)) return;
+    // Store catalog identity only. Never persist stream URLs, playback tokens or credentials.
+    const a = context.anime;
+    const sanitized = {
+      anime: {
+        anilistId: Number(a.anilistId || 0) || null,
+        malId: Number(a.malId || 0) || null,
+        title: String(a.title || '').slice(0, 160),
+        title_english: String(a.title_english || '').slice(0, 160),
+        romaji: String(a.romaji || '').slice(0, 160),
+        season: String(a.season || '').slice(0, 40),
+        year: Number(a.year || 0) || null,
+        type: String(a.type || '').slice(0, 40)
+      },
+      episode: { number: Number(context.episode.number) },
+      updatedAt: Date.now()
+    };
+    const key = animeSourceIdentity(sanitized);
+    const previous = await this.list();
+    const items = [sanitized, ...previous.filter(item => animeSourceIdentity(item) !== key)].slice(0, 20);
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    const tmp = this.file + '.' + process.pid + '.' + Math.random().toString(16).slice(2) + '.tmp';
+    try {
+      await fs.writeFile(tmp, JSON.stringify({ version: 1, items }, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
+      await fs.rename(tmp, this.file);
+    } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
+  }
+}
