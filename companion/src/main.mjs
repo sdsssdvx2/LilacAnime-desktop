@@ -297,16 +297,20 @@ async function sourceDoctor() {
       console.log('[companion] To diagnose video quality, open an episode in Lilac first.');
       return;
     }
-    const plan = registry.plan(context.episode.provider, { ignoreCooldown: true });
-    if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) {
-      console.log('[companion] current source excluded or absent from Lilac; no automatic probing');
+    const policy = (await new AnimeSourcePolicies().load()).resolve(context);
+    const plan = managedSourcePlan(registry.plan(context.episode.provider, { ignoreCooldown: true }), policy);
+    if (plan.disabledCurrent || !plan.providers.length) {
+      console.log('[companion] current source excluded globally or no managed sources enabled');
       return;
     }
     console.log(`[companion] source doctor: ${context.anime.title || context.anime.title_english} · E${context.episode.number}`);
-    const quick = await scanSources(bridge, context, { sampleCount: 1, providers: plan.providers, includeCurrent: false });
+    const quickRaw = await scanSources(bridge, context, { sampleCount: 1, providers: plan.providers, includeCurrent: false });
+    const quick = withAnimePolicy(quickRaw, policy);
     printSourceScan('quick scan (managed sources)', quick);
-    await registry.reportScan(quick.results);
-    const deep = await deepScanTop(bridge, quick, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+    await registry.reportScan(quickRaw.results);
+    const deepCandidates = policy ? { ...quick, results: quick.results.filter(row => !policy.excluded.includes(row.provider)) } : quick;
+    const deepRaw = await deepScanTop(bridge, deepCandidates, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+    const deep = withAnimePolicy(deepRaw, policy);
     printSourceScan('deep scan (top managed providers)', deep);
   } finally { session.close(); }
 }
@@ -325,6 +329,8 @@ function startSubtitleWatcher(onDirty) {
 }
 
 async function watch() {
+  console.log(`[companion] version: ${VERSION}`);
+  const stopMenuShortcut = listenForSourceManager();
   const state = await new StateStore().load();
   const sourceRegistry = await new SourceRegistry().load();
   const animePolicies = await new AnimeSourcePolicies().load();
@@ -346,10 +352,8 @@ async function watch() {
   let policiesDirty = false;
   let lastRegistrySignature = sourceRegistry.plan().signature;
   let lastPolicySignature = animePolicies.signature();
-  console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
-  const stopMenuShortcut = listenForSourceManager();
   console.log('[companion] focus defaults: RE:Anime / Miruro / 애니24; other active sources are checked lightly');
 
   const subtitleWatcher = startSubtitleWatcher(() => {
