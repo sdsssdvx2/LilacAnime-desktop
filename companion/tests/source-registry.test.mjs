@@ -92,6 +92,9 @@ test('off mode stops scanning current source and cooldown expires automatically'
   await registry.reconcile(snapshot(['reanime', 'RE'], ['miruro', 'M'], ['site3', 'Third']));
   await registry.setMode('reanime', 'off');
   assert.equal(registry.plan('reanime').disabledCurrent, true);
+  for (let i = 0; i < 3; i++) await registry.reportScan([{ provider: 'site3', ok: false, error: 'anime mapping none' }]);
+  assert.equal(registry.plan('miruro').providers.includes('site3'), true);
+  assert.equal(registry.data.providers.site3.failures, 0);
   for (let i = 0; i < 3; i++) await registry.reportScan([{ provider: 'site3', ok: false, error: 'timeout' }]);
   assert.equal(registry.plan('miruro').providers.includes('site3'), false);
   assert.equal(registry.plan('miruro', { ignoreCooldown: true }).providers.includes('site3'), true);
