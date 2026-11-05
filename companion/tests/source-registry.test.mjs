@@ -135,7 +135,7 @@ test('off current provider is not silently reinserted by the scout', async () =>
 test('offline CLI can list sources without starting Lilac', async t => {
   const { registry } = await create(t);
   await registry.reconcile(snapshot(['reanime', 'RE'], ['miruro', 'M']));
-  const env = { ...process.env, LOCALAPPDATA: path.dirname(path.dirname(registry.file)) };
+  const env = { ...process.env, LOCALAPPDATA: path.dirname(registry.file) };
   // The default registry path is the only state source used by this command.
   const expectedPath = path.join(env.LOCALAPPDATA, 'LilacCompanion', 'source-registry.json');
   await fs.mkdir(path.dirname(expectedPath), { recursive: true });
