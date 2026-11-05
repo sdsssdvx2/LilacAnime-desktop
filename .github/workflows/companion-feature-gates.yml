@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           $version = & .\dist\LilacCompanion.exe version
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Lilac Companion 1\.0\.2') { throw "Portable EXE smoke failed: $version" }
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Lilac Companion 1\.1\.0') { throw "Portable EXE smoke failed: $version" }
           $sources = & .\dist\LilacCompanion.exe sources list
           if ($LASTEXITCODE -ne 0 -or (($sources -join ' ') -notmatch 'source registry')) { throw "Portable sources CLI smoke failed: $sources" }
           Write-Host $version
