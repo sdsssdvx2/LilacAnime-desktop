@@ -344,7 +344,7 @@ async function watch() {
   let lastObservedUserSubtitleKey = '';
   const sourceTasks = new Map();
   const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
-  let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
+  let sourceSwitchGuard = { episodeKey: '', provider: '', session: '', until: 0 };
   let liveInventoryTrusted = false;
   let registryDirty = false;
   let policiesDirty = false;
@@ -419,7 +419,7 @@ async function watch() {
     if (activeSourceSession(current) !== activeSourceSession(live)) return false;
     console.log('[companion] ' + (cached ? 'cached ' : '') + 'auto-switching source: ' +
       live.episode.provider + ' -> ' + selected.provider + ' (' + reason + ')');
-    sourceSwitchGuard = { episode: Number(live.episode.number), provider: selected.provider, until: Date.now() + 60000 };
+    sourceSwitchGuard = { episodeKey: sourceEpisodeKey(live), provider: selected.provider, session: '', until: Date.now() + 60000 };
     await bridge.switchToResolvedSource(selected, {
       title: live.anime.title || live.anime.title_english || live.anime.romaji || '',
       resumeSeconds: Number(live.currentTime || 0),
@@ -440,8 +440,11 @@ async function watch() {
     // This cooldown prevents loops caused by *our own* automatic switch. It
     // does not infer or remember any user's manual source-selection intent.
     if (sourceSwitchGuard.until > Date.now()
-        && sourceSwitchGuard.episode === Number(context.episode.number)
-        && sourceSwitchGuard.provider === context.episode.provider) return;
+        && sourceSwitchGuard.episodeKey === sourceEpisodeKey(context)
+        && sourceSwitchGuard.provider === context.episode.provider) {
+      if (!sourceSwitchGuard.session) sourceSwitchGuard.session = session;
+      if (sourceSwitchGuard.session === session) return;
+    }
     const key = sourceEpisodeKey(context); // Episode cache survives re-entry.
     const taskKey = session;                 // In-flight tasks never cross entries.
     if (!key || sourceTasks.has(taskKey)) return;
@@ -622,7 +625,7 @@ async function watch() {
         }
 
         const context = await connection.bridge.playbackContext();
-        if (!context?.anime || !context?.episode?.number) {
+        if (!context?.activePlayer || !context?.anime || !context?.episode?.number) {
           if (!context?.activePlayer) {
             handledRef = '';
             lastAttachedPath = '';
