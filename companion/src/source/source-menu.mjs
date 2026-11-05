@@ -11,6 +11,7 @@ export async function runSourceMenu({
   if (typeof dispatch !== 'function' || typeof loadProviders !== 'function') {
     throw new TypeError('Source manager requires dispatch and loadProviders');
   }
+  const modeLabel = { intensive: '집중 진단', normal: '일반 진단', off: '진단 제외' };
   const terminal = prompt ? null : createInterface({ input: process.stdin, output: process.stdout });
   const ask = prompt || (message => terminal.question(message));
   async function read(message) {
@@ -31,6 +32,7 @@ export async function runSourceMenu({
     log('이 창은 소스 설정용입니다. 실행 중인 Companion 감시 창은 그대로 유지됩니다.');
     log('집중 진단 기본값: 애니24, RE:Anime, Miruro');
     log('나머지 활성 소스도 1차 화질·안정성 검사를 거쳐 좋은 후보는 심층 진단합니다.');
+    log('집중 진단은 심층 검사 우선권일 뿐, 해당 소스의 자동 선택을 강제하지 않습니다.');
     await dispatch('list');
 
     while (true) {
@@ -56,7 +58,7 @@ export async function runSourceMenu({
           log('\n변경할 소스를 선택하세요. (0 = 뒤로)');
           providers.forEach((provider, index) => {
             const presence = provider.present ? '' : ' · 라일락에서 현재 보이지 않음';
-            log(`[${index + 1}] ${provider.label} (${provider.id}) · ${provider.mode}${presence}`);
+            log(`[${index + 1}] ${provider.label} (${provider.id}) · ${modeLabel[provider.mode] || provider.mode}${presence}`);
           });
           const index = selectIndex(await read('소스 번호 > '), providers.length);
           if (index === -1) {
@@ -65,10 +67,10 @@ export async function runSourceMenu({
           }
           const selected = providers[index];
           log(`\n${selected.label} (${selected.id}) 설정`);
-          log('[1] 집중 진단 우선순위 (focus)');
-          log('[2] 일반 진단 (normal)');
-          log('[3] Companion 자동 진단·선택 제외 (off)');
-          log('[4] 기본 설정 복구 (reset)');
+          log('[1] 집중 진단: 심층 검사의 우선권 (자동 선택 강제 아님)');
+          log('[2] 일반 진단: 가벼운 전체 검사 + 결과가 좋으면 심층 검사');
+          log('[3] 제외: Companion 자동 진단·선택에서만 제외 (라일락에는 유지)');
+          log('[4] 초기화: 해당 소스의 기본 진단 모드 복구');
           log('[0] 취소');
           const mode = { '1': 'focus', '2': 'normal', '3': 'off', '4': 'reset' }[await read('모드 번호 > ')];
           if (!mode) {
