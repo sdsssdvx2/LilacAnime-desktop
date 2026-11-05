@@ -151,3 +151,15 @@ test('offline CLI can list sources without starting Lilac', async t => {
   assert.match(run.stdout, /reanime/);
   assert.match(run.stdout, /miruro/);
 });
+
+test('source inventory discovery happens on connection, without a periodic timer', async () => {
+  const entrypoint = await fs.readFile(path.resolve(import.meta.dirname, '../src/main.mjs'), 'utf8');
+  assert.doesNotMatch(entrypoint, /LILAC_SOURCE_DISCOVERY_MS|sourceInventoryRefreshMs|lastSourceInventoryCheck/);
+  assert.equal((entrypoint.match(/sourceRegistry\.refreshFromBridge\(/g) || []).length, 1);
+  const connectAt = entrypoint.indexOf('connection = await connectBridge({ launch: !everConnected })');
+  const discoverAt = entrypoint.indexOf('sourceRegistry.refreshFromBridge(connection.bridge)');
+  const episodeAt = entrypoint.indexOf('const context = await connection.bridge.playbackContext()', connectAt);
+  assert.ok(connectAt >= 0 && discoverAt > connectAt && episodeAt > discoverAt);
+  assert.match(entrypoint, /registryWatcher = watchFs\(path\.dirname\(sourceRegistry\.file\)/);
+  assert.doesNotMatch(entrypoint, /lastRegistryRead/);
+});
