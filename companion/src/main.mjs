@@ -222,8 +222,13 @@ async function sourceDoctor() {
   const { session, bridge, target } = await connectBridge({ launch: false });
   try {
     console.log(`[companion] CDP target: ${target.title || target.url}`);
-    printSourceChanges(await registry.refreshFromBridge(bridge));
+    const inventory = await registry.refreshFromBridge(bridge);
+    printSourceChanges(inventory);
     printSourceInventory(registry);
+    if (!inventory.reliable) {
+      console.log('[companion] source diagnosis skipped: no reliable live provider inventory');
+      return;
+    }
     const context = await bridge.playbackContext();
     if (!context?.anime || !context?.episode?.number) {
       console.log('[companion] To diagnose video quality, open an episode in Lilac first.');
@@ -272,6 +277,7 @@ async function watch() {
   const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
   let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
   let lastSourceInventoryCheck = 0;
+  let liveInventoryTrusted = false;
   let lastRegistryRead = 0;
   let lastRegistrySignature = sourceRegistry.plan().signature;
   console.log(`[companion] version: ${VERSION}`);
@@ -317,7 +323,7 @@ async function watch() {
   };
 
   const startSourceDiagnosis = context => {
-    if (sourceAutoMode === 'off' || !context?.anime || !context?.episode?.number) return;
+    if (sourceAutoMode === 'off' || !liveInventoryTrusted || !context?.anime || !context?.episode?.number) return;
     const plan = sourceRegistry.plan(context.episode.provider);
     if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) return;
     if (sourceSwitchGuard.until > Date.now()
@@ -432,6 +438,7 @@ async function watch() {
           handledRef = '';
           lastObservedUserSubtitleKey = '';
           lastSourceInventoryCheck = 0;
+          liveInventoryTrusted = false;
         }
 
         if (Date.now() - lastRegistryRead >= 5000) {
@@ -446,8 +453,14 @@ async function watch() {
         }
         if (Date.now() - lastSourceInventoryCheck >= sourceInventoryRefreshMs) {
           lastSourceInventoryCheck = Date.now();
-          try { printSourceChanges(await sourceRegistry.refreshFromBridge(connection.bridge)); }
-          catch (error) { console.warn(`[companion] source inventory refresh skipped: ${error?.message || error}`); }
+          try {
+            const inventory = await sourceRegistry.refreshFromBridge(connection.bridge);
+            liveInventoryTrusted = inventory.reliable;
+            printSourceChanges(inventory);
+          } catch (error) {
+            liveInventoryTrusted = false;
+            console.warn(`[companion] source inventory refresh skipped: ${error?.message || error}`);
+          }
           const refreshedSignature = sourceRegistry.plan().signature;
           if (refreshedSignature !== lastRegistrySignature) {
             sourceDecisions.clear();
