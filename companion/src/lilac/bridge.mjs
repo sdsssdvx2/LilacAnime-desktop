@@ -114,6 +114,31 @@ export class LilacBridge {
     })()`);
   }
 
+  async listProviders() {
+    // Read the video-source controls only. Subtitle-source controls are intentionally ignored.
+    // We never infer a source was removed when the settings UI is missing/incompletely loaded.
+    return this.session.evaluate(`(() => {
+      const normalise = nodes => [...nodes].map(node => ({
+        id: String(node.value || node.getAttribute?.('data-value') || '').trim().toLowerCase(),
+        label: String(node.textContent || '').trim().slice(0, 80)
+      })).filter(item => /^[a-z][a-z0-9_-]{1,47}$/.test(item.id) &&
+        !['constructor', 'prototype', '__proto__'].includes(item.id));
+      const select = document.querySelector('#contentSource');
+      const options = select ? normalise(select.querySelectorAll('option[value]')) : [];
+      const buttons = normalise(document.querySelectorAll('#sourceChoices [data-value]'));
+      const identifiers = items => [...new Set(items.map(item => item.id))].sort().join('|');
+      if (options.length >= 2 && buttons.length >= 2 && identifiers(options) !== identifiers(buttons)) {
+        return { reliable: false, providers: [], reason: 'source controls disagree during update' };
+      }
+      const providers = options.length >= 2 ? options : buttons;
+      return {
+        reliable: providers.length >= 2,
+        providers: providers.slice(0, 50),
+        reason: providers.length >= 2 ? '' : 'video-source controls missing or incomplete'
+      };
+    })()`, { timeoutMs: 5000 });
+  }
+
   async titleVariants(query) {
     const value = JSON.stringify(String(query || ''));
     return this.session.evaluate(`(async () => {

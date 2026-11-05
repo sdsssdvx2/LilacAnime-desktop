@@ -1,5 +1,5 @@
 #define MyAppName "Lilac Companion"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Lilac Companion"
 #define MyAppExeName "LilacCompanion.exe"
 
@@ -18,7 +18,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 OutputDir=..\dist
-OutputBaseFilename=LilacCompanion-Setup-1.0.2
+OutputBaseFilename=LilacCompanion-Setup-1.1.0
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
 RestartApplications=no
@@ -26,9 +26,11 @@ SetupLogging=yes
 
 [Files]
 Source: "..\dist\LilacCompanion.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\SourceManager.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Lilac Companion - Source Manager"; Filename: "{app}\SourceManager.cmd"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]

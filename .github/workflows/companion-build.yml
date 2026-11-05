@@ -41,7 +41,10 @@ jobs:
           $output = & .\dist\LilacCompanion.exe version
           Write-Host $output
           if ($LASTEXITCODE -ne 0) { throw "Executable exited with $LASTEXITCODE" }
-          if ($output -notmatch 'Lilac Companion 1\.0\.2') { throw "Unexpected version output: $output" }
+          if ($output -notmatch 'Lilac Companion 1\.1\.0') { throw "Unexpected version output: $output" }
+          $sources = & .\dist\LilacCompanion.exe sources list
+          if ($LASTEXITCODE -ne 0 -or (($sources -join ' ') -notmatch 'source registry')) { throw "Sources CLI failed: $sources" }
+          Copy-Item .\SourceManager.cmd .\dist\SourceManager.cmd -Force
       - name: Locate Inno Setup compiler
         shell: pwsh
         run: |
@@ -63,20 +66,21 @@ jobs:
         run: |
           & $env:INNO_ISCC .\installer\LilacCompanion.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup exited with $LASTEXITCODE" }
-          if (!(Test-Path .\dist\LilacCompanion-Setup-1.0.2.exe)) { throw 'Installer EXE was not produced' }
+          if (!(Test-Path .\dist\LilacCompanion-Setup-1.1.0.exe)) { throw 'Installer EXE was not produced' }
       - name: Smoke-test installed executable and uninstaller
         shell: pwsh
         run: |
           $installDir = Join-Path $env:RUNNER_TEMP 'LilacCompanion-Install-Smoke'
           Remove-Item -Recurse -Force $installDir -ErrorAction SilentlyContinue
-          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.0.2.exe).Path
+          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.1.0.exe).Path
           $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$installDir" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "Installer exited with $($proc.ExitCode)" }
           $installed = Join-Path $installDir 'LilacCompanion.exe'
           if (!(Test-Path $installed)) { throw 'Installed LilacCompanion.exe missing' }
           $output = & $installed version
           Write-Host $output
-          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Lilac Companion 1\.0\.2') { throw "Installed executable smoke test failed: $output" }
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Lilac Companion 1\.1\.0') { throw "Installed executable smoke test failed: $output" }
+          if (!(Test-Path (Join-Path $installDir 'SourceManager.cmd'))) { throw 'Installed Source Manager launcher missing' }
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'unins*.exe' | Select-Object -First 1
           if (-not $uninstaller) { throw 'Uninstaller was not created' }
           $un = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
@@ -87,20 +91,21 @@ jobs:
         shell: pwsh
         run: |
           $portable = (Get-FileHash .\dist\LilacCompanion.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $installer = (Get-FileHash .\dist\LilacCompanion-Setup-1.0.2.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installer = (Get-FileHash .\dist\LilacCompanion-Setup-1.1.0.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$portable  LilacCompanion.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion.exe.sha256
-          "$installer  LilacCompanion-Setup-1.0.2.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion-Setup-1.0.2.exe.sha256
-          Get-Item .\dist\LilacCompanion.exe,.\dist\LilacCompanion-Setup-1.0.2.exe | Select-Object Name,Length
+          "$installer  LilacCompanion-Setup-1.1.0.exe" | Set-Content -Encoding ascii .\dist\LilacCompanion-Setup-1.1.0.exe.sha256
+          Get-Item .\dist\LilacCompanion.exe,.\dist\LilacCompanion-Setup-1.1.0.exe | Select-Object Name,Length
           Get-Content .\dist\LilacCompanion.exe.sha256
-          Get-Content .\dist\LilacCompanion-Setup-1.0.2.exe.sha256
+          Get-Content .\dist\LilacCompanion-Setup-1.1.0.exe.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: LilacCompanion-1.0.2-win-x64
+          name: LilacCompanion-1.1.0-win-x64
           path: |
             companion/dist/LilacCompanion.exe
+            companion/dist/SourceManager.cmd
             companion/dist/LilacCompanion.exe.sha256
-            companion/dist/LilacCompanion-Setup-1.0.2.exe
-            companion/dist/LilacCompanion-Setup-1.0.2.exe.sha256
+            companion/dist/LilacCompanion-Setup-1.1.0.exe
+            companion/dist/LilacCompanion-Setup-1.1.0.exe.sha256
           if-no-files-found: error
       - name: Publish durable GitHub Release assets
         shell: pwsh
@@ -108,17 +113,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'lilac-companion-v1.0.2'
+          $tag = 'lilac-companion-v1.1.0'
           $repo = '${{ github.repository }}'
           $assets = @(
             'companion/dist/LilacCompanion.exe',
+            'companion/dist/SourceManager.cmd',
             'companion/dist/LilacCompanion.exe.sha256',
-            'companion/dist/LilacCompanion-Setup-1.0.2.exe',
-            'companion/dist/LilacCompanion-Setup-1.0.2.exe.sha256'
+            'companion/dist/LilacCompanion-Setup-1.1.0.exe',
+            'companion/dist/LilacCompanion-Setup-1.1.0.exe.sha256'
           )
           gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo $repo --target $env:GITHUB_SHA --title 'Lilac Companion v1.0.2' --notes 'Stable Lilac Companion v1.0.2 Windows release. Includes automatic shutdown when Lilac closes, local subtitle automation, safe source selection, and Miruro protected-HLS fallback.'
+            gh release create $tag --repo $repo --target $env:GITHUB_SHA --title 'Lilac Companion v1.1.0' --notes 'Stable Lilac Companion v1.1.0 Windows release. Adds dynamic video-source discovery and management, safe source diagnostics and cooldowns while preserving local subtitle automation and source selection.'
             if ($LASTEXITCODE -ne 0) { throw 'Could not create GitHub Release' }
           }
           gh release upload $tag @assets --repo $repo --clobber

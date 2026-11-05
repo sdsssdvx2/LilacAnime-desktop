@@ -1,0 +1,145 @@
+name: Lilac Companion Feature Release Gates
+
+on:
+  pull_request:
+    paths:
+      - 'companion/**'
+      - '.github/workflows/companion-feature-gates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: companion/package.json
+      - name: Install locked packager
+        run: npm install --no-audit --no-fund
+      - name: Syntax and unit gates
+        shell: pwsh
+        run: |
+          node --check .\src\main.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Main syntax failed' }
+          node --check .\src\source\source-registry.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Registry syntax failed' }
+          node --check .\src\source\source-menu.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Source menu syntax failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed' }
+      - name: Build Windows executable
+        run: npm run build:win
+      - name: Verify portable executable without Lilac
+        shell: pwsh
+        run: |
+          $version = & .\dist\LilacCompanion.exe version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Lilac Companion 1\.1\.0') { throw "Portable EXE smoke failed: $version" }
+          $sources = & .\dist\LilacCompanion.exe sources list
+          if ($LASTEXITCODE -ne 0 -or (($sources -join ' ') -notmatch 'source registry')) { throw "Portable sources CLI smoke failed: $sources" }
+          Write-Host $version
+          Write-Host $sources
+      - name: Build isolated preview installer
+        shell: pwsh
+        run: |
+          $paths = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $compiler = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $compiler) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+            $compiler = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $compiler) { throw 'ISCC.exe not found' }
+          & $compiler .\installer\LilacCompanion.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Preview installer build failed' }
+          if (!(Test-Path .\dist\LilacCompanion-Setup-1.1.0.exe)) { throw 'Preview installer missing' }
+      - name: Silent installation, CLI and uninstallation smoke
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'LilacCompanion-SourceGate'
+          Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.1.0.exe).Path
+          $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$installDir" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "Installer exit: $($proc.ExitCode)" }
+          $installed = Join-Path $installDir 'LilacCompanion.exe'
+          if (!(Test-Path $installed)) { throw 'Installed executable not found' }
+          if (!(Test-Path (Join-Path $installDir 'SourceManager.cmd'))) { throw 'Installed source manager launcher not found' }
+          $output = & $installed sources list
+          if ($LASTEXITCODE -ne 0 -or (($output -join ' ') -notmatch 'source registry')) { throw 'Installed sources CLI smoke failed' }
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'unins*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw 'Uninstaller missing' }
+          $un = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($un.ExitCode -ne 0) { throw "Uninstaller exit: $($un.ExitCode)" }
+          if (Test-Path $installed) { throw 'Installed executable remained after uninstall' }
+      - name: Record preview SHA-256
+        shell: pwsh
+        run: |
+          Get-FileHash .\dist\LilacCompanion.exe, .\dist\LilacCompanion-Setup-1.1.0.exe -Algorithm SHA256 | Format-Table -AutoSize
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LilacCompanion-DynamicSources-PREVIEW-win-x64
+          path: |
+            companion/dist/LilacCompanion.exe
+            companion/SourceManager.cmd
+            companion/dist/LilacCompanion-Setup-1.1.0.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  latest-official-integration:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: whispelyn-byte/LilacAnime-desktop
+          ref: main
+          path: _upstream
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: _upstream/package-lock.json
+      - name: Install latest official Lilac
+        working-directory: _upstream
+        run: npm ci --no-audit --no-fund
+      - name: Prepare official renderer
+        working-directory: _upstream
+        run: npm run vendor
+      - name: Start official Lilac with local CDP
+        id: launch
+        shell: pwsh
+        run: |
+          $electron = Join-Path $PWD '_upstream\node_modules\electron\dist\electron.exe'
+          if (!(Test-Path $electron)) { throw 'Official Electron not found' }
+          $proc = Start-Process -FilePath $electron -ArgumentList '.', '--remote-debugging-port=9223' -WorkingDirectory (Join-Path $PWD '_upstream') -PassThru
+          "pid=$($proc.Id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $ready = $false
+          for ($i = 0; $i -lt 80; $i++) {
+            Start-Sleep -Milliseconds 500
+            try {
+              $targets = Invoke-RestMethod -Uri 'http://127.0.0.1:9223/json/list' -TimeoutSec 2
+              if ($targets) { $ready = $true; break }
+            } catch {}
+            if ($proc.HasExited) { throw "Official Lilac exited: $($proc.ExitCode)" }
+          }
+          if (!$ready) { throw 'Official Lilac did not expose CDP' }
+      - name: Run live UI discovery, synthetic source change and CDP tests
+        env:
+          LILAC_CDP_PORT: '9223'
+        run: node companion/tests/integration-probe.mjs
+      - name: Stop integration Electron
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process LilacAnime,electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
