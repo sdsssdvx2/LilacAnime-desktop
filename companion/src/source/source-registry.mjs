@@ -107,13 +107,13 @@ export class SourceRegistry {
     await this.save();
     return { reliable: true, initial: first, count: incoming.length, changes };
   }
-  plan(currentProvider = '') {
+  plan(currentProvider = '', { ignoreCooldown = false } = {}) {
     const now = this.now();
     const disabledCurrent = this.mode(currentProvider) === 'off' ||
       Boolean(this.data.initialised && this.data.providers[currentProvider]?.present === false);
     const entries = Object.entries(this.data.providers);
     const providers = entries.filter(([id, item]) => item.present && this.mode(id) !== 'off' &&
-      (id === currentProvider || Number(item.retryAfter || 0) <= now)).map(([id]) => id);
+      (ignoreCooldown || id === currentProvider || Number(item.retryAfter || 0) <= now)).map(([id]) => id);
     return {
       providers,
       intensive: providers.filter(id => this.mode(id) === 'intensive'),
