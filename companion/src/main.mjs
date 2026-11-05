@@ -16,6 +16,7 @@ import { SourceDecisionCache } from './source/decision-cache.mjs';
 import { SourceRegistry } from './source/source-registry.mjs';
 import { AnimeSourcePolicies, RecentAnimeSources, managedSourcePlan, choosePolicySource, policySwitchDecision, animeSourceIdentity } from './source/anime-source-policies.mjs';
 import { listenForSourceManager } from './source/source-menu-hotkey.mjs';
+import { sourcePlaybackSessionKey } from './source/playback-session.mjs';
 import { chooseBestSource, rankSourceResults } from './source/scout.mjs';
 import { runSourceMenu } from './source/source-menu.mjs';
 import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
@@ -88,12 +89,7 @@ function sourceEpisodeKey(context) {
 }
 
 function activeSourceSession(context) {
-  // A new playbackRequestId or provider means a new playback. Leaving the
-  // player cancels the old diagnosis; it is NOT interpreted as user intent.
-  const episode = sourceEpisodeKey(context);
-  if (!episode || context?.activePlayer !== true) return '';
-  return episode + '|entry:' + (Number(context.playbackSessionId || 0) || 0) +
-    '|provider:' + String(context.episode?.provider || '');
+  return sourcePlaybackSessionKey(sourceEpisodeKey(context), context);
 }
 function withAnimePolicy(scan, policy) {
   return choosePolicySource(scan, policy, { chooseBestSource, rankSourceResults });
