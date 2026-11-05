@@ -42,6 +42,52 @@ try {
     process.exitCode = 2;
   }
 
+  // Exercise discovery against the real official Lilac renderer (no provider network calls).
+  const inventory = await bridge.listProviders();
+  console.log(JSON.stringify({ liveSourceInventory: inventory }, null, 2));
+  if (!inventory.reliable || inventory.providers.length < 2) {
+    console.error('Official Lilac video-source controls could not be discovered safely');
+    process.exitCode = 8;
+  } else {
+    const injected = await session.evaluate(`(() => {
+      const select = document.querySelector('#contentSource');
+      const choices = document.querySelector('#sourceChoices');
+      if (!select || !choices || select.querySelector('[value="companionfixture"]')) return false;
+      const option = document.createElement('option');
+      option.value = 'companionfixture';
+      option.textContent = 'Fixture Source';
+      select.append(option);
+      const button = document.createElement('button');
+      button.dataset.value = 'companionfixture';
+      button.textContent = 'Fixture Source';
+      choices.append(button);
+      return true;
+    })()`);
+    if (injected) {
+      try {
+        const updated = await bridge.listProviders();
+        if (!updated.reliable || !updated.providers.some(item => item.id === 'companionfixture')) {
+          console.error('New video source was not discovered in official Lilac DOM');
+          process.exitCode = 9;
+        }
+      } finally {
+        await session.evaluate(`(() => {
+          document.querySelector('#contentSource option[value="companionfixture"]')?.remove();
+          document.querySelector('#sourceChoices [data-value="companionfixture"]')?.remove();
+          return true;
+        })()`);
+      }
+      const restored = await bridge.listProviders();
+      if (!restored.reliable || restored.providers.some(item => item.id === 'companionfixture')) {
+        console.error('Removed video source was not reflected in official Lilac DOM');
+        process.exitCode = 10;
+      }
+    } else {
+      console.error('Could not inject source fixture into official Lilac DOM');
+      process.exitCode = 11;
+    }
+  }
+
   const segment = Buffer.alloc(64 * 1024, 0x5a);
   const probeServer = http.createServer((req, res) => {
     const cors = { 'access-control-allow-origin': '*' };
