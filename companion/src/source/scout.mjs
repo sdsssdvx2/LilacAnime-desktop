@@ -405,8 +405,16 @@ export function chooseDeepSourceProviders(quick, { count = 3, intensiveProviders
     .slice(0, Math.max(1, count));
 }
 
-export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true, intensiveProviders = [], includeCurrent = true } = {}) {
+export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true, intensiveProviders = [], preferredProvider = '', includeCurrent = true } = {}) {
   const providers = chooseDeepSourceProviders(quick, { count, intensiveProviders });
+  // An explicit per-anime preference must get a deep-probe slot even if its
+  // resolution is lower than other candidates (e.g. hardcoded subtitles).
+  // Never force a missing/failed stream or exceed the original scan limit.
+  if (preferredProvider && !providers.includes(preferredProvider) &&
+      quick.results.some(item => item.provider === preferredProvider && item.ok && item.value?.probe)) {
+    if (providers.length >= Math.max(1, count)) providers.pop();
+    providers.push(preferredProvider);
+  }
   const currentProvider = quick.context?.episode?.provider || '';
   if (includeCurrent && currentProvider && !providers.includes(currentProvider)) providers.push(currentProvider);
   if (!providers.length) return quick;
