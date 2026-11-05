@@ -13,6 +13,7 @@ import { prepareSubtitle } from './subtitles/prepare.mjs';
 import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.mjs';
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { SourceDecisionCache } from './source/decision-cache.mjs';
+import { SourceRegistry } from './source/source-registry.mjs';
 import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
@@ -28,6 +29,7 @@ const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_M
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 120);
 const subtitleSafetyScanMs = Math.max(60_000, Number(process.env.LILAC_SUBTITLE_SAFETY_SCAN_MS || 10 * 60 * 1000));
+const sourceInventoryRefreshMs = Math.max(60_000, Number(process.env.LILAC_SOURCE_DISCOVERY_MS || 5 * 60 * 1000));
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -169,17 +171,75 @@ function printSourceScan(name, scan) {
   console.log(`[companion] recommendation: ${selected?.provider || 'none'} (${scan.decision?.reason || 'n/a'})`);
 }
 
+function printSourceChanges(result) {
+  if (!result?.reliable) {
+    console.warn(`[companion] source inventory unchanged: ${result?.reason || 'source UI unavailable'}`);
+    return;
+  }
+  if (result.initial) console.log(`[companion] source inventory initialised from Lilac: ${result.count} sources`);
+  for (const change of result.changes) {
+    console.log(`[companion] source ${change.type}: ${change.id} (${change.from ? change.from + ' -> ' : ''}${change.label})`);
+  }
+}
+
+function printSourceInventory(registry) {
+  const records = Object.entries(registry.data.providers).sort(([a], [b]) => a.localeCompare(b));
+  console.log(`[companion] source registry: ${registry.file}`);
+  console.log(`[companion] inventory: ${registry.data.initialised ? 'last verified ' + new Date(registry.data.checkedAt).toLocaleString() : 'not yet synced'}`);
+  if (!records.length) console.log('  No sources recorded. Start Lilac with Companion, or run: sources sync');
+  for (const [id, item] of records) {
+    const presence = item.present ? 'available in Lilac' : 'not in Lilac';
+    const cooldown = item.retryAfter > Date.now() ? ' · cooldown until ' + new Date(item.retryAfter).toLocaleString() : '';
+    console.log(`  ${id.padEnd(13)} ${String(item.label).padEnd(14)} · ${presence} · ${registry.mode(id)} · diagnosis ${item.lastDiagnosis}${cooldown}`);
+  }
+}
+
+async function sourcesCommand(action = 'list', id = '') {
+  const registry = await new SourceRegistry().load();
+  if (action === 'sync') {
+    const { session, bridge } = await connectBridge({ launch: false });
+    try { printSourceChanges(await registry.refreshFromBridge(bridge)); }
+    finally { session.close(); }
+  } else if (['focus', 'intensive', 'normal', 'off'].includes(action)) {
+    if (!id) throw new Error('Usage: sources focus|normal|off SOURCE_ID');
+    await registry.setMode(id.toLowerCase(), action === 'focus' ? 'intensive' : action);
+    console.log(`[companion] saved source mode for ${id}`);
+  } else if (action === 'reset') {
+    if (!id) throw new Error('Usage: sources reset SOURCE_ID');
+    await registry.resetMode(id.toLowerCase());
+    console.log(`[companion] restored default mode for ${id}`);
+  } else if (action === 'undo') {
+    await registry.undo();
+    console.log('[companion] previous manual source setting restored');
+  } else if (action !== 'list') {
+    throw new Error('Usage: sources [list|sync|focus ID|normal ID|off ID|reset ID|undo]');
+  }
+  printSourceInventory(registry);
+}
+
 async function sourceDoctor() {
+  const registry = await new SourceRegistry().load();
   const { session, bridge, target } = await connectBridge({ launch: false });
   try {
     console.log(`[companion] CDP target: ${target.title || target.url}`);
+    printSourceChanges(await registry.refreshFromBridge(bridge));
+    printSourceInventory(registry);
     const context = await bridge.playbackContext();
-    if (!context?.anime || !context?.episode?.number) throw new Error('Play an anime episode in Lilac before source-doctor');
+    if (!context?.anime || !context?.episode?.number) {
+      console.log('[companion] To diagnose video quality, open an episode in Lilac first.');
+      return;
+    }
+    const plan = registry.plan(context.episode.provider);
+    if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) {
+      console.log('[companion] current source excluded or absent from Lilac; no automatic probing');
+      return;
+    }
     console.log(`[companion] source doctor: ${context.anime.title || context.anime.title_english} · E${context.episode.number}`);
-    const quick = await scanSources(bridge, context, { sampleCount: 1 });
-    printSourceScan('quick scan (all providers)', quick);
-    const deep = await deepScanTop(bridge, quick, { count: 3, sampleCount: 3 });
-    printSourceScan('deep scan (top providers)', deep);
+    const quick = await scanSources(bridge, context, { sampleCount: 1, providers: plan.providers, includeCurrent: false });
+    printSourceScan('quick scan (managed sources)', quick);
+    await registry.reportScan(quick.results);
+    const deep = await deepScanTop(bridge, quick, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+    printSourceScan('deep scan (top managed providers)', deep);
   } finally { session.close(); }
 }
 
@@ -198,6 +258,7 @@ function startSubtitleWatcher(onDirty) {
 
 async function watch() {
   const state = await new StateStore().load();
+  const sourceRegistry = await new SourceRegistry().load();
   let index = await indexSubtitleRoot(subtitleRoot);
   let indexedAt = Date.now();
   let subtitlesDirty = false;
@@ -210,6 +271,9 @@ async function watch() {
   const sourceTasks = new Map();
   const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
   let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
+  let lastSourceInventoryCheck = 0;
+  let lastRegistryRead = 0;
+  let lastRegistrySignature = sourceRegistry.plan().signature;
   console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
@@ -232,6 +296,13 @@ async function watch() {
       return false;
     }
     if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return false;
+    // A manual 'sources off' issued during a scan must take effect before switching.
+    await sourceRegistry.load();
+    const livePlan = sourceRegistry.plan(live.episode?.provider);
+    if (livePlan.disabledCurrent || !livePlan.providers.includes(selected.provider)) {
+      console.log('[companion] source switch cancelled: source policy changed');
+      return false;
+    }
     console.log(`[companion] ${cached ? 'cached ' : ''}auto-switching source: ${live.episode.provider} -> ${selected.provider} (${reason})`);
     sourceSwitchGuard = { episode: Number(live.episode.number), provider: selected.provider, until: Date.now() + 60000 };
     await bridge.switchToResolvedSource(selected, {
@@ -247,6 +318,8 @@ async function watch() {
 
   const startSourceDiagnosis = context => {
     if (sourceAutoMode === 'off' || !context?.anime || !context?.episode?.number) return;
+    const plan = sourceRegistry.plan(context.episode.provider);
+    if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) return;
     if (sourceSwitchGuard.until > Date.now()
         && sourceSwitchGuard.episode === Number(context.episode.number)
         && sourceSwitchGuard.provider === context.episode.provider) return;
@@ -292,13 +365,14 @@ async function watch() {
         const start = await diagnosisConnection.bridge.playbackContext();
         if (!start?.anime || sourceEpisodeKey(start) !== key) return;
         console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
-        const quick = await scanSources(diagnosisConnection.bridge, start, { sampleCount: 1, concurrency: 2 });
+        const quick = await scanSources(diagnosisConnection.bridge, start, { sampleCount: 1, concurrency: 2, providers: plan.providers, includeCurrent: false });
         const afterQuick = await diagnosisConnection.bridge.playbackContext().catch(() => null);
         if (!afterQuick?.anime || sourceEpisodeKey(afterQuick) !== key) {
           console.log('[companion] source scan cancelled: playback changed during quick scan');
           return;
         }
-        printSourceScan('auto quick scan (all providers)', quick);
+        printSourceScan('auto quick scan (managed providers)', quick);
+        await sourceRegistry.reportScan(quick.results);
 
         const quickSafety = safeAutoSwitchDecision(quick, start.episode.provider);
         if (afterQuick.episode?.provider === start.episode?.provider && allowQuickAutoSwitch(quick, quickSafety)) {
@@ -307,7 +381,7 @@ async function watch() {
           if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason, { early: true })) return;
         }
 
-        const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3 });
+        const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
         const afterDeep = await diagnosisConnection.bridge.playbackContext().catch(() => null);
         if (!afterDeep?.anime || sourceEpisodeKey(afterDeep) !== key) {
           console.log('[companion] source scan cancelled: playback changed during deep scan');
@@ -357,6 +431,28 @@ async function watch() {
           console.log(`[companion] features: ${JSON.stringify(features)}`);
           handledRef = '';
           lastObservedUserSubtitleKey = '';
+          lastSourceInventoryCheck = 0;
+        }
+
+        if (Date.now() - lastRegistryRead >= 5000) {
+          const previous = lastRegistrySignature;
+          await sourceRegistry.load();
+          lastRegistrySignature = sourceRegistry.plan().signature;
+          if (previous !== lastRegistrySignature) {
+            sourceDecisions.clear();
+            console.log('[companion] source settings/inventory changed; cached decisions cleared');
+          }
+          lastRegistryRead = Date.now();
+        }
+        if (Date.now() - lastSourceInventoryCheck >= sourceInventoryRefreshMs) {
+          lastSourceInventoryCheck = Date.now();
+          try { printSourceChanges(await sourceRegistry.refreshFromBridge(connection.bridge)); }
+          catch (error) { console.warn(`[companion] source inventory refresh skipped: ${error?.message || error}`); }
+          const refreshedSignature = sourceRegistry.plan().signature;
+          if (refreshedSignature !== lastRegistrySignature) {
+            sourceDecisions.clear();
+            lastRegistrySignature = refreshedSignature;
+          }
         }
 
         const shouldRefreshForChange = subtitlesDirty && Date.now() - subtitleChangedAt >= 500;
@@ -485,6 +581,7 @@ async function watch() {
 if (command === 'version' || command === '--version' || command === '-v') console.log(`Lilac Companion ${VERSION}`);
 else if (command === 'doctor') await doctor();
 else if (command === 'source-doctor') await sourceDoctor();
+else if (command === 'sources') await sourcesCommand(process.argv[3] || 'list', process.argv[4] || '');
 else if (command === 'watch') {
   await watch();
   process.exit(0);
