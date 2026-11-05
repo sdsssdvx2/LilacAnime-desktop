@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AnimeSourcePolicies, RecentAnimeSources, animeSourceIdentity, managedSourcePlan,
   choosePolicySource, policySwitchDecision } from '../src/source/anime-source-policies.mjs';
-import { chooseBestSource, rankSourceResults, safeAutoSwitchDecision } from '../src/source/scout.mjs';
+import { chooseBestSource, rankSourceResults, safeAutoSwitchDecision, chooseDeepSourceProviders } from '../src/source/scout.mjs';
 
 const anime = { title: '애니 A', title_english: 'Series A', anilistId: 101, season: 'winter', year: 2026 };
 const context = (number = 1, provider = 'reanime', baseAnime = anime) => ({
@@ -127,4 +127,27 @@ test('recent-anime history is private, offline and survives leaving the player',
   assert.equal(list.length, 1);
   assert.equal(list[0].episode.number, 7);
   assert.ok(animeSourceIdentity(list[0]));
+});
+
+test('anime-preferred provider gets a bounded deep slot even with lower measured resolution', () => {
+  const quick = scan(
+    probe('normal2160', { height: 2160 }),
+    probe('focus1080', { height: 1080 }),
+    probe('focus1440', { height: 1440 }),
+    probe('miruro', { height: 720 })
+  );
+  const ordinary = chooseDeepSourceProviders(quick, {
+    count: 3, intensiveProviders: ['focus1080', 'focus1440']
+  });
+  const explicit = chooseDeepSourceProviders(quick, {
+    count: 3, intensiveProviders: ['focus1080', 'focus1440'], preferredProvider: 'miruro'
+  });
+  assert.equal(ordinary.length, 3);
+  assert.equal(ordinary.includes('miruro'), false);
+  assert.equal(explicit.length, 3);
+  assert.equal(explicit.includes('miruro'), true);
+  assert.equal(explicit[0], 'normal2160');
+  assert.deepEqual(chooseDeepSourceProviders(quick, {
+    count: 3, preferredProvider: 'missing'
+  }).length, 3);
 });
