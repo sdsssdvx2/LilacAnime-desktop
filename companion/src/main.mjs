@@ -29,7 +29,6 @@ const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_M
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 120);
 const subtitleSafetyScanMs = Math.max(60_000, Number(process.env.LILAC_SUBTITLE_SAFETY_SCAN_MS || 10 * 60 * 1000));
-const sourceInventoryRefreshMs = Math.max(60_000, Number(process.env.LILAC_SOURCE_DISCOVERY_MS || 30 * 60 * 1000));
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
@@ -276,9 +275,8 @@ async function watch() {
   const sourceTasks = new Map();
   const sourceDecisions = new SourceDecisionCache({ ttlMs: sourceDecisionCacheMs, retryMs: sourceRetryMs });
   let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
-  let lastSourceInventoryCheck = 0;
   let liveInventoryTrusted = false;
-  let lastRegistryRead = 0;
+  let registryDirty = false;
   let lastRegistrySignature = sourceRegistry.plan().signature;
   console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
@@ -289,7 +287,27 @@ async function watch() {
     subtitleChangedAt = Date.now();
   });
 
+  // Source settings are changed by a separate CLI process. Watch local file
+  // changes instead of repeatedly reading it or polling Lilac's provider UI.
+  // If the watcher is unavailable, new settings are read when playback changes.
+  let registryWatcher = null;
+  try {
+    await fs.mkdir(path.dirname(sourceRegistry.file), { recursive: true });
+    registryWatcher = watchFs(path.dirname(sourceRegistry.file), (_event, name) => {
+      if (!name || String(name).toLowerCase() === path.basename(sourceRegistry.file).toLowerCase()) registryDirty = true;
+    });
+    registryWatcher.on('error', error => {
+      console.warn(`[companion] source settings watcher unavailable: ${error?.message || error}`);
+      try { registryWatcher?.close(); } catch {}
+      registryWatcher = null;
+    });
+    registryWatcher.unref?.();
+  } catch (error) {
+    console.warn(`[companion] source settings watch disabled: ${error?.message || error}`);
+  }
+
   const stopRuntime = () => {
+    try { registryWatcher?.close(); } catch {}
     try { subtitleWatcher?.close(); } catch {}
     try { connection?.session?.close(); } catch {}
     connection = null;
@@ -442,34 +460,31 @@ async function watch() {
           console.log(`[companion] features: ${JSON.stringify(features)}`);
           handledRef = '';
           lastObservedUserSubtitleKey = '';
-          lastSourceInventoryCheck = 0;
+          // Only inspect the provider UI on a new Lilac/CDP connection. A
+          // program update causes a new connection on its next launch.
           liveInventoryTrusted = false;
-        }
-
-        if (Date.now() - lastRegistryRead >= 5000) {
-          const previous = lastRegistrySignature;
-          await sourceRegistry.load();
-          lastRegistrySignature = sourceRegistry.plan().signature;
-          if (previous !== lastRegistrySignature) {
-            sourceDecisions.clear();
-            console.log('[companion] source settings/inventory changed; cached decisions cleared');
-          }
-          lastRegistryRead = Date.now();
-        }
-        if (Date.now() - lastSourceInventoryCheck >= sourceInventoryRefreshMs) {
-          lastSourceInventoryCheck = Date.now();
           try {
             const inventory = await sourceRegistry.refreshFromBridge(connection.bridge);
             liveInventoryTrusted = inventory.reliable;
             printSourceChanges(inventory);
           } catch (error) {
-            liveInventoryTrusted = false;
-            console.warn(`[companion] source inventory refresh skipped: ${error?.message || error}`);
+            console.warn(`[companion] source inventory discovery unavailable: ${error?.message || error}`);
           }
           const refreshedSignature = sourceRegistry.plan().signature;
           if (refreshedSignature !== lastRegistrySignature) {
             sourceDecisions.clear();
             lastRegistrySignature = refreshedSignature;
+          }
+        }
+
+        if (registryDirty) {
+          registryDirty = false;
+          const previous = lastRegistrySignature;
+          await sourceRegistry.load();
+          lastRegistrySignature = sourceRegistry.plan().signature;
+          if (previous !== lastRegistrySignature) {
+            sourceDecisions.clear();
+            console.log('[companion] source settings changed; cached decisions cleared');
           }
         }
 
@@ -498,6 +513,13 @@ async function watch() {
           continue;
         }
         const ref = playbackRef(state, context);
+        // A fallback for platforms where the file watcher was unavailable.
+        if (!registryWatcher && ref !== handledRef) {
+          const previous = lastRegistrySignature;
+          await sourceRegistry.load();
+          lastRegistrySignature = sourceRegistry.plan().signature;
+          if (previous !== lastRegistrySignature) sourceDecisions.clear();
+        }
 
         const userSubtitlePath = context.subtitle?.source === 'user' ? String(context.subtitle.path || '') : '';
         if (userSubtitlePath && userSubtitlePath !== lastAttachedPath && await exists(userSubtitlePath)) {
