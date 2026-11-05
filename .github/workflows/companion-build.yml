@@ -41,7 +41,10 @@ jobs:
           $output = & .\dist\LilacCompanion.exe version
           Write-Host $output
           if ($LASTEXITCODE -ne 0) { throw "Executable exited with $LASTEXITCODE" }
-          if ($output -notmatch 'Lilac Companion 1\.0\.2') { throw "Unexpected version output: $output" }
+          if ($output -notmatch 'Lilac Companion 1\.1\.0') { throw "Unexpected version output: $output" }
+          $sources = & .\dist\LilacCompanion.exe sources list
+          if ($LASTEXITCODE -ne 0 -or (($sources -join ' ') -notmatch 'source registry')) { throw "Sources CLI failed: $sources" }
+          Copy-Item .\SourceManager.cmd .\dist\SourceManager.cmd -Force
       - name: Locate Inno Setup compiler
         shell: pwsh
         run: |
@@ -76,7 +79,8 @@ jobs:
           if (!(Test-Path $installed)) { throw 'Installed LilacCompanion.exe missing' }
           $output = & $installed version
           Write-Host $output
-          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Lilac Companion 1\.0\.2') { throw "Installed executable smoke test failed: $output" }
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Lilac Companion 1\.1\.0') { throw "Installed executable smoke test failed: $output" }
+          if (!(Test-Path (Join-Path $installDir 'SourceManager.cmd'))) { throw 'Installed Source Manager launcher missing' }
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'unins*.exe' | Select-Object -First 1
           if (-not $uninstaller) { throw 'Uninstaller was not created' }
           $un = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
@@ -98,6 +102,7 @@ jobs:
           name: LilacCompanion-1.1.0-win-x64
           path: |
             companion/dist/LilacCompanion.exe
+            companion/dist/SourceManager.cmd
             companion/dist/LilacCompanion.exe.sha256
             companion/dist/LilacCompanion-Setup-1.1.0.exe
             companion/dist/LilacCompanion-Setup-1.1.0.exe.sha256
@@ -112,6 +117,7 @@ jobs:
           $repo = '${{ github.repository }}'
           $assets = @(
             'companion/dist/LilacCompanion.exe',
+            'companion/dist/SourceManager.cmd',
             'companion/dist/LilacCompanion.exe.sha256',
             'companion/dist/LilacCompanion-Setup-1.1.0.exe',
             'companion/dist/LilacCompanion-Setup-1.1.0.exe.sha256'
