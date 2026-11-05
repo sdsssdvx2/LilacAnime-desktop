@@ -26,9 +26,11 @@ SetupLogging=yes
 
 [Files]
 Source: "..\dist\LilacCompanion.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\SourceManager.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Lilac Companion - Source Manager"; Filename: "{app}\SourceManager.cmd"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]
