@@ -234,7 +234,7 @@ async function sourceDoctor() {
       console.log('[companion] To diagnose video quality, open an episode in Lilac first.');
       return;
     }
-    const plan = registry.plan(context.episode.provider);
+    const plan = registry.plan(context.episode.provider, { ignoreCooldown: true });
     if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) {
       console.log('[companion] current source excluded or absent from Lilac; no automatic probing');
       return;
