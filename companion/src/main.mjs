@@ -18,7 +18,7 @@ import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
 
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = process.argv[2] || 'watch';
 const subtitleRoot = process.env.LILAC_SUBTITLE_ROOT || 'D:\\Utility\\자막';
