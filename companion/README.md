@@ -47,6 +47,54 @@ Automatic switches preserve the current playback position through Lilac's `resum
 
 For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP 403), Companion first uses the fast Node probe, then falls back only when needed to a protected-HLS probe through Lilac's Chromium renderer. If the currently playing stream is the only reliable evidence, live playback metrics are used instead of falsely marking the source unavailable.
 
+### Dynamic source discovery and source management
+
+Lilac Companion reads the **video source controls in the running official Lilac renderer** over local CDP.
+It compares the live source IDs and labels with a separate inventory on first connection and every five
+minutes while Companion is running. On its first successful discovery, it establishes a baseline;
+on later checks, additions, removals, restorations and label changes appear in Companion's log.
+Opening Companion after a Lilac update also runs this check. No scheduled runner or source-site
+scraper is installed. If the Lilac UI cannot be read reliably, the saved inventory is preserved and
+automatic source probing pauses rather than falsely declaring providers removed.
+
+The separate inventory lives at `%LOCALAPPDATA%\LilacCompanion\source-registry.json`.
+Existing subtitle preferences and the official Lilac installation are not changed.
+
+From the Companion installation directory, use the portable EXE (or `node src/main.mjs` in source checkout):
+
+```powershell
+.\LilacCompanion.exe sources list
+.\LilacCompanion.exe sources sync
+.\LilacCompanion.exe sources focus reanime
+.\LilacCompanion.exe sources normal miruro
+.\LilacCompanion.exe sources off linkkf
+.\LilacCompanion.exe sources reset linkkf
+.\LilacCompanion.exe sources undo
+.\LilacCompanion.exe source-doctor
+```
+
+- `list`: works offline and shows sources, presence, mode, last probe outcome and any cooldown.
+- `sync`: rechecks the already-running Lilac through CDP **without launching or restarting Lilac**.
+- `focus` / `normal` / `off`: intensive deep-scan priority, normal scan, or exclusion from probing and automatic selection.
+- `reset`: restore the default mode for that source; `undo`: restore the previous manual change.
+- `source-doctor`: perform the managed quality/stability scan against an episode already open in Lilac.
+
+RE:Anime, Miruro and 애니24 start in focused mode; other detected sources default to normal.
+All enabled sources receive a light quick scan. A focused source is preferred for detailed measurement
+only when its quick quality evidence is reasonably comparable; a clearly superior ordinary source
+is not displaced. Users' explicit source selection always takes precedence over automatic switching.
+
+Sources missing from the live UI are retained as history, not erased. A failed anime match or
+temporary site error is **not proof of a shutdown**. Three consecutive failed probes cause a
+30-minute temporary cooldown; a successful probe clears it. A source selected manually in Lilac
+is never forcibly changed just because it has been excluded from Companion diagnostics.
+Newly discovered providers are tried through Lilac's existing generic provider API. If the
+upstream API is incompatible, their probe reports failure instead of inventing a result or
+automatically switching on weak evidence.
+
+Optional inventory poll interval: `LILAC_SOURCE_DISCOVERY_MS=300000` (minimum 60000 ms).
+Changing source modes does not require changing, reinstalling, or rebuilding official Lilac.
+
 ### Resource policy
 
 - Normal watch mode polls lightweight playback state about once per second.
