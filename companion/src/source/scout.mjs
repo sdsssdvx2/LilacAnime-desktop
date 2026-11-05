@@ -372,10 +372,10 @@ async function mapLimit(values, limit, worker) {
   return output;
 }
 
-export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS, concurrency = 2, aliases = null } = {}) {
+export async function scanSources(bridge, context, { sampleCount = 1, providers = PROVIDERS, concurrency = 2, aliases = null, includeCurrent = true } = {}) {
   const effectiveAliases = Array.isArray(aliases) && aliases.length ? aliases : await collectSourceAliases(bridge, context.anime);
   const currentProvider = String(context.episode?.provider || '');
-  const ordered = [...new Set([currentProvider, ...providers].filter(Boolean))];
+  const ordered = [...new Set([...(includeCurrent ? [currentProvider] : []), ...providers].filter(Boolean))];
   const settledOrdered = await mapLimit(ordered, concurrency, async provider => {
     try {
       const resolved = await resolveProviderEpisode(bridge, provider, context, effectiveAliases);
@@ -386,21 +386,33 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
     }
   });
   const byProvider = new Map(settledOrdered.map(item => [item.provider, item]));
-  const settled = [...new Set([...providers, currentProvider].filter(Boolean))]
+  const settled = [...new Set([...providers, ...(includeCurrent ? [currentProvider] : [])].filter(Boolean))]
     .map(provider => byProvider.get(provider))
     .filter(Boolean);
   return { context, aliases: effectiveAliases, results: settled, decision: chooseBestSource(settled), visual: null };
 }
 
-export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true } = {}) {
-  const rankedQuick = rankSourceResults(quick.results).filter(item => item.ok && item.value);
-  const providers = rankedQuick.slice(0, count).map(item => item.provider);
+export function chooseDeepSourceProviders(quick, { count = 3, intensiveProviders = [] } = {}) {
+  const ranked = rankSourceResults(quick?.results || []).filter(item => item.ok && item.value);
+  if (!ranked.length) return [];
+  const bestHeight = Number(ranked[0].value?.probe?.quality?.height || 0);
+  const intensive = new Set(intensiveProviders);
+  // Focused sources get deep-scan preference only when quick evidence is reasonably
+  // comparable to the best candidate. Never demote a clearly better normal source.
+  const eligible = ranked.filter(item => intensive.has(item.provider) && item.stable &&
+    (!bestHeight || Number(item.value?.probe?.quality?.height || 0) >= bestHeight * 0.90));
+  return [...new Set([...ranked.slice(0, 1), ...eligible, ...ranked].map(item => item.provider))]
+    .slice(0, Math.max(1, count));
+}
+
+export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true, intensiveProviders = [], includeCurrent = true } = {}) {
+  const providers = chooseDeepSourceProviders(quick, { count, intensiveProviders });
   const currentProvider = quick.context?.episode?.provider || '';
-  if (currentProvider && !providers.includes(currentProvider)) providers.push(currentProvider);
+  if (includeCurrent && currentProvider && !providers.includes(currentProvider)) providers.push(currentProvider);
   if (!providers.length) return quick;
   const context = quick.context;
   if (!context) throw new Error('quick scan context is required');
-  const deep = await scanSources(bridge, context, { sampleCount, providers, concurrency: 2, aliases: quick.aliases });
+  const deep = await scanSources(bridge, context, { sampleCount, providers, concurrency: 2, aliases: quick.aliases, includeCurrent });
 
   let visualResult = null;
   let decision = deep.decision;
