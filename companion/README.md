@@ -50,12 +50,13 @@ For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP
 ### Dynamic source discovery and source management
 
 Lilac Companion reads the **video source controls in the running official Lilac renderer** over local CDP.
-It compares the live source IDs and labels with a separate inventory on first connection and every 30
-minutes while Companion is running. On its first successful discovery, it establishes a baseline;
-on later checks, additions, removals, restorations and label changes appear in Companion's log.
-Opening Companion after a Lilac update also runs this check. No scheduled runner or source-site
-scraper is installed. If the Lilac UI cannot be read reliably, the saved inventory is preserved and
-automatic source probing pauses rather than falsely declaring providers removed.
+It compares source IDs and labels with a separate inventory **only when it first connects to a
+Lilac renderer** (including a reconnection to a new renderer), or when the user runs `sources sync`.
+There is **no periodic source-list polling** and no background source discovery. The first successful
+discovery establishes a baseline; subsequent launches detect additions, removals, restorations and
+label changes. When Lilac updates and is reopened, the new Companion connection triggers this
+one-time comparison. If the Lilac UI cannot be read reliably, the saved inventory is preserved
+and automatic source probing pauses rather than falsely declaring providers removed.
 
 The separate inventory lives at `%LOCALAPPDATA%\LilacCompanion\source-registry.json`.
 Existing subtitle preferences and the official Lilac installation are not changed.
@@ -92,8 +93,7 @@ Newly discovered providers are tried through Lilac's existing generic provider A
 upstream API is incompatible, their probe reports failure instead of inventing a result or
 automatically switching on weak evidence.
 
-Optional inventory poll interval: `LILAC_SOURCE_DISCOVERY_MS=1800000` (minimum 60000 ms).
-Changing source modes does not require changing, reinstalling, or rebuilding official Lilac.
+Source-list discovery has no timer; the source registry config is watched for filesystem changes rather than read every few seconds. If local file watching is unavailable, settings are refreshed on the next playback entry. Changing source modes does not require changing, reinstalling, or rebuilding official Lilac.
 
 ### Resource policy
 
