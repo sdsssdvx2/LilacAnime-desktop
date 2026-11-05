@@ -94,6 +94,7 @@ test('off mode stops scanning current source and cooldown expires automatically'
   assert.equal(registry.plan('reanime').disabledCurrent, true);
   for (let i = 0; i < 3; i++) await registry.reportScan([{ provider: 'site3', ok: false, error: 'timeout' }]);
   assert.equal(registry.plan('miruro').providers.includes('site3'), false);
+  assert.equal(registry.plan('miruro', { ignoreCooldown: true }).providers.includes('site3'), true);
   setNow(100000 + 31 * 60_000);
   assert.equal(registry.plan('miruro').providers.includes('site3'), true);
   await registry.reportScan([{ provider: 'site3', ok: true, value: { probe: {} } }]);
