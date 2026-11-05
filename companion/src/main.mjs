@@ -309,7 +309,7 @@ async function sourceDoctor() {
     printSourceScan('quick scan (managed sources)', quick);
     await registry.reportScan(quickRaw.results);
     const deepCandidates = policy ? { ...quick, results: quick.results.filter(row => !policy.excluded.includes(row.provider)) } : quick;
-    const deepRaw = await deepScanTop(bridge, deepCandidates, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+    const deepRaw = await deepScanTop(bridge, deepCandidates, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, preferredProvider: policy?.preferred || '', includeCurrent: false });
     const deep = withAnimePolicy(deepRaw, policy);
     printSourceScan('deep scan (top managed providers)', deep);
   } finally { session.close(); }
@@ -524,7 +524,7 @@ async function watch() {
           ? { ...quick, results: quick.results.filter(row => !policy.excluded.includes(row.provider)) }
           : quick;
         const deepRaw = await deepScanTop(diagnosisConnection.bridge, deepCandidateQuick,
-          { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+          { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, preferredProvider: policy?.preferred || '', includeCurrent: false });
         const afterDeep = await diagnosisConnection.bridge.playbackContext().catch(() => null);
         if (activeSourceSession(afterDeep) !== session) {
           console.log('[companion] source scan cancelled: playback session ended or changed');
