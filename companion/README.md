@@ -43,7 +43,7 @@ Unknown resolution/bitrate stays unknown and is never treated as `0p` or `0 Mbps
 
 Recent deep decisions are cached for 15 minutes, quick decisions for 2 minutes, provider mappings for 30 minutes and provider misses for 10 minutes. A cached winner can therefore be applied quickly when the same episode is reopened from a different provider, while network quality is still periodically re-evaluated rather than permanently pinned.
 
-Automatic switches preserve the current playback position through Lilac's `resumeSeconds` / `resumeProgress` path. Manual provider changes made while an active scan is running are treated as a user override and are not fought by the scanner.
+Automatic switches preserve the current playback position through Lilac's `resumeSeconds` / `resumeProgress` path. Leaving the player or re-entering a video cancels obsolete in-flight diagnosis for the former playback session; it is **not** interpreted as an intentional manual provider preference. A source preference is only remembered when explicitly chosen in the Source Manager.
 
 For Miruro streams that reject Node HTTP probes (for example Cloudflare/CDN HTTP 403), Companion first uses the fast Node probe, then falls back only when needed to a protected-HLS probe through Lilac's Chromium renderer. If the currently playing stream is the only reliable evidence, live playback metrics are used instead of falsely marking the source unavailable.
 
@@ -61,7 +61,7 @@ and automatic source probing pauses rather than falsely declaring providers remo
 The separate inventory lives at `%LOCALAPPDATA%\LilacCompanion\source-registry.json`.
 Existing subtitle preferences and the official Lilac installation are not changed.
 
-**Recommended: launch `Lilac Companion - Source Manager` from the Windows Start menu**, or double-click `SourceManager.cmd` inside the Companion installation directory. It opens a separate numbered menu; you do not need to memorise any commands. The existing automatic watch window remains untouched. In the menu you can view all sources, sync on demand, choose a source by number and change focus/normal/off/reset, undo the last change, or run a manual quality diagnosis. Companion also prints a short source-management hint when its watch window starts.
+**Recommended: when Companion starts, type `1` and press Enter in its existing watch console.** A separate numbered Source Manager window opens while the watcher keeps working. You can also launch `Lilac Companion - Source Manager` from the Windows Start menu or double-click `SourceManager.cmd` inside the Companion installation directory. It opens a separate numbered menu; you do not need to memorise any commands. The existing automatic watch window remains untouched. In the menu you can view all sources, sync on demand, choose a source by number and change focus/normal/off/reset, undo the last change, or run a manual quality diagnosis. Companion also prints a short source-management hint when its watch window starts.
 
 For advanced users, the same commands remain available from the installation directory (or `node src/main.mjs` in a source checkout):
 
@@ -97,6 +97,38 @@ upstream API is incompatible, their probe reports failure instead of inventing a
 automatically switching on weak evidence.
 
 Source-list discovery has no timer; the source registry config is watched for filesystem changes rather than read every few seconds. If local file watching is unavailable, settings are refreshed on the next playback entry. Changing source modes does not require changing, reinstalling, or rebuilding official Lilac.
+
+### Source selection for individual anime and episodes
+
+In Source Manager, choose **[6] 작품별 소스 설정**. Select the currently playing anime or an anime
+from the locally saved recent-playback list (works even after exiting its player).
+Select an entire series/season or just the current episode, then choose a policy:
+
+- **Prefer** a chosen provider when its episode mapping is reliable and the stream is stable.
+  If it is unavailable, retain normal safe source selection.
+- **Lock** the chosen provider; if it is unavailable, do not silently auto-switch to another.
+  This does not uninstall the provider or block manual playback.
+- **Exclude** one or more providers from automatic selection for this anime only.
+  A different compatible source can still win even if the excluded provider benchmarks better.
+- **Allow** reverses a local exclusion; **Clear** restores normal automatic behavior for
+  this anime/episode; saved rules can also be deleted from the same menu.
+
+Episode-specific rules add to a series rule; a series exclusion remains effective for its episodes.
+Global source "off" still takes priority over any anime-specific preference. A provider missing
+from the live Lilac UI cannot be automatically selected. The menu does not infer preferences
+from exiting or entering a player, changing a setting manually, or browsing an anime page.
+
+The rules are saved separately at `%LOCALAPPDATA%\LilacCompanion\anime-source-policies.json`.
+Only minimal anime metadata (title, public catalog IDs, season, year, episode number; **no**
+stream URLs, playback tokens, subtitles or private credentials) is saved to
+`%LOCALAPPDATA%\LilacCompanion\recent-anime-sources.json` at new playback entries, so the
+manager can find a previously watched title without background polling.
+
+Series matching favors AniList/MAL catalog IDs, then exact normalized titles with available
+season/year/type qualifiers. No fuzzy title match is used for source-policy enforcement;
+if official Lilac source metadata differs significantly, it can require setting the rule
+again for that title. The original subtitle automation and baseline quality scorer remain
+unchanged; policy rules are applied on top of the scout results.
 
 ### Resource policy
 
@@ -163,7 +195,7 @@ The packaged EXE uses `watch` by default. `LilacCompanion.exe version` prints th
 - Never replace an explicitly selected real local user subtitle with an uncertain match.
 - Never auto-switch on weak/unknown quality evidence.
 - Preserve playback position when Companion changes provider.
-- Treat an in-scan manual provider change as a user override.
+- Cancel stale video-session diagnostics on exit/re-entry without inferring a manual source preference.
 - Do not relaunch Lilac after a previously connected Lilac process has been closed.
 - Fall back to normal Lilac behavior when Companion cannot establish high-confidence evidence.
 
