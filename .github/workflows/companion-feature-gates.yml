@@ -42,7 +42,7 @@ jobs:
           $version = & .\dist\LilacCompanion.exe version
           if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Lilac Companion 1\.0\.2') { throw "Portable EXE smoke failed: $version" }
           $sources = & .\dist\LilacCompanion.exe sources list
-          if ($LASTEXITCODE -ne 0 -or $sources -notmatch 'source registry') { throw "Portable sources CLI smoke failed: $sources" }
+          if ($LASTEXITCODE -ne 0 -or (($sources -join ' ') -notmatch 'source registry')) { throw "Portable sources CLI smoke failed: $sources" }
           Write-Host $version
           Write-Host $sources
       - name: Build isolated preview installer
@@ -73,7 +73,7 @@ jobs:
           $installed = Join-Path $installDir 'LilacCompanion.exe'
           if (!(Test-Path $installed)) { throw 'Installed executable not found' }
           $output = & $installed sources list
-          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'source registry') { throw 'Installed sources CLI smoke failed' }
+          if ($LASTEXITCODE -ne 0 -or (($output -join ' ') -notmatch 'source registry')) { throw 'Installed sources CLI smoke failed' }
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'unins*.exe' | Select-Object -First 1
           if (-not $uninstaller) { throw 'Uninstaller missing' }
           $un = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
