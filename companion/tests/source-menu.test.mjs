@@ -56,3 +56,46 @@ test('no known sources explains how to synchronize', async () => {
   assert.deepEqual(calls, [['list', '']]);
   assert.match(output, /동기화/);
 });
+
+test('anime menu uses recent target and numbered provider selection, not memorized IDs', async () => {
+  const input = ['6', '1', '1', '1', '3', '2', '0', '0'];
+  const commands = [], logs = [];
+  await runSourceMenu({
+    prompt: async () => input.shift() ?? '0',
+    log: value => logs.push(String(value)),
+    loadProviders: async () => [
+      { id: 'miruro', label: 'Miruro', mode: 'intensive', present: true },
+      { id: 'reanime', label: 'RE:Anime', mode: 'intensive', present: true }
+    ],
+    dispatch: async action => commands.push(['source', action]),
+    loadAnimeTargets: async () => [{
+      anime: { title: 'Example', anilistId: 19 }, episode: { number: 8 }
+    }],
+    loadAnimeRules: async () => [],
+    showAnimePolicy: async () => null,
+    changeAnimePolicy: async (ctx, scope, operation, provider) =>
+      commands.push(['anime', ctx.anime.anilistId, scope, operation, provider]),
+    deleteAnimePolicy: async () => assert.fail('Must not delete')
+  });
+  assert.deepEqual(commands, [
+    ['source', 'list'], ['anime', 19, 'series', 'exclude', 'reanime']
+  ]);
+  assert.match(logs.join('\n'), /작품별 소스 설정/);
+});
+
+test('anime rule list may be viewed and deleted only after explicit confirmation', async () => {
+  const input = ['6', '2', '1', '1', '0', '0'];
+  const deleted = [];
+  await runSourceMenu({
+    prompt: async () => input.shift() ?? '0', log: () => {},
+    dispatch: async () => {}, loadProviders: async () => [],
+    loadAnimeTargets: async () => [],
+    loadAnimeRules: async () => [{
+      key: 'anilist:19', title: 'Example',
+      series: { preferred: 'miruro', excluded: [], locked: false }, episodes: {}
+    }],
+    changeAnimePolicy: async () => assert.fail('No change needed'),
+    deleteAnimePolicy: async key => deleted.push(key)
+  });
+  assert.deepEqual(deleted, ['anilist:19']);
+});
