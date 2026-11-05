@@ -61,13 +61,13 @@ jobs:
           if (-not $compiler) { throw 'ISCC.exe not found' }
           & $compiler .\installer\LilacCompanion.iss
           if ($LASTEXITCODE -ne 0) { throw 'Preview installer build failed' }
-          if (!(Test-Path .\dist\LilacCompanion-Setup-1.0.2.exe)) { throw 'Preview installer missing' }
+          if (!(Test-Path .\dist\LilacCompanion-Setup-1.1.0.exe)) { throw 'Preview installer missing' }
       - name: Silent installation, CLI and uninstallation smoke
         shell: pwsh
         run: |
           $installDir = Join-Path $env:RUNNER_TEMP 'LilacCompanion-SourceGate'
           Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
-          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.0.2.exe).Path
+          $setup = (Resolve-Path .\dist\LilacCompanion-Setup-1.1.0.exe).Path
           $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$installDir" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "Installer exit: $($proc.ExitCode)" }
           $installed = Join-Path $installDir 'LilacCompanion.exe'
@@ -82,13 +82,13 @@ jobs:
       - name: Record preview SHA-256
         shell: pwsh
         run: |
-          Get-FileHash .\dist\LilacCompanion.exe, .\dist\LilacCompanion-Setup-1.0.2.exe -Algorithm SHA256 | Format-Table -AutoSize
+          Get-FileHash .\dist\LilacCompanion.exe, .\dist\LilacCompanion-Setup-1.1.0.exe -Algorithm SHA256 | Format-Table -AutoSize
       - uses: actions/upload-artifact@v4
         with:
           name: LilacCompanion-DynamicSources-PREVIEW-win-x64
           path: |
             companion/dist/LilacCompanion.exe
-            companion/dist/LilacCompanion-Setup-1.0.2.exe
+            companion/dist/LilacCompanion-Setup-1.1.0.exe
           retention-days: 7
           if-no-files-found: error
 
