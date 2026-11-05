@@ -48,5 +48,6 @@ jobs:
           node --check src/source/visual-quality.mjs
           node --check src/source/provider-map.mjs
           node --check src/source/scout.mjs
+          node --check src/source/source-registry.mjs
       - name: Tests
         run: npm test
