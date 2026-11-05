@@ -4,9 +4,10 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
 import { SourceRegistry, normaliseSourceSnapshot, validProviderId } from '../src/source/source-registry.mjs';
 import { LilacBridge } from '../src/lilac/bridge.mjs';
-import { chooseDeepSourceProviders } from '../src/source/scout.mjs';
+import { chooseDeepSourceProviders, scanSources } from '../src/source/scout.mjs';
 
 const snapshot = (...items) => ({ reliable: true, providers: items.map(([id, label]) => ({ id, label })) });
 async function create(t) {
@@ -122,4 +123,27 @@ test('focus does not displace clearly higher-resolution source in deep scan', ()
   const selected = chooseDeepSourceProviders(quick, { count: 2, intensiveProviders: ['reanime', 'miruro', 'ohli24'] });
   assert.equal(selected[0], 'better');
   assert.equal(selected.length, 2);
+});
+
+test('off current provider is not silently reinserted by the scout', async () => {
+  const scan = await scanSources({}, { anime: { title: 'test' }, episode: { provider: 'blocked', number: 1 } },
+    { providers: [], aliases: ['test'], includeCurrent: false });
+  assert.equal(scan.results.length, 0);
+  assert.equal(scan.decision.selected, null);
+});
+
+test('offline CLI can list sources without starting Lilac', async t => {
+  const { registry } = await create(t);
+  await registry.reconcile(snapshot(['reanime', 'RE'], ['miruro', 'M']));
+  const env = { ...process.env, LOCALAPPDATA: path.dirname(path.dirname(registry.file)) };
+  // The default registry path is the only state source used by this command.
+  const expectedPath = path.join(env.LOCALAPPDATA, 'LilacCompanion', 'source-registry.json');
+  await fs.mkdir(path.dirname(expectedPath), { recursive: true });
+  await fs.copyFile(registry.file, expectedPath);
+  const run = spawnSync(process.execPath, ['src/main.mjs', 'sources', 'list'], {
+    cwd: path.resolve(import.meta.dirname, '..'), env, encoding: 'utf8', timeout: 10000
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /reanime/);
+  assert.match(run.stdout, /miruro/);
 });
