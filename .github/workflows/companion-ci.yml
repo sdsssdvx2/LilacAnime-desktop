@@ -49,5 +49,9 @@ jobs:
           node --check src/source/provider-map.mjs
           node --check src/source/scout.mjs
           node --check src/source/source-registry.mjs
+          node --check src/source/anime-source-policies.mjs
+          node --check src/source/source-menu.mjs
+          node --check src/source/source-menu-hotkey.mjs
+          node --check src/source/playback-session.mjs
       - name: Tests
         run: npm test
