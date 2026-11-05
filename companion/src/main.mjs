@@ -29,7 +29,7 @@ const sourceQuickDecisionCacheMs = Number(process.env.LILAC_SOURCE_QUICK_CACHE_M
 const sourceRetryMs = Number(process.env.LILAC_SOURCE_RETRY_MS || 5 * 60 * 1000);
 const sourceAutoSwitchMaxSeconds = Number(process.env.LILAC_SOURCE_SWITCH_MAX_SECONDS || 120);
 const subtitleSafetyScanMs = Math.max(60_000, Number(process.env.LILAC_SUBTITLE_SAFETY_SCAN_MS || 10 * 60 * 1000));
-const sourceInventoryRefreshMs = Math.max(60_000, Number(process.env.LILAC_SOURCE_DISCOVERY_MS || 5 * 60 * 1000));
+const sourceInventoryRefreshMs = Math.max(60_000, Number(process.env.LILAC_SOURCE_DISCOVERY_MS || 30 * 60 * 1000));
 
 async function exists(file) {
   try { await fs.access(file); return true; } catch { return false; }
