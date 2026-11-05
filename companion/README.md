@@ -1,8 +1,8 @@
-# Lilac Companion 1.0.2
+# Lilac Companion 1.1.0
 
 External companion for **LilacAnime Desktop**. It keeps official Lilac files untouched and attaches through the local Chrome DevTools Protocol (CDP) bridge.
 
-## What 1.0.2 does
+## What 1.1.0 does
 
 ### Local subtitle automation
 
@@ -106,7 +106,7 @@ Changing source modes does not require changing, reinstalling, or rebuilding off
 
 ## Windows installation
 
-Use `LilacCompanion-Setup-1.0.2.exe`. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
+Use `LilacCompanion-Setup-1.1.0.exe`. The installer is per-user, needs no administrator rights, creates an uninstaller, and installs by default to:
 
 ```text
 %LOCALAPPDATA%\Programs\LilacCompanion
