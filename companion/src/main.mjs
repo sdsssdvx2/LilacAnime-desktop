@@ -14,6 +14,9 @@ import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { SourceDecisionCache } from './source/decision-cache.mjs';
 import { SourceRegistry } from './source/source-registry.mjs';
+import { AnimeSourcePolicies, RecentAnimeSources, managedSourcePlan, choosePolicySource, policySwitchDecision, animeSourceIdentity } from './source/anime-source-policies.mjs';
+import { listenForSourceManager } from './source/source-menu-hotkey.mjs';
+import { chooseBestSource, rankSourceResults } from './source/scout.mjs';
 import { runSourceMenu } from './source/source-menu.mjs';
 import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
@@ -82,6 +85,21 @@ function sourceEpisodeKey(context) {
   const identity = externalIdentity || (titleIdentity ? `${titleIdentity}|season:${String(anime.season || '')}|year:${String(anime.year || '')}` : '');
   const episode = Number(context?.episode?.number || 0) || context?.episode?.id || '';
   return identity && episode ? `${identity}|${episode}` : '';
+}
+
+function activeSourceSession(context) {
+  // A new playbackRequestId or provider means a new playback. Leaving the
+  // player cancels the old diagnosis; it is NOT interpreted as user intent.
+  const episode = sourceEpisodeKey(context);
+  if (!episode || context?.activePlayer !== true) return '';
+  return episode + '|entry:' + (Number(context.playbackSessionId || 0) || 0) +
+    '|provider:' + String(context.episode?.provider || '');
+}
+function withAnimePolicy(scan, policy) {
+  return choosePolicySource(scan, policy, { chooseBestSource, rankSourceResults });
+}
+function decideWithAnimePolicy(scan, currentProvider, policy) {
+  return policySwitchDecision(scan, currentProvider, policy, safeAutoSwitchDecision);
 }
 
 async function collectVariants(bridge, anime) {
@@ -225,7 +243,30 @@ async function sourceMenu() {
       return Object.entries(registry.data.providers)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([id, item]) => ({ id, label: item.label, present: item.present, mode: registry.mode(id) }));
-    }
+    },
+    loadAnimeTargets: async () => {
+      const recent = await new RecentAnimeSources().list();
+      let current = null;
+      try {
+        const { session, bridge } = await connectBridge({ launch: false });
+        try {
+          const context = await bridge.playbackContext();
+          if (activeSourceSession(context)) current = context;
+        } finally { session.close(); }
+      } catch { /* The recent list works without a running Lilac. */ }
+      const targets = current ? [current] : [];
+      const seen = new Set(targets.map(animeSourceIdentity));
+      for (const item of recent) {
+        const identity = animeSourceIdentity(item);
+        if (!seen.has(identity)) { targets.push(item); seen.add(identity); }
+      }
+      return targets;
+    },
+    loadAnimeRules: async () => (await new AnimeSourcePolicies().load()).list(),
+    showAnimePolicy: async context => (await new AnimeSourcePolicies().load()).resolve(context),
+    changeAnimePolicy: async (context, scope, action, provider) =>
+      (await new AnimeSourcePolicies().load()).set(context, scope, action, provider),
+    deleteAnimePolicy: async key => (await new AnimeSourcePolicies().load()).clearKey(key)
   });
 }
 
@@ -238,6 +279,8 @@ function printHelp() {
   console.log('  LilacCompanion.exe sources focus|normal|off|reset SOURCE_ID');
   console.log('  LilacCompanion.exe sources undo Restore previous setting change');
   console.log('  LilacCompanion.exe source-doctor Diagnose currently playing episode');
+  console.log('  During watch: enter 1 + Enter to open Source Manager window');
+  console.log('  In Source Manager: option 6 sets per-anime/per-episode rules');
   console.log('  LilacCompanion.exe help         Show this help');
 }
 
@@ -288,6 +331,8 @@ function startSubtitleWatcher(onDirty) {
 async function watch() {
   const state = await new StateStore().load();
   const sourceRegistry = await new SourceRegistry().load();
+  const animePolicies = await new AnimeSourcePolicies().load();
+  const recentlyPlayed = new RecentAnimeSources();
   let index = await indexSubtitleRoot(subtitleRoot);
   let indexedAt = Date.now();
   let subtitlesDirty = false;
@@ -302,12 +347,13 @@ async function watch() {
   let sourceSwitchGuard = { episode: null, provider: '', until: 0 };
   let liveInventoryTrusted = false;
   let registryDirty = false;
+  let policiesDirty = false;
   let lastRegistrySignature = sourceRegistry.plan().signature;
+  let lastPolicySignature = animePolicies.signature();
   console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
-  console.log('[companion] source management: Windows Start menu > Lilac Companion - Source Manager');
-  console.log('[companion] or run LilacCompanion.exe sources menu in a separate terminal (numbered options)');
+  const stopMenuShortcut = listenForSourceManager();
   console.log('[companion] focus defaults: RE:Anime / Miruro / 애니24; other active sources are checked lightly');
 
   const subtitleWatcher = startSubtitleWatcher(() => {
@@ -322,7 +368,9 @@ async function watch() {
   try {
     await fs.mkdir(path.dirname(sourceRegistry.file), { recursive: true });
     registryWatcher = watchFs(path.dirname(sourceRegistry.file), (_event, name) => {
-      if (!name || String(name).toLowerCase() === path.basename(sourceRegistry.file).toLowerCase()) registryDirty = true;
+      const changed = String(name || '').toLowerCase();
+      if (!name || changed === path.basename(sourceRegistry.file).toLowerCase()) registryDirty = true;
+      if (!name || changed === path.basename(animePolicies.file).toLowerCase()) policiesDirty = true;
     });
     registryWatcher.on('error', error => {
       console.warn(`[companion] source settings watcher unavailable: ${error?.message || error}`);
@@ -335,27 +383,42 @@ async function watch() {
   }
 
   const stopRuntime = () => {
+    try { stopMenuShortcut(); } catch {}
     try { registryWatcher?.close(); } catch {}
     try { subtitleWatcher?.close(); } catch {}
     try { connection?.session?.close(); } catch {}
     connection = null;
   };
 
-  const switchSource = async (bridge, live, selected, reason, { cached = false, early = false, entryStartedAt = 0 } = {}) => {
+  const switchSource = async (bridge, live, selected, reason, {
+    cached = false, early = false, entryStartedAt = 0,
+    expectedSession = '', expectedPolicy = null
+  } = {}) => {
     if (!selected?.provider || selected.provider === live.episode?.provider) return false;
+    if (expectedSession && activeSourceSession(live) !== expectedSession) return false;
     if (!early && !withinSourceSwitchWindow(entryStartedAt, { maxSeconds: sourceAutoSwitchMaxSeconds })) {
       console.log('[companion] source switch skipped: diagnosis finished outside the automatic switch window');
       return false;
     }
     if (sourceAutoMode !== 'safe' && sourceAutoMode !== 'on') return false;
-    // A manual 'sources off' issued during a scan must take effect before switching.
+    // A separate CLI process may change either global or per-anime rules
+    // while an asynchronous scan is running.
     await sourceRegistry.load();
-    const livePlan = sourceRegistry.plan(live.episode?.provider);
-    if (livePlan.disabledCurrent || !livePlan.providers.includes(selected.provider)) {
+    await animePolicies.load();
+    const livePolicy = animePolicies.resolve(live);
+    const livePlan = managedSourcePlan(sourceRegistry.plan(live.episode?.provider), livePolicy);
+    if (JSON.stringify(livePolicy) !== JSON.stringify(expectedPolicy) ||
+        livePlan.disabledCurrent || !livePlan.providers.includes(selected.provider) ||
+        (livePolicy?.locked && selected.provider !== livePolicy.preferred)) {
       console.log('[companion] source switch cancelled: source policy changed');
       return false;
     }
-    console.log(`[companion] ${cached ? 'cached ' : ''}auto-switching source: ${live.episode.provider} -> ${selected.provider} (${reason})`);
+    // Recheck the renderer immediately before switching: returning to a video
+    // counts as a new session, not a manual override.
+    const current = await bridge.playbackContext();
+    if (activeSourceSession(current) !== activeSourceSession(live)) return false;
+    console.log('[companion] ' + (cached ? 'cached ' : '') + 'auto-switching source: ' +
+      live.episode.provider + ' -> ' + selected.provider + ' (' + reason + ')');
     sourceSwitchGuard = { episode: Number(live.episode.number), provider: selected.provider, until: Date.now() + 60000 };
     await bridge.switchToResolvedSource(selected, {
       title: live.anime.title || live.anime.title_english || live.anime.romaji || '',
@@ -369,41 +432,50 @@ async function watch() {
   };
 
   const startSourceDiagnosis = context => {
-    if (sourceAutoMode === 'off' || !liveInventoryTrusted || !context?.anime || !context?.episode?.number) return;
-    const plan = sourceRegistry.plan(context.episode.provider);
-    if (plan.disabledCurrent || !plan.providers.includes(context.episode.provider)) return;
+    const session = activeSourceSession(context);
+    if (sourceAutoMode === 'off' || !liveInventoryTrusted || !session) return;
+    const policy = animePolicies.resolve(context);
+    const plan = managedSourcePlan(sourceRegistry.plan(context.episode.provider), policy);
+    if (plan.disabledCurrent || !plan.providers.length) return;
+    // This cooldown prevents loops caused by *our own* automatic switch. It
+    // does not infer or remember any user's manual source-selection intent.
     if (sourceSwitchGuard.until > Date.now()
         && sourceSwitchGuard.episode === Number(context.episode.number)
         && sourceSwitchGuard.provider === context.episode.provider) return;
-    const key = sourceEpisodeKey(context);
-    if (!key || sourceTasks.has(key)) return;
+    const key = sourceEpisodeKey(context); // Episode cache survives re-entry.
+    const taskKey = session;                 // In-flight tasks never cross entries.
+    if (!key || sourceTasks.has(taskKey)) return;
 
     const cached = sourceDecisions.get(key);
     if (cached) {
-      const cachedSafety = safeAutoSwitchDecision(cached.scan, context.episode.provider);
+      const cachedScan = withAnimePolicy(cached.scan, policy);
+      const cachedSafety = decideWithAnimePolicy(cachedScan, context.episode.provider, policy);
       if (!cachedSafety.switch) return;
-
       const task = (async () => {
         let cachedConnection = null;
         try {
           await sleep(350);
           cachedConnection = await connectBridge({ launch: false });
           const live = await cachedConnection.bridge.playbackContext();
-          if (!live?.anime || sourceEpisodeKey(live) !== key || live.episode?.provider !== context.episode?.provider) return;
-          const safety = safeAutoSwitchDecision(cached.scan, live.episode.provider);
-          const selected = cached.scan?.decision?.selected;
-          console.log(`[companion] cached source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
+          if (activeSourceSession(live) !== session) return;
+          const scan = withAnimePolicy(cached.scan, policy);
+          const safety = decideWithAnimePolicy(scan, live.episode.provider, policy);
+          const selected = scan.decision?.selected;
+          console.log('[companion] cached source recommendation: ' +
+            (selected?.provider || 'none') + ' · ' + safety.reason);
           if (!safety.switch) return;
-          await switchSource(cachedConnection.bridge, live, safety.selected, safety.reason, { cached: true, early: true });
+          await switchSource(cachedConnection.bridge, live, safety.selected, safety.reason,
+            { cached: true, early: true, expectedSession: session, expectedPolicy: policy });
         } catch (error) {
-          console.warn(`[companion] cached source switch failed; a fresh scan will be allowed later: ${error?.message || error}`);
+          console.warn('[companion] cached source switch failed; fresh scan allowed later: ' +
+            (error?.message || error));
           sourceDecisions.clear(key);
           sourceDecisions.defer(key);
         } finally {
           try { cachedConnection?.session?.close(); } catch {}
         }
-      })().finally(() => sourceTasks.delete(key));
-      sourceTasks.set(key, task);
+      })().finally(() => sourceTasks.delete(taskKey));
+      sourceTasks.set(taskKey, task);
       return;
     }
 
@@ -415,58 +487,66 @@ async function watch() {
         await sleep(1200);
         diagnosisConnection = await connectBridge({ launch: false });
         const start = await diagnosisConnection.bridge.playbackContext();
-        if (!start?.anime || sourceEpisodeKey(start) !== key) return;
-        console.log(`[companion] source scan started: ${start.anime.title || start.anime.title_english} · E${start.episode.number} (current ${start.episode.provider})`);
-        const quick = await scanSources(diagnosisConnection.bridge, start, { sampleCount: 1, concurrency: 2, providers: plan.providers, includeCurrent: false });
+        if (activeSourceSession(start) !== session) return;
+        console.log('[companion] source scan started: ' +
+          (start.anime.title || start.anime.title_english) + ' · E' +
+          start.episode.number + ' (current ' + start.episode.provider + ')');
+        const quickRaw = await scanSources(diagnosisConnection.bridge, start,
+          { sampleCount: 1, concurrency: 2, providers: plan.providers, includeCurrent: false });
         const afterQuick = await diagnosisConnection.bridge.playbackContext().catch(() => null);
-        if (!afterQuick?.anime || sourceEpisodeKey(afterQuick) !== key) {
-          console.log('[companion] source scan cancelled: playback changed during quick scan');
+        if (activeSourceSession(afterQuick) !== session) {
+          console.log('[companion] source scan cancelled: playback session ended or changed');
           return;
         }
+        const quick = withAnimePolicy(quickRaw, policy);
         printSourceScan('auto quick scan (managed providers)', quick);
         await sourceRegistry.reportScan(quick.results);
-        const refreshedPlan = sourceRegistry.plan(start.episode.provider);
+        await animePolicies.load();
+        const latestPolicy = animePolicies.resolve(start);
+        const refreshedPlan = managedSourcePlan(sourceRegistry.plan(start.episode.provider), latestPolicy);
         if (refreshedPlan.disabledCurrent || refreshedPlan.signature !== plan.signature) {
-          console.log('[companion] source scan cancelled: inventory/mode/cooldown changed during probing');
+          console.log('[companion] source scan cancelled: inventory/mode/anime rule changed during probing');
           return;
         }
-
-        const quickSafety = safeAutoSwitchDecision(quick, start.episode.provider);
-        if (afterQuick.episode?.provider === start.episode?.provider && allowQuickAutoSwitch(quick, quickSafety)) {
-          console.log(`[companion] source recommendation (quick): ${quick.decision?.selected?.provider || 'none'} · ${quickSafety.reason}`);
+        const quickSafety = decideWithAnimePolicy(quick, start.episode.provider, policy);
+        if (allowQuickAutoSwitch(quick, quickSafety)) {
+          console.log('[companion] source recommendation (quick): ' +
+            (quick.decision?.selected?.provider || 'none') + ' · ' + quickSafety.reason);
           sourceDecisions.remember(key, quick, Date.now(), sourceQuickDecisionCacheMs);
-          if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason, { early: true })) return;
+          if (await switchSource(diagnosisConnection.bridge, afterQuick, quickSafety.selected, quickSafety.reason,
+            { early: true, expectedSession: session, expectedPolicy: policy })) return;
         }
-
-        const deep = await deepScanTop(diagnosisConnection.bridge, quick, { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
+        // Excluded providers cannot use one of the three deep-probe slots.
+        const deepCandidateQuick = policy
+          ? { ...quick, results: quick.results.filter(row => !policy.excluded.includes(row.provider)) }
+          : quick;
+        const deepRaw = await deepScanTop(diagnosisConnection.bridge, deepCandidateQuick,
+          { count: 3, sampleCount: 3, intensiveProviders: plan.intensive, includeCurrent: false });
         const afterDeep = await diagnosisConnection.bridge.playbackContext().catch(() => null);
-        if (!afterDeep?.anime || sourceEpisodeKey(afterDeep) !== key) {
-          console.log('[companion] source scan cancelled: playback changed during deep scan');
+        if (activeSourceSession(afterDeep) !== session) {
+          console.log('[companion] source scan cancelled: playback session ended or changed');
           return;
         }
+        const deep = withAnimePolicy(deepRaw, policy);
         printSourceScan('auto deep scan (top providers)', deep);
         const selected = deep.decision?.selected;
-        const safety = safeAutoSwitchDecision(deep, start.episode.provider);
+        const safety = decideWithAnimePolicy(deep, start.episode.provider, policy);
         if (selected) sourceDecisions.remember(key, deep);
         else sourceDecisions.defer(key);
-        console.log(`[companion] source recommendation: ${selected?.provider || 'none'} · ${safety.reason}`);
-
-        const live = afterDeep;
-        if (live.episode?.provider !== start.episode?.provider) {
-          console.log(`[companion] source switch skipped: provider changed during active scan (${start.episode.provider} -> ${live.episode.provider}); treating it as a user override`);
-          return;
-        }
+        console.log('[companion] source recommendation: ' +
+          (selected?.provider || 'none') + ' · ' + safety.reason);
         if (!safety.switch) return;
-        await switchSource(diagnosisConnection.bridge, live, safety.selected, safety.reason, { entryStartedAt });
+        await switchSource(diagnosisConnection.bridge, afterDeep, safety.selected, safety.reason,
+          { entryStartedAt, expectedSession: session, expectedPolicy: policy });
       } finally {
         try { diagnosisConnection?.session?.close(); } catch {}
       }
     })().catch(error => {
-      console.warn(`[companion] source scan failed: ${error?.message || error}`);
+      console.warn('[companion] source scan failed: ' + (error?.message || error));
       sourceDecisions.defer(key);
-    }).finally(() => sourceTasks.delete(key));
+    }).finally(() => sourceTasks.delete(taskKey));
 
-    sourceTasks.set(key, task);
+    sourceTasks.set(taskKey, task);
   };
 
   try {
@@ -502,6 +582,17 @@ async function watch() {
           if (refreshedSignature !== lastRegistrySignature) {
             sourceDecisions.clear();
             lastRegistrySignature = refreshedSignature;
+          }
+        }
+
+        if (policiesDirty) {
+          policiesDirty = false;
+          const previous = lastPolicySignature;
+          await animePolicies.load();
+          lastPolicySignature = animePolicies.signature();
+          if (previous !== lastPolicySignature) {
+            sourceDecisions.clear();
+            console.log('[companion] anime source policies changed; cached decisions cleared');
           }
         }
 
@@ -547,6 +638,10 @@ async function watch() {
           await sourceRegistry.load();
           lastRegistrySignature = sourceRegistry.plan().signature;
           if (previous !== lastRegistrySignature) sourceDecisions.clear();
+          const previousPolicies = lastPolicySignature;
+          await animePolicies.load();
+          lastPolicySignature = animePolicies.signature();
+          if (previousPolicies !== lastPolicySignature) sourceDecisions.clear();
         }
 
         const userSubtitlePath = context.subtitle?.source === 'user' ? String(context.subtitle.path || '') : '';
@@ -576,7 +671,9 @@ async function watch() {
         console.log(`[companion] playback detected: ${context.anime.title || context.anime.title_english || context.anime.romaji || 'unknown'} · E${context.episode.number} · entry ${context.playbackSessionId || 0}`);
         await sleep(650);
         const stable = await connection.bridge.playbackContext();
-        if (!stable?.anime || playbackRef(state, stable) !== ref) continue;
+        if (!stable?.anime || playbackRef(state, stable) !== ref || !activeSourceSession(stable)) continue;
+        await recentlyPlayed.record(stable).catch(error =>
+          console.warn('[companion] recent anime save skipped: ' + (error?.message || error)));
 
         let preference = state.subtitlePreference(stable.anime, stable.episode.number);
         let manual = preference?.kind === 'user' ? preference : null;
