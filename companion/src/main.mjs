@@ -379,6 +379,11 @@ async function watch() {
         }
         printSourceScan('auto quick scan (managed providers)', quick);
         await sourceRegistry.reportScan(quick.results);
+        const refreshedPlan = sourceRegistry.plan(start.episode.provider);
+        if (refreshedPlan.disabledCurrent || refreshedPlan.signature !== plan.signature) {
+          console.log('[companion] source scan cancelled: inventory/mode/cooldown changed during probing');
+          return;
+        }
 
         const quickSafety = safeAutoSwitchDecision(quick, start.episode.provider);
         if (afterQuick.episode?.provider === start.episode?.provider && allowQuickAutoSwitch(quick, quickSafety)) {
