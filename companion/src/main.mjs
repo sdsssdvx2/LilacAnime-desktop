@@ -14,6 +14,7 @@ import { isUserSubtitleCompatibleWithEpisode } from './subtitles/user-selection.
 import { scanSources, deepScanTop, safeAutoSwitchDecision } from './source/scout.mjs';
 import { SourceDecisionCache } from './source/decision-cache.mjs';
 import { SourceRegistry } from './source/source-registry.mjs';
+import { runSourceMenu } from './source/source-menu.mjs';
 import { allowQuickAutoSwitch } from './source/quick-switch.mjs';
 import { withinSourceSwitchWindow } from './source/switch-window.mjs';
 import { StateStore } from './state.mjs';
@@ -216,6 +217,30 @@ async function sourcesCommand(action = 'list', id = '') {
   printSourceInventory(registry);
 }
 
+async function sourceMenu() {
+  await runSourceMenu({
+    dispatch: (action, id = '') => action === 'source-doctor' ? sourceDoctor() : sourcesCommand(action, id),
+    loadProviders: async () => {
+      const registry = await new SourceRegistry().load();
+      return Object.entries(registry.data.providers)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, item]) => ({ id, label: item.label, present: item.present, mode: registry.mode(id) }));
+    }
+  });
+}
+
+function printHelp() {
+  console.log('Lilac Companion ' + VERSION);
+  console.log('  LilacCompanion.exe              Start automatic watch mode');
+  console.log('  LilacCompanion.exe sources menu Guided source management (recommended)');
+  console.log('  LilacCompanion.exe sources list Show saved sources and settings');
+  console.log('  LilacCompanion.exe sources sync Compare current Lilac source list');
+  console.log('  LilacCompanion.exe sources focus|normal|off|reset SOURCE_ID');
+  console.log('  LilacCompanion.exe sources undo Restore previous setting change');
+  console.log('  LilacCompanion.exe source-doctor Diagnose currently playing episode');
+  console.log('  LilacCompanion.exe help         Show this help');
+}
+
 async function sourceDoctor() {
   const registry = await new SourceRegistry().load();
   const { session, bridge, target } = await connectBridge({ launch: false });
@@ -281,6 +306,9 @@ async function watch() {
   console.log(`[companion] version: ${VERSION}`);
   console.log(`[companion] indexed ${index.files.length} subtitle files from ${subtitleRoot}`);
   console.log(`[companion] source auto mode: ${sourceAutoMode}`);
+  console.log('[companion] source management: Windows Start menu > Lilac Companion - Source Manager');
+  console.log('[companion] or run LilacCompanion.exe sources menu in a separate terminal (numbered options)');
+  console.log('[companion] focus defaults: RE:Anime / Miruro / 애니24; other active sources are checked lightly');
 
   const subtitleWatcher = startSubtitleWatcher(() => {
     subtitlesDirty = true;
@@ -621,6 +649,9 @@ async function watch() {
 if (command === 'version' || command === '--version' || command === '-v') console.log(`Lilac Companion ${VERSION}`);
 else if (command === 'doctor') await doctor();
 else if (command === 'source-doctor') await sourceDoctor();
+else if (command === 'help' || command === '--help' || command === '-h') printHelp();
+else if (command === 'sources' && process.argv[3] === 'menu') await sourceMenu();
+else if (command === 'sources' && process.argv[3] === 'help') printHelp();
 else if (command === 'sources') await sourcesCommand(process.argv[3] || 'list', process.argv[4] || '');
 else if (command === 'watch') {
   await watch();
