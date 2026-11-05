@@ -392,7 +392,7 @@ export async function scanSources(bridge, context, { sampleCount = 1, providers 
   return { context, aliases: effectiveAliases, results: settled, decision: chooseBestSource(settled), visual: null };
 }
 
-export function chooseDeepSourceProviders(quick, { count = 3, intensiveProviders = [] } = {}) {
+export function chooseDeepSourceProviders(quick, { count = 3, intensiveProviders = [], preferredProvider = '' } = {}) {
   const ranked = rankSourceResults(quick?.results || []).filter(item => item.ok && item.value);
   if (!ranked.length) return [];
   const bestHeight = Number(ranked[0].value?.probe?.quality?.height || 0);
@@ -401,20 +401,20 @@ export function chooseDeepSourceProviders(quick, { count = 3, intensiveProviders
   // comparable to the best candidate. Never demote a clearly better normal source.
   const eligible = ranked.filter(item => intensive.has(item.provider) && item.stable &&
     (!bestHeight || Number(item.value?.probe?.quality?.height || 0) >= bestHeight * 0.90));
-  return [...new Set([...ranked.slice(0, 1), ...eligible, ...ranked].map(item => item.provider))]
+  const selected = [...new Set([...ranked.slice(0, 1), ...eligible, ...ranked].map(item => item.provider))]
     .slice(0, Math.max(1, count));
+  // Respect an explicitly chosen anime provider even when its resolution is
+  // lower. This is a deep *measurement*, not a forced quality verdict.
+  if (preferredProvider && !selected.includes(preferredProvider) &&
+      quick.results.some(item => item.provider === preferredProvider && item.ok && item.value?.probe)) {
+    if (selected.length >= Math.max(1, count)) selected.pop();
+    selected.push(preferredProvider);
+  }
+  return selected;
 }
 
 export async function deepScanTop(bridge, quick, { count = 3, sampleCount = 3, visual = true, intensiveProviders = [], preferredProvider = '', includeCurrent = true } = {}) {
-  const providers = chooseDeepSourceProviders(quick, { count, intensiveProviders });
-  // An explicit per-anime preference must get a deep-probe slot even if its
-  // resolution is lower than other candidates (e.g. hardcoded subtitles).
-  // Never force a missing/failed stream or exceed the original scan limit.
-  if (preferredProvider && !providers.includes(preferredProvider) &&
-      quick.results.some(item => item.provider === preferredProvider && item.ok && item.value?.probe)) {
-    if (providers.length >= Math.max(1, count)) providers.pop();
-    providers.push(preferredProvider);
-  }
+  const providers = chooseDeepSourceProviders(quick, { count, intensiveProviders, preferredProvider });
   const currentProvider = quick.context?.episode?.provider || '';
   if (includeCurrent && currentProvider && !providers.includes(currentProvider)) providers.push(currentProvider);
   if (!providers.length) return quick;
