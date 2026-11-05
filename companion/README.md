@@ -61,9 +61,12 @@ and automatic source probing pauses rather than falsely declaring providers remo
 The separate inventory lives at `%LOCALAPPDATA%\LilacCompanion\source-registry.json`.
 Existing subtitle preferences and the official Lilac installation are not changed.
 
-From the Companion installation directory, use the portable EXE (or `node src/main.mjs` in source checkout):
+**Recommended: launch `Lilac Companion - Source Manager` from the Windows Start menu**, or double-click `SourceManager.cmd` inside the Companion installation directory. It opens a separate numbered menu; you do not need to memorise any commands. The existing automatic watch window remains untouched. In the menu you can view all sources, sync on demand, choose a source by number and change focus/normal/off/reset, undo the last change, or run a manual quality diagnosis. Companion also prints a short source-management hint when its watch window starts.
+
+For advanced users, the same commands remain available from the installation directory (or `node src/main.mjs` in a source checkout):
 
 ```powershell
+.\LilacCompanion.exe sources menu
 .\LilacCompanion.exe sources list
 .\LilacCompanion.exe sources sync
 .\LilacCompanion.exe sources focus reanime
@@ -115,6 +118,7 @@ Use `LilacCompanion-Setup-1.1.0.exe`. The installer is per-user, needs no admini
 A portable `LilacCompanion.exe` is included for users who prefer it.
 
 The installer does not modify or replace LilacAnime files and does not delete Companion state when updating the executable.
+The separate Source Manager shortcut is created in the Windows Start menu and the portable `SourceManager.cmd` launcher is installed alongside the EXE. Quitting the manager does not close Companion's automatic watch mode.
 
 Build artifacts are uploaded to GitHub Actions for CI inspection, and stable versioned binaries are also published as GitHub Release assets so the final installer is not dependent on temporary Actions artifact retention.
 
